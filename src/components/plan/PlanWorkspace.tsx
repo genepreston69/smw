@@ -38,14 +38,14 @@ import type {
 } from "@/lib/types";
 
 const BASIS_LABELS: Record<MaterialBasis, string> = {
-  per_lb: "$/lb (steel)",
-  per_each: "$/each",
+  per_lb: "$/lb",
+  per_each: "$/ea",
   per_sf: "$/SF",
-  lump_sum: "Lump sum",
+  lump_sum: "Lump",
 };
 
 const inputCls =
-  "rounded-md border border-line bg-white px-1.5 py-1 text-xs tabular-nums text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500/25 disabled:bg-surface disabled:text-ink-400";
+  "rounded-md border border-line bg-white px-1.5 py-1 text-xs tabular-nums text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500/25 disabled:bg-surface disabled:text-ink-400 [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none";
 
 const cardCls =
   "rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)]";
@@ -697,27 +697,27 @@ export function PlanWorkspace(props: Props) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[1100px] text-xs">
-            <thead className="border-b border-line bg-surface/70 text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
+          <table className="w-full min-w-[980px] text-xs">
+            <thead className="whitespace-nowrap border-b border-line bg-surface/70 text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
               <tr>
-                <th className="px-3 py-2.5">Description</th>
-                <th className="px-2 py-2.5">Phase</th>
-                <th className="px-2 py-2.5">Pri</th>
-                <th className="px-2 py-2.5">TBD</th>
-                <th className="px-2 py-2.5 text-right">Events</th>
-                <th className="px-2 py-2.5 text-right">Hrs/Pc</th>
-                <th className="px-2 py-2.5 text-right">Qty</th>
-                <th className="px-2 py-2.5 text-right">Bill $/hr</th>
-                <th className="px-2 py-2.5">Basis</th>
-                <th className="px-2 py-2.5 text-right">Len/SF</th>
-                <th className="px-2 py-2.5 text-right">Wt/LF</th>
-                <th className="px-2 py-2.5 text-right">Unit $</th>
-                <th className="px-2 py-2.5 text-right">Lump $</th>
-                <th className="px-2 py-2.5 text-right">Mkup %</th>
-                <th className="px-2 py-2.5 text-right">Hours</th>
-                <th className="px-2 py-2.5 text-right">Mat $</th>
-                <th className="px-2 py-2.5 text-right">Price</th>
-                {canEdit && <th className="px-2 py-2.5" />}
+                <th className="px-2 py-2.5">Description</th>
+                <th className="px-1 py-2.5">Phase</th>
+                <th className="px-1 py-2.5">Pri</th>
+                <th className="px-1 py-2.5">TBD</th>
+                <th className="px-1 py-2.5 text-right">Events</th>
+                <th className="px-1 py-2.5 text-right">Hrs/Pc</th>
+                <th className="px-1 py-2.5 text-right">Qty</th>
+                <th className="px-1 py-2.5 text-right">Bill $/hr</th>
+                <th className="px-1 py-2.5">Basis</th>
+                <th className="px-1 py-2.5 text-right">Len/SF</th>
+                <th className="px-1 py-2.5 text-right">Wt/LF</th>
+                <th className="px-1 py-2.5 text-right">Unit $</th>
+                <th className="px-1 py-2.5 text-right">Lump $</th>
+                <th className="px-1 py-2.5 text-right">Mkup %</th>
+                <th className="px-1 py-2.5 text-right">Hours</th>
+                <th className="px-1 py-2.5 text-right">Mat $</th>
+                <th className="px-1 py-2.5 text-right">Price</th>
+                {canEdit && <th className="px-1 py-2.5" />}
               </tr>
             </thead>
             <tbody className="divide-y divide-line/70">
@@ -965,7 +965,7 @@ function LineRow({
     const phase = phases.find((p) => p.id === row.phase_id);
     return (
       <tr className={row.is_tbd ? "bg-warn-50/60" : undefined}>
-        <td className="px-3 py-2 text-ink-900">
+        <td className="px-1 py-2 text-ink-900">
           {row.description || <span className="text-ink-400">—</span>}
           {row.is_tbd && (
             <span className="ml-1.5 rounded bg-warn-50 px-1 text-[10px] font-bold text-warn-700">
@@ -973,46 +973,46 @@ function LineRow({
             </span>
           )}
         </td>
-        <td className="px-2 py-2 text-ink-600">{phase?.name ?? "—"}</td>
-        <td className="px-2 py-2 text-ink-600">{row.priority}</td>
-        <td className="px-2 py-2 text-ink-600">{row.is_tbd ? "Yes" : ""}</td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-ink-600">{phase?.name ?? "—"}</td>
+        <td className="px-1 py-2 text-ink-600">{row.priority}</td>
+        <td className="px-1 py-2 text-ink-600">{row.is_tbd ? "Yes" : ""}</td>
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.events}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.hours_per_piece}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.quantity}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.labor_bill_rate ?? "—"}
         </td>
-        <td className="px-2 py-2 text-ink-600">
+        <td className="px-1 py-2 text-ink-600">
           {BASIS_LABELS[row.material_basis]}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.length_per_piece}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.weight_per_lf}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.unit_cost}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {row.lump_sum_cost}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {round2(row.material_markup_pct * 100)}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {round2(cost.totalHours)}
         </td>
-        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {money(cost.materialPrice)}
         </td>
-        <td className="px-2 py-2 text-right font-medium tabular-nums text-ink-900">
+        <td className="px-1 py-2 text-right font-medium tabular-nums text-ink-900">
           {money(cost.linePrice)}
         </td>
       </tr>
@@ -1025,15 +1025,15 @@ function LineRow({
         isNew ? "bg-brand-50/50" : row.dirty ? "bg-warn-50/60" : undefined
       }
     >
-      <td className="px-3 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           value={row.description}
           placeholder={isNew ? "New line item…" : ""}
           onChange={(e) => onPatch({ description: e.target.value })}
-          className={`${inputCls} w-44`}
+          className={`${inputCls} w-40`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <select
           value={row.phase_id ?? ""}
           onChange={(e) => onPatch({ phase_id: e.target.value || null })}
@@ -1047,7 +1047,7 @@ function LineRow({
           ))}
         </select>
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <select
           value={row.priority}
           onChange={(e) =>
@@ -1060,7 +1060,7 @@ function LineRow({
           <option value={3}>3</option>
         </select>
       </td>
-      <td className="px-2 py-1.5 text-center">
+      <td className="px-1 py-1.5 text-center">
         <input
           type="checkbox"
           checked={row.is_tbd}
@@ -1068,37 +1068,37 @@ function LineRow({
           className="accent-brand-600"
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
           min={0}
           value={row.events}
           onChange={(e) => onPatch({ events: num(e.target.value) })}
-          className={`${inputCls} w-14 text-right`}
+          className={`${inputCls} w-12 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
           min={0}
           value={row.hours_per_piece}
           onChange={(e) => onPatch({ hours_per_piece: num(e.target.value) })}
-          className={`${inputCls} w-14 text-right`}
+          className={`${inputCls} w-12 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
           min={0}
           value={row.quantity}
           onChange={(e) => onPatch({ quantity: num(e.target.value) })}
-          className={`${inputCls} w-14 text-right`}
+          className={`${inputCls} w-12 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
@@ -1111,10 +1111,10 @@ function LineRow({
                 e.target.value === "" ? null : num(e.target.value),
             })
           }
-          className={`${inputCls} w-16 text-right`}
+          className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <select
           value={row.material_basis}
           onChange={(e) =>
@@ -1129,7 +1129,7 @@ function LineRow({
           ))}
         </select>
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
@@ -1137,10 +1137,10 @@ function LineRow({
           value={row.length_per_piece}
           disabled={lump}
           onChange={(e) => onPatch({ length_per_piece: num(e.target.value) })}
-          className={`${inputCls} w-14 text-right`}
+          className={`${inputCls} w-12 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
@@ -1148,10 +1148,10 @@ function LineRow({
           value={row.weight_per_lf}
           disabled={!weightBased}
           onChange={(e) => onPatch({ weight_per_lf: num(e.target.value) })}
-          className={`${inputCls} w-14 text-right`}
+          className={`${inputCls} w-12 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
@@ -1159,10 +1159,10 @@ function LineRow({
           value={row.unit_cost}
           disabled={lump}
           onChange={(e) => onPatch({ unit_cost: num(e.target.value) })}
-          className={`${inputCls} w-16 text-right`}
+          className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
@@ -1170,10 +1170,10 @@ function LineRow({
           value={row.lump_sum_cost}
           disabled={!lump}
           onChange={(e) => onPatch({ lump_sum_cost: num(e.target.value) })}
-          className={`${inputCls} w-20 text-right`}
+          className={`${inputCls} w-16 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5">
+      <td className="px-1 py-1.5">
         <input
           type="number"
           step="any"
@@ -1182,19 +1182,19 @@ function LineRow({
           onChange={(e) =>
             onPatch({ material_markup_pct: num(e.target.value) / 100 })
           }
-          className={`${inputCls} w-14 text-right`}
+          className={`${inputCls} w-12 text-right`}
         />
       </td>
-      <td className="px-2 py-1.5 text-right tabular-nums text-ink-400">
+      <td className="px-1 py-1.5 text-right tabular-nums text-ink-400">
         {round2(cost.totalHours)}
       </td>
-      <td className="px-2 py-1.5 text-right tabular-nums text-ink-400">
+      <td className="px-1 py-1.5 text-right tabular-nums text-ink-400">
         {money(cost.materialPrice)}
       </td>
-      <td className="px-2 py-1.5 text-right font-medium tabular-nums text-ink-900">
+      <td className="px-1 py-1.5 text-right font-medium tabular-nums text-ink-900">
         {money(cost.linePrice)}
       </td>
-      <td className="whitespace-nowrap px-2 py-1.5">
+      <td className="whitespace-nowrap px-1 py-1.5">
         {isNew ? (
           <button
             onClick={onSave}
@@ -1209,9 +1209,10 @@ function LineRow({
             <button
               onClick={onSave}
               disabled={busy || !row.dirty}
-              className="rounded-md bg-brand-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-30"
+              title="Save line"
+              className="rounded-md bg-brand-600 px-1.5 py-1 text-white transition-colors hover:bg-brand-700 disabled:opacity-30"
             >
-              Save
+              <Check size={11} strokeWidth={2.5} />
             </button>
             <button
               onClick={onDelete}

@@ -25,7 +25,7 @@ export function SidebarNav() {
   const pathname = usePathname();
 
   return (
-    <nav className="flex flex-col gap-0.5 px-3">
+    <nav className="flex flex-col gap-0.5 px-2">
       {NAV.map(({ href, label, icon: Icon }) => {
         const active =
           href === "/" ? pathname === "/" : pathname.startsWith(href);
