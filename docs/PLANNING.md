@@ -292,11 +292,13 @@ Every transition writes an `approvals` row and an `audit_log` entry.
 4. ~~Approval routing rules?~~ → **Dollar thresholds with multiple approvers** (multi-step). See `SPREADSHEET_REVIEW.md` §6.5 for the proposed threshold table.
 5. ~~Line-item categories / markup model?~~ → Defined by the current Excel workbook (see `SPREADSHEET_REVIEW.md`): weight-based steel, per-each, per-SF, and lump-sum material lines; per-line material markup; labor cost rate vs billing rate; consumables as % of labor price; job-level overhead pool allocated pro-rata; Priority 1/2/3 scope tiers; phase grouping.
 
+**Also decided 2026-07-07 (second round):** consumables % editable per plan with 15% default; overhead pool manual entry and required; approval blocked while TBD lines remain; labor cost rate editable per plan with 37.15 default. Details in `SPREADSHEET_REVIEW.md` §6.1/§6.4/§8.
+
 **Still open:**
 
 6. **User count & roles** — how many users, and who approves?
 7. **Actual-vs-estimate tracking** (pulling actual costs back from QB) — in the roadmap, or is estimating enough?
-8. The five open items in `SPREADSHEET_REVIEW.md` §8 (consumables base, overhead derivation, threshold amounts, TBD gate, blended vs per-crew labor cost rate).
+8. Approval threshold amounts (`SPREADSHEET_REVIEW.md` §6.5) — proceeding with the proposed tiers as admin-editable config until told otherwise.
 
 ---
 

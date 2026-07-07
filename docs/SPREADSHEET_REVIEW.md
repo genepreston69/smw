@@ -157,12 +157,12 @@ case for the app.
 
 ### 6.1 Plan-level parameters (`project_plans` gains a params block)
 
-| Spreadsheet | App field | Default |
+| Spreadsheet | App field | Behavior (decided) |
 |---|---|---|
-| `P4` labor cost rate | `labor_cost_rate` | 37.15 (org-level default, editable per plan) |
-| `Q` default | `default_labor_bill_rate` | 102.00 |
-| `S4` | `consumables_pct` | 0.15 |
-| `T4` | `overhead_pool` | per-plan dollar amount |
+| `P4` labor cost rate | `labor_cost_rate` | Editable per plan, **defaults to 37.15** |
+| `Q` default | `default_labor_bill_rate` | Editable per plan, defaults to 102.00; per-line override |
+| `S4` | `consumables_pct` | **User-editable per plan, defaults to 15%** |
+| `T4` | `overhead_pool` | **Manual entry, required** — a plan cannot be submitted without an overhead amount (0 is allowed but must be explicit) |
 | Summary: start/end, department, PM, payment terms, notes | same-named plan fields | — |
 
 ### 6.2 Phases become a table
@@ -223,9 +223,11 @@ same rows it summarizes, and there are no hand-copied cells to drift.
 
 - **Rounding**: store full precision, round only at display/PDF (the sheet's
   cent-rounding of the priority copies is one source of its drift).
-- **TBD gate**: a plan with `is_tbd` lines can be saved/submitted, but the
-  submit screen lists them and approvers see a badge; optionally block final
-  approval while TBDs remain (decide during build).
+- **TBD gate (decided)**: a plan with `is_tbd` lines can be saved and
+  submitted for early visibility, but **approval is blocked while any TBD
+  line remains** — every `???` must be resolved (priced or removed) before an
+  approver can approve. Approvers see the TBD list and can still reject or
+  request changes.
 - **Markup entry in percent** in the UI ("30" → 0.30) with sanity warning above
   e.g. 200% (Dry Docking's 600% stays possible, just confirmed).
 - **Lock on submit/approve** — line items become read-only outside `draft` /
@@ -269,11 +271,16 @@ submit time and re-evaluated on resubmit if the total changed.
 
 ## 8. Open items from this review
 
-1. Confirm consumables base: the sheet computes 15% of labor **price** — keep,
-   or switch to labor cost?
-2. Overhead pool: entered per job ($5,000 here) — keep manual per-plan entry,
-   or derive (e.g. % of labor)?
-3. Confirm the threshold table in §6.5 (amounts and number of approvers).
-4. Should final approval be blocked while `???`/TBD lines remain?
-5. Labor cost rate 37.15 — single blended rate for the whole yard, or do
-   different crews/departments need different cost rates per line?
+**Decided 2026-07-07:**
+
+1. ~~Consumables base~~ → **Percentage is user-editable per plan, default 15%**
+   (base stays labor price, matching the current sheet).
+2. ~~Overhead pool~~ → **Manual entry per plan, required field.**
+4. ~~TBD gate~~ → **Approval is blocked while TBD lines remain.**
+5. ~~Labor cost rate~~ → **Single rate, editable per plan, defaults to 37.15.**
+
+**Still open:**
+
+3. Confirm the threshold table in §6.5 (amounts and number of approvers) —
+   proceeding with the proposed tiers as admin-editable configuration until
+   told otherwise.
