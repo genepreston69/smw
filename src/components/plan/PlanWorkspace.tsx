@@ -16,6 +16,7 @@ import {
   approvePlan,
   deleteLineItem,
   deletePhase,
+  deletePlan,
   rejectPlan,
   requestChanges,
   submitPlan,
@@ -125,6 +126,8 @@ export function PlanWorkspace(props: Props) {
     (me.role === "approver" || isAdmin) &&
     plan.status === "submitted" &&
     !isCreator;
+  // Mirrors the plans_delete RLS policy: admins any plan, creators own drafts.
+  const canDelete = isAdmin || (isCreator && plan.status === "draft");
 
   // --- plan header/params local state -------------------------------------
   const [params, setParams] = useState<PlanParams>({
@@ -285,6 +288,26 @@ export function PlanWorkspace(props: Props) {
     );
   }
 
+  function removePlan() {
+    if (
+      !window.confirm(
+        `Delete "${plan.title}"? This permanently removes the plan and all its line items.`,
+      )
+    )
+      return;
+    setError(null);
+    setBusy(true);
+    startTransition(async () => {
+      const res = await deletePlan(plan.id);
+      if (!res.ok) {
+        setError(res.error ?? "Failed");
+        setBusy(false);
+      } else {
+        router.push("/plans");
+      }
+    });
+  }
+
   // ---------------------------------------------------------------------------
   return (
     <div className="space-y-6">
@@ -323,6 +346,17 @@ export function PlanWorkspace(props: Props) {
         </div>
 
         <div className="flex items-center gap-2">
+          {canDelete && (
+            <button
+              onClick={removePlan}
+              disabled={busy}
+              title="Delete this plan and all its line items"
+              className={buttonCls("secondary")}
+            >
+              <Trash2 size={15} strokeWidth={2} />
+              Delete
+            </button>
+          )}
           {canEdit && headerDirty && (
             <button
               onClick={saveHeader}

@@ -3,6 +3,8 @@ import { ClipboardList, Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
 import { StatusBadge, TbdBadge } from "@/components/StatusBadge";
+import { DeleteRowButton } from "@/components/DeleteRowButton";
+import { deletePlan } from "./actions";
 import {
   Card,
   EmptyState,
@@ -19,17 +21,19 @@ interface PlanRow {
   status: PlanStatus;
   version: number;
   updated_at: string;
+  created_by: string;
   customer: { display_name: string } | null;
   creator: { full_name: string | null; email: string | null } | null;
 }
 
 export default async function PlansPage() {
-  const { supabase } = await requireUser();
+  const { supabase, profile } = await requireUser();
+  const isAdmin = profile.role === "admin";
 
   const { data } = await supabase
     .from("project_plans")
     .select(
-      "id, title, status, version, updated_at, customer:customers(display_name), creator:profiles!project_plans_created_by_fkey(full_name, email)",
+      "id, title, status, version, updated_at, created_by, customer:customers(display_name), creator:profiles!project_plans_created_by_fkey(full_name, email)",
     )
     .order("updated_at", { ascending: false });
 
@@ -79,6 +83,7 @@ export default async function PlansPage() {
                 <Th>Status</Th>
                 <Th right>Price</Th>
                 <Th right>Updated</Th>
+                <Th right />
               </tr>
             }
           >
@@ -119,6 +124,17 @@ export default async function PlansPage() {
                   </td>
                   <td className="px-4 py-3 text-right text-ink-400">
                     {shortDate(p.updated_at)}
+                  </td>
+                  <td className="px-4 py-3 text-right">
+                    {(isAdmin ||
+                      (p.created_by === profile.id &&
+                        p.status === "draft")) && (
+                      <DeleteRowButton
+                        action={deletePlan.bind(null, p.id)}
+                        confirmText={`Delete "${p.title}"? This permanently removes the plan and all its line items.`}
+                        title="Delete plan"
+                      />
+                    )}
                   </td>
                 </tr>
               );

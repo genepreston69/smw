@@ -75,13 +75,21 @@ export async function updatePlanFields(
 
 export async function deletePlan(planId: string): Promise<ActionResult> {
   const supabase = await createClient();
-  const { error } = await supabase
+  const { data, error } = await supabase
     .from("project_plans")
     .delete()
-    .eq("id", planId);
+    .eq("id", planId)
+    .select("id");
   if (error) return fail(new Error(error.message));
+  // RLS silently matches zero rows when the caller lacks delete rights.
+  if (!data?.length)
+    return {
+      ok: false,
+      error:
+        "You don't have permission to delete this plan (admins can delete any plan; estimators only their own drafts)",
+    };
   revalidatePath("/plans");
-  redirect("/plans");
+  return { ok: true };
 }
 
 // ---------------------------------------------------------------------------
