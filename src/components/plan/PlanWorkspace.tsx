@@ -3,6 +3,14 @@
 import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
+  Check,
+  MessageSquareWarning,
+  Plus,
+  Send,
+  Trash2,
+  X,
+} from "lucide-react";
+import {
   addLineItem,
   addPhase,
   approvePlan,
@@ -18,6 +26,7 @@ import {
 import { computeLineCosts, sumCosts, type PlanParams } from "@/lib/costing";
 import { money, pct, hours, shortDate } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
+import { buttonCls } from "@/components/ui";
 import type {
   Approval,
   ApprovalThreshold,
@@ -36,7 +45,13 @@ const BASIS_LABELS: Record<MaterialBasis, string> = {
 };
 
 const inputCls =
-  "rounded border border-zinc-300 px-1.5 py-1 text-xs tabular-nums focus:border-blue-500 focus:outline-none disabled:bg-zinc-50 disabled:text-zinc-400";
+  "rounded-md border border-line bg-white px-1.5 py-1 text-xs tabular-nums text-ink-900 focus:border-brand-500 focus:outline-none focus:ring-1 focus:ring-brand-500/25 disabled:bg-surface disabled:text-ink-400";
+
+const cardCls =
+  "rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)]";
+
+const cardTitleCls =
+  "mb-3 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400";
 
 interface Props {
   plan: ProjectPlan;
@@ -62,7 +77,8 @@ function toDraft(li: PlanLineItem): Draft {
     events: Number(li.events),
     hours_per_piece: Number(li.hours_per_piece),
     quantity: Number(li.quantity),
-    labor_bill_rate: li.labor_bill_rate === null ? null : Number(li.labor_bill_rate),
+    labor_bill_rate:
+      li.labor_bill_rate === null ? null : Number(li.labor_bill_rate),
     material_basis: li.material_basis,
     length_per_piece: Number(li.length_per_piece),
     weight_per_lf: Number(li.weight_per_lf),
@@ -126,7 +142,7 @@ export function PlanWorkspace(props: Props) {
     project_manager: plan.project_manager ?? "",
     contact_name: plan.contact_name ?? "",
     start_date: plan.start_date ?? "",
-    end_date: plan.end_date ?? "",
+    end_date: plan.end_date ??"",
     notes: plan.notes ?? "",
   });
   const [headerDirty, setHeaderDirty] = useState(false);
@@ -154,7 +170,10 @@ export function PlanWorkspace(props: Props) {
   ).length;
 
   const priorityTotals = useMemo(() => {
-    const map = new Map<number, { cost: number; price: number; count: number }>();
+    const map = new Map<
+      number,
+      { cost: number; price: number; count: number }
+    >();
     rows.forEach((r, i) => {
       const cur = map.get(r.priority) ?? { cost: 0, price: 0, count: 0 };
       cur.cost += costs[i].lineCost;
@@ -267,21 +286,23 @@ export function PlanWorkspace(props: Props) {
                   setInfo({ ...info, title: e.target.value });
                   setHeaderDirty(true);
                 }}
-                className="rounded-md border border-transparent px-1 text-2xl font-semibold hover:border-zinc-300 focus:border-blue-500 focus:outline-none"
+                className="rounded-lg border border-transparent px-1 text-[1.6rem] font-semibold tracking-tight text-ink-900 hover:border-line focus:border-brand-500 focus:outline-none"
               />
             ) : (
-              <h1 className="text-2xl font-semibold">{plan.title}</h1>
+              <h1 className="text-[1.6rem] font-semibold tracking-tight text-ink-900">
+                {plan.title}
+              </h1>
             )}
             <StatusBadge status={plan.status} />
             {plan.version > 1 && (
-              <span className="text-sm text-zinc-400">v{plan.version}</span>
+              <span className="text-sm text-ink-400">v{plan.version}</span>
             )}
           </div>
-          <p className="mt-1 text-sm text-zinc-500">
+          <p className="mt-1 text-sm text-ink-600">
             Created by {nameOf(plan.created_by)} · Updated{" "}
             {shortDate(plan.updated_at)}
             {tbdCount > 0 && (
-              <span className="ml-2 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
+              <span className="ml-2 rounded-full border border-warn-700/25 bg-warn-50 px-2 py-0.5 text-xs font-medium text-warn-700">
                 {tbdCount} TBD line{tbdCount > 1 ? "s" : ""} — approval blocked
               </span>
             )}
@@ -293,7 +314,7 @@ export function PlanWorkspace(props: Props) {
             <button
               onClick={saveHeader}
               disabled={busy}
-              className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-500 disabled:opacity-50"
+              className={buttonCls("primary")}
             >
               Save plan details
             </button>
@@ -305,8 +326,9 @@ export function PlanWorkspace(props: Props) {
               title={
                 headerDirty ? "Save plan details first" : "Submit for approval"
               }
-              className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700 disabled:opacity-50"
+              className={buttonCls("dark")}
             >
+              <Send size={15} strokeWidth={2} />
               Submit for approval
             </button>
           )}
@@ -314,38 +336,43 @@ export function PlanWorkspace(props: Props) {
       </div>
 
       {error && (
-        <div className="rounded-md border border-red-200 bg-red-50 px-4 py-2.5 text-sm text-red-700">
+        <div className="rounded-lg border border-bad-600/25 bg-bad-50 px-4 py-2.5 text-sm text-bad-600">
           {error}
         </div>
       )}
 
       {/* Approval banner */}
       {plan.status === "submitted" && (
-        <div className="rounded-xl border border-blue-200 bg-blue-50 p-4">
+        <div className="rounded-xl border border-brand-500/25 bg-brand-50 p-4">
           <div className="flex flex-wrap items-center justify-between gap-3">
-            <p className="text-sm text-blue-800">
-              <span className="font-medium">Awaiting approval:</span>{" "}
+            <p className="text-sm text-brand-700">
+              <span className="font-semibold">Awaiting approval:</span>{" "}
               {approvedThisVersion} of {requiredApprovals} required approval
-              {requiredApprovals > 1 ? "s" : ""} ·{" "}
-              {money(totals.totalPrice)} total
+              {requiredApprovals > 1 ? "s" : ""} · {money(totals.totalPrice)}{" "}
+              total
               {tbdCount > 0 && (
-                <span className="ml-2 font-medium text-amber-700">
+                <span className="ml-2 font-medium text-warn-700">
                   {tbdCount} TBD line{tbdCount > 1 ? "s" : ""} must be resolved
                   before approval
                 </span>
               )}
             </p>
-            {canApprove && <ApprovalActions planId={plan.id} run={run} busy={busy} />}
+            {canApprove && (
+              <ApprovalActions
+                planId={plan.id}
+                run={run}
+                busy={busy}
+                tbdBlocked={tbdCount > 0}
+              />
+            )}
           </div>
         </div>
       )}
 
       <div className="grid gap-6 lg:grid-cols-3">
         {/* Plan info */}
-        <section className="rounded-xl border border-zinc-200 bg-white p-5">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Plan details
-          </h2>
+        <section className={`${cardCls} p-5`}>
+          <h2 className={cardTitleCls}>Plan details</h2>
           <div className="space-y-3 text-sm">
             <Field label="Customer">
               {canEdit ? (
@@ -383,7 +410,8 @@ export function PlanWorkspace(props: Props) {
                   {props.jobs
                     .filter(
                       (j) =>
-                        !info.customer_id || j.customer_id === info.customer_id,
+                        !info.customer_id ||
+                        j.customer_id === info.customer_id,
                     )
                     .map((j) => (
                       <option key={j.id} value={j.id}>
@@ -466,10 +494,8 @@ export function PlanWorkspace(props: Props) {
         </section>
 
         {/* Rate parameters */}
-        <section className="rounded-xl border border-zinc-200 bg-white p-5">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Rates & pools
-          </h2>
+        <section className={`${cardCls} p-5`}>
+          <h2 className={cardTitleCls}>Rates & pools</h2>
           <div className="space-y-3 text-sm">
             <Field label="Labor cost rate ($/hr)">
               <NumOrText
@@ -493,7 +519,7 @@ export function PlanWorkspace(props: Props) {
             </Field>
             <Field label="Consumables (% of labor price)">
               {canEdit ? (
-                <div className="flex items-center gap-1">
+                <div className="flex items-center gap-1.5">
                   <input
                     type="number"
                     step="any"
@@ -503,13 +529,14 @@ export function PlanWorkspace(props: Props) {
                     onChange={(e) => {
                       setParams({
                         ...params,
-                        consumables_pct: (parseFloat(e.target.value) || 0) / 100,
+                        consumables_pct:
+                          (parseFloat(e.target.value) || 0) / 100,
                       });
                       setHeaderDirty(true);
                     }}
                     className={`${inputCls} w-24 text-sm`}
                   />
-                  <span className="text-zinc-500">%</span>
+                  <span className="text-ink-400">%</span>
                 </div>
               ) : (
                 pct(params.consumables_pct)
@@ -518,8 +545,12 @@ export function PlanWorkspace(props: Props) {
             <Field
               label={
                 <>
-                  Overhead pool ($){" "}
-                  <span className="font-normal text-red-500">required</span>
+                  Overhead pool ($)
+                  {params.overhead_pool === null && (
+                    <span className="ml-1 font-normal text-bad-600">
+                      required
+                    </span>
+                  )}
                 </>
               }
             >
@@ -540,7 +571,7 @@ export function PlanWorkspace(props: Props) {
                     });
                     setHeaderDirty(true);
                   }}
-                  className={`${inputCls} w-full text-sm ${params.overhead_pool === null ? "border-red-300 bg-red-50" : ""}`}
+                  className={`${inputCls} w-full text-sm ${params.overhead_pool === null ? "border-bad-600/40 bg-bad-50" : ""}`}
                 />
               ) : params.overhead_pool === null ? (
                 "—"
@@ -548,7 +579,7 @@ export function PlanWorkspace(props: Props) {
                 money(params.overhead_pool)
               )}
             </Field>
-            <p className="text-xs text-zinc-400">
+            <p className="text-xs leading-relaxed text-ink-400">
               Overhead is allocated across line items in proportion to each
               line&apos;s labor + material cost.
             </p>
@@ -556,17 +587,30 @@ export function PlanWorkspace(props: Props) {
         </section>
 
         {/* Totals */}
-        <section className="rounded-xl border border-zinc-200 bg-white p-5">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Profitability
-          </h2>
+        <section className={`${cardCls} p-5`}>
+          <h2 className={cardTitleCls}>Profitability</h2>
           <table className="w-full text-sm">
+            <thead>
+              <tr className="text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
+                <td />
+                <td className="pb-1.5 text-right">Cost</td>
+                <td className="pb-1.5 text-right">Price</td>
+              </tr>
+            </thead>
             <tbody>
               <Trow l="Labor" c={totals.laborCost} p={totals.laborPrice} />
-              <Trow l="Material" c={totals.materialCost} p={totals.materialPrice} />
-              <Trow l="Consumables" c={totals.consumables} p={totals.consumables} />
+              <Trow
+                l="Material"
+                c={totals.materialCost}
+                p={totals.materialPrice}
+              />
+              <Trow
+                l="Consumables"
+                c={totals.consumables}
+                p={totals.consumables}
+              />
               <Trow l="Overhead" c={totals.overhead} p={totals.overhead} />
-              <tr className="border-t border-zinc-200 font-semibold">
+              <tr className="border-t border-line font-semibold text-ink-900">
                 <td className="py-1.5">Total</td>
                 <td className="py-1.5 text-right tabular-nums">
                   {money(totals.totalCost)}
@@ -575,13 +619,13 @@ export function PlanWorkspace(props: Props) {
                   {money(totals.totalPrice)}
                 </td>
               </tr>
-              <tr className="text-emerald-700">
+              <tr className="font-medium text-ok-600">
                 <td className="py-1.5">Profit</td>
                 <td className="py-1.5 text-right tabular-nums" colSpan={2}>
                   {money(totals.profit)} ({pct(totals.profitPct)})
                 </td>
               </tr>
-              <tr className="text-zinc-500">
+              <tr className="text-ink-600">
                 <td className="py-1.5">Labor hours</td>
                 <td className="py-1.5 text-right tabular-nums" colSpan={2}>
                   {hours(totals.totalHours)}
@@ -590,8 +634,8 @@ export function PlanWorkspace(props: Props) {
             </tbody>
           </table>
           {priorityTotals.size > 1 && (
-            <div className="mt-4 border-t border-zinc-100 pt-3">
-              <h3 className="mb-2 text-xs font-semibold uppercase text-zinc-400">
+            <div className="mt-4 border-t border-line/70 pt-3">
+              <h3 className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
                 By priority
               </h3>
               {[1, 2, 3].map((p) => {
@@ -600,11 +644,11 @@ export function PlanWorkspace(props: Props) {
                 return (
                   <div
                     key={p}
-                    className="flex justify-between py-0.5 text-sm text-zinc-600"
+                    className="flex justify-between py-0.5 text-sm text-ink-600"
                   >
                     <span>
                       Priority {p}{" "}
-                      <span className="text-zinc-400">({t.count})</span>
+                      <span className="text-ink-400">({t.count})</span>
                     </span>
                     <span className="tabular-nums">{money(t.price)}</span>
                   </div>
@@ -612,7 +656,7 @@ export function PlanWorkspace(props: Props) {
               })}
             </div>
           )}
-          <p className="mt-3 text-xs text-zinc-400">
+          <p className="mt-3 text-xs text-ink-400">
             {money(totals.totalPrice)} requires {requiredApprovals} approval
             {requiredApprovals > 1 ? "s" : ""}.
           </p>
@@ -620,9 +664,9 @@ export function PlanWorkspace(props: Props) {
       </div>
 
       {/* Line items */}
-      <section className="rounded-xl border border-zinc-200 bg-white">
-        <div className="flex items-center justify-between border-b border-zinc-100 px-5 py-3">
-          <h2 className="text-sm font-semibold uppercase tracking-wide text-zinc-500">
+      <section className={cardCls}>
+        <div className="flex items-center justify-between border-b border-line px-5 py-3.5">
+          <h2 className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
             Line items
           </h2>
           {canEdit && (
@@ -643,8 +687,9 @@ export function PlanWorkspace(props: Props) {
                   )
                 }
                 disabled={busy || !newPhaseName.trim()}
-                className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium hover:bg-zinc-50 disabled:opacity-50"
+                className={buttonCls("secondary", "sm")}
               >
+                <Plus size={13} strokeWidth={2} />
                 Add phase
               </button>
             </div>
@@ -653,29 +698,29 @@ export function PlanWorkspace(props: Props) {
 
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1100px] text-xs">
-            <thead className="bg-zinc-50 text-left uppercase tracking-wide text-zinc-500">
+            <thead className="border-b border-line bg-surface/70 text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
               <tr>
-                <th className="px-3 py-2">Description</th>
-                <th className="px-2 py-2">Phase</th>
-                <th className="px-2 py-2">Pri</th>
-                <th className="px-2 py-2">TBD</th>
-                <th className="px-2 py-2 text-right">Events</th>
-                <th className="px-2 py-2 text-right">Hrs/Pc</th>
-                <th className="px-2 py-2 text-right">Qty</th>
-                <th className="px-2 py-2 text-right">Bill $/hr</th>
-                <th className="px-2 py-2">Basis</th>
-                <th className="px-2 py-2 text-right">Len/SF</th>
-                <th className="px-2 py-2 text-right">Wt/LF</th>
-                <th className="px-2 py-2 text-right">Unit $</th>
-                <th className="px-2 py-2 text-right">Lump $</th>
-                <th className="px-2 py-2 text-right">Mkup %</th>
-                <th className="px-2 py-2 text-right">Hours</th>
-                <th className="px-2 py-2 text-right">Mat $</th>
-                <th className="px-2 py-2 text-right">Price</th>
-                {canEdit && <th className="px-2 py-2" />}
+                <th className="px-3 py-2.5">Description</th>
+                <th className="px-2 py-2.5">Phase</th>
+                <th className="px-2 py-2.5">Pri</th>
+                <th className="px-2 py-2.5">TBD</th>
+                <th className="px-2 py-2.5 text-right">Events</th>
+                <th className="px-2 py-2.5 text-right">Hrs/Pc</th>
+                <th className="px-2 py-2.5 text-right">Qty</th>
+                <th className="px-2 py-2.5 text-right">Bill $/hr</th>
+                <th className="px-2 py-2.5">Basis</th>
+                <th className="px-2 py-2.5 text-right">Len/SF</th>
+                <th className="px-2 py-2.5 text-right">Wt/LF</th>
+                <th className="px-2 py-2.5 text-right">Unit $</th>
+                <th className="px-2 py-2.5 text-right">Lump $</th>
+                <th className="px-2 py-2.5 text-right">Mkup %</th>
+                <th className="px-2 py-2.5 text-right">Hours</th>
+                <th className="px-2 py-2.5 text-right">Mat $</th>
+                <th className="px-2 py-2.5 text-right">Price</th>
+                {canEdit && <th className="px-2 py-2.5" />}
               </tr>
             </thead>
-            <tbody className="divide-y divide-zinc-100">
+            <tbody className="divide-y divide-line/70">
               {rows.map((row, i) => (
                 <LineRow
                   key={row.id}
@@ -706,21 +751,21 @@ export function PlanWorkspace(props: Props) {
           </table>
         </div>
         {rows.length === 0 && !canEdit && (
-          <p className="p-5 text-sm text-zinc-500">No line items.</p>
+          <p className="p-5 text-sm text-ink-600">No line items.</p>
         )}
 
         {canEdit && phases.length > 0 && (
-          <div className="border-t border-zinc-100 px-5 py-3 text-xs text-zinc-500">
+          <div className="border-t border-line px-5 py-3 text-xs text-ink-600">
             Phases:{" "}
             {phases.map((ph) => (
               <span
                 key={ph.id}
-                className="mr-2 inline-flex items-center gap-1 rounded-full border border-zinc-200 px-2 py-0.5"
+                className="mr-2 inline-flex items-center gap-1 rounded-full border border-line bg-surface px-2 py-0.5"
               >
                 {ph.name}
                 <button
                   onClick={() => run(() => deletePhase(plan.id, ph.id))}
-                  className="text-zinc-400 hover:text-red-600"
+                  className="text-ink-400 transition-colors hover:text-bad-600"
                   title="Delete phase (line items keep their data)"
                 >
                   ×
@@ -733,32 +778,30 @@ export function PlanWorkspace(props: Props) {
 
       {/* Approval history */}
       {props.approvals.length > 0 && (
-        <section className="rounded-xl border border-zinc-200 bg-white p-5">
-          <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-            Approval history
-          </h2>
-          <ul className="space-y-2 text-sm">
+        <section className={`${cardCls} p-5`}>
+          <h2 className={cardTitleCls}>Approval history</h2>
+          <ul className="space-y-2.5 text-sm">
             {props.approvals.map((a) => (
-              <li key={a.id} className="flex items-start gap-2">
+              <li key={a.id} className="flex items-start gap-2.5">
                 <span
-                  className={
+                  className={`mt-1.5 h-2 w-2 flex-none rounded-full ${
                     a.decision === "approved"
-                      ? "text-emerald-600"
+                      ? "bg-ok-600"
                       : a.decision === "rejected"
-                        ? "text-red-600"
-                        : "text-amber-600"
-                  }
-                >
-                  ●
-                </span>
+                        ? "bg-bad-600"
+                        : "bg-warn-700"
+                  }`}
+                />
                 <div>
-                  <span className="font-medium">{nameOf(a.approver_id)}</span>{" "}
-                  <span className="text-zinc-500">
+                  <span className="font-medium text-ink-900">
+                    {nameOf(a.approver_id)}
+                  </span>{" "}
+                  <span className="text-ink-600">
                     {a.decision.replace("_", " ")} v{a.plan_version} ·{" "}
                     {shortDate(a.created_at)}
                   </span>
                   {a.comment && (
-                    <p className="text-zinc-600">&ldquo;{a.comment}&rdquo;</p>
+                    <p className="text-ink-600">&ldquo;{a.comment}&rdquo;</p>
                   )}
                 </div>
               </li>
@@ -785,10 +828,10 @@ function Field({
 }) {
   return (
     <div>
-      <span className="mb-0.5 block text-xs font-medium text-zinc-500">
+      <span className="mb-0.5 block text-xs font-medium text-ink-400">
         {label}
       </span>
-      <div className="text-zinc-800">{children}</div>
+      <div className="text-ink-900">{children}</div>
     </div>
   );
 }
@@ -836,7 +879,7 @@ function NumOrText({
 
 function Trow({ l, c, p }: { l: string; c: number; p: number }) {
   return (
-    <tr className="text-zinc-600">
+    <tr className="text-ink-600">
       <td className="py-1">{l}</td>
       <td className="py-1 text-right tabular-nums">{money(c)}</td>
       <td className="py-1 text-right tabular-nums">{money(p)}</td>
@@ -848,10 +891,12 @@ function ApprovalActions({
   planId,
   run,
   busy,
+  tbdBlocked,
 }: {
   planId: string;
   run: (fn: () => Promise<{ ok: boolean; error?: string }>) => void;
   busy: boolean;
+  tbdBlocked: boolean;
 }) {
   const [comment, setComment] = useState("");
   return (
@@ -860,27 +905,31 @@ function ApprovalActions({
         value={comment}
         onChange={(e) => setComment(e.target.value)}
         placeholder="Comment (required to reject / request changes)"
-        className="w-72 rounded-md border border-zinc-300 px-3 py-1.5 text-sm focus:border-blue-500 focus:outline-none"
+        className="w-72 rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20"
       />
       <button
         onClick={() => run(() => approvePlan(planId, comment))}
-        disabled={busy}
-        className="rounded-md bg-emerald-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+        disabled={busy || tbdBlocked}
+        title={tbdBlocked ? "Resolve TBD line items first" : "Approve this plan"}
+        className={buttonCls("success", "sm")}
       >
+        <Check size={13} strokeWidth={2.5} />
         Approve
       </button>
       <button
         onClick={() => run(() => requestChanges(planId, comment))}
         disabled={busy || !comment.trim()}
-        className="rounded-md bg-amber-500 px-3 py-1.5 text-sm font-medium text-white hover:bg-amber-400 disabled:opacity-50"
+        className={buttonCls("warn", "sm")}
       >
+        <MessageSquareWarning size={13} strokeWidth={2} />
         Request changes
       </button>
       <button
         onClick={() => run(() => rejectPlan(planId, comment))}
         disabled={busy || !comment.trim()}
-        className="rounded-md bg-red-600 px-3 py-1.5 text-sm font-medium text-white hover:bg-red-500 disabled:opacity-50"
+        className={buttonCls("danger", "sm")}
       >
+        <X size={13} strokeWidth={2.5} />
         Reject
       </button>
     </div>
@@ -915,47 +964,55 @@ function LineRow({
   if (!edit) {
     const phase = phases.find((p) => p.id === row.phase_id);
     return (
-      <tr className={row.is_tbd ? "bg-amber-50/50" : undefined}>
-        <td className="px-3 py-1.5">
-          {row.description || <span className="text-zinc-400">—</span>}
+      <tr className={row.is_tbd ? "bg-warn-50/60" : undefined}>
+        <td className="px-3 py-2 text-ink-900">
+          {row.description || <span className="text-ink-400">—</span>}
           {row.is_tbd && (
-            <span className="ml-1 rounded bg-amber-100 px-1 text-[10px] font-semibold text-amber-700">
+            <span className="ml-1.5 rounded bg-warn-50 px-1 text-[10px] font-bold text-warn-700">
               TBD
             </span>
           )}
         </td>
-        <td className="px-2 py-1.5 text-zinc-500">{phase?.name ?? "—"}</td>
-        <td className="px-2 py-1.5">{row.priority}</td>
-        <td className="px-2 py-1.5">{row.is_tbd ? "Yes" : ""}</td>
-        <td className="px-2 py-1.5 text-right tabular-nums">{row.events}</td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-ink-600">{phase?.name ?? "—"}</td>
+        <td className="px-2 py-2 text-ink-600">{row.priority}</td>
+        <td className="px-2 py-2 text-ink-600">{row.is_tbd ? "Yes" : ""}</td>
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+          {row.events}
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {row.hours_per_piece}
         </td>
-        <td className="px-2 py-1.5 text-right tabular-nums">{row.quantity}</td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+          {row.quantity}
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {row.labor_bill_rate ?? "—"}
         </td>
-        <td className="px-2 py-1.5">{BASIS_LABELS[row.material_basis]}</td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-ink-600">
+          {BASIS_LABELS[row.material_basis]}
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {row.length_per_piece}
         </td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {row.weight_per_lf}
         </td>
-        <td className="px-2 py-1.5 text-right tabular-nums">{row.unit_cost}</td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
+          {row.unit_cost}
+        </td>
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {row.lump_sum_cost}
         </td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {round2(row.material_markup_pct * 100)}
         </td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {round2(cost.totalHours)}
         </td>
-        <td className="px-2 py-1.5 text-right tabular-nums">
+        <td className="px-2 py-2 text-right tabular-nums text-ink-600">
           {money(cost.materialPrice)}
         </td>
-        <td className="px-2 py-1.5 text-right font-medium tabular-nums">
+        <td className="px-2 py-2 text-right font-medium tabular-nums text-ink-900">
           {money(cost.linePrice)}
         </td>
       </tr>
@@ -965,10 +1022,10 @@ function LineRow({
   return (
     <tr
       className={
-        isNew ? "bg-blue-50/40" : row.dirty ? "bg-yellow-50/60" : undefined
+        isNew ? "bg-brand-50/50" : row.dirty ? "bg-warn-50/60" : undefined
       }
     >
-      <td className="px-3 py-1">
+      <td className="px-3 py-1.5">
         <input
           value={row.description}
           placeholder={isNew ? "New line item…" : ""}
@@ -976,7 +1033,7 @@ function LineRow({
           className={`${inputCls} w-44`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <select
           value={row.phase_id ?? ""}
           onChange={(e) => onPatch({ phase_id: e.target.value || null })}
@@ -990,7 +1047,7 @@ function LineRow({
           ))}
         </select>
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <select
           value={row.priority}
           onChange={(e) =>
@@ -1003,14 +1060,15 @@ function LineRow({
           <option value={3}>3</option>
         </select>
       </td>
-      <td className="px-2 py-1 text-center">
+      <td className="px-2 py-1.5 text-center">
         <input
           type="checkbox"
           checked={row.is_tbd}
           onChange={(e) => onPatch({ is_tbd: e.target.checked })}
+          className="accent-brand-600"
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1020,7 +1078,7 @@ function LineRow({
           className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1030,7 +1088,7 @@ function LineRow({
           className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1040,7 +1098,7 @@ function LineRow({
           className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1056,7 +1114,7 @@ function LineRow({
           className={`${inputCls} w-16 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <select
           value={row.material_basis}
           onChange={(e) =>
@@ -1071,7 +1129,7 @@ function LineRow({
           ))}
         </select>
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1082,7 +1140,7 @@ function LineRow({
           className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1093,7 +1151,7 @@ function LineRow({
           className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1104,7 +1162,7 @@ function LineRow({
           className={`${inputCls} w-16 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1115,7 +1173,7 @@ function LineRow({
           className={`${inputCls} w-20 text-right`}
         />
       </td>
-      <td className="px-2 py-1">
+      <td className="px-2 py-1.5">
         <input
           type="number"
           step="any"
@@ -1127,22 +1185,23 @@ function LineRow({
           className={`${inputCls} w-14 text-right`}
         />
       </td>
-      <td className="px-2 py-1 text-right tabular-nums text-zinc-500">
+      <td className="px-2 py-1.5 text-right tabular-nums text-ink-400">
         {round2(cost.totalHours)}
       </td>
-      <td className="px-2 py-1 text-right tabular-nums text-zinc-500">
+      <td className="px-2 py-1.5 text-right tabular-nums text-ink-400">
         {money(cost.materialPrice)}
       </td>
-      <td className="px-2 py-1 text-right font-medium tabular-nums">
+      <td className="px-2 py-1.5 text-right font-medium tabular-nums text-ink-900">
         {money(cost.linePrice)}
       </td>
-      <td className="px-2 py-1 whitespace-nowrap">
+      <td className="whitespace-nowrap px-2 py-1.5">
         {isNew ? (
           <button
             onClick={onSave}
             disabled={busy || !row.description.trim()}
-            className="rounded bg-zinc-900 px-2 py-1 text-[11px] font-medium text-white hover:bg-zinc-700 disabled:opacity-40"
+            className="inline-flex items-center gap-1 rounded-md bg-brand-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-40"
           >
+            <Plus size={11} strokeWidth={2.5} />
             Add
           </button>
         ) : (
@@ -1150,16 +1209,17 @@ function LineRow({
             <button
               onClick={onSave}
               disabled={busy || !row.dirty}
-              className="rounded bg-blue-600 px-2 py-1 text-[11px] font-medium text-white hover:bg-blue-500 disabled:opacity-30"
+              className="rounded-md bg-brand-600 px-2 py-1 text-[11px] font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-30"
             >
               Save
             </button>
             <button
               onClick={onDelete}
               disabled={busy}
-              className="ml-1 rounded border border-zinc-200 px-2 py-1 text-[11px] text-zinc-500 hover:bg-red-50 hover:text-red-600"
+              title="Delete line"
+              className="ml-1 rounded-md border border-line px-1.5 py-1 text-ink-400 transition-colors hover:border-bad-600/30 hover:bg-bad-50 hover:text-bad-600"
             >
-              ✕
+              <Trash2 size={11} strokeWidth={2} />
             </button>
           </>
         )}

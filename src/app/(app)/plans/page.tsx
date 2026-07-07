@@ -1,7 +1,16 @@
 import Link from "next/link";
+import { ClipboardList, Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
-import { StatusBadge } from "@/components/StatusBadge";
+import { StatusBadge, TbdBadge } from "@/components/StatusBadge";
+import {
+  Card,
+  EmptyState,
+  PageHeader,
+  Table,
+  Th,
+  buttonCls,
+} from "@/components/ui";
 import type { PlanStatus } from "@/lib/types";
 
 interface PlanRow {
@@ -41,77 +50,82 @@ export default async function PlansPage() {
   );
 
   return (
-    <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Job Plans</h1>
-        <Link
-          href="/plans/new"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
-        >
-          New job plan
-        </Link>
-      </div>
+    <div>
+      <PageHeader
+        title="Job Plans"
+        subtitle="Cost estimates and their approval status."
+        action={
+          <Link href="/plans/new" className={buttonCls("primary")}>
+            <Plus size={16} strokeWidth={2} />
+            New job plan
+          </Link>
+        }
+      />
 
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <Card pad={false}>
         {plans.length === 0 ? (
-          <p className="p-6 text-sm text-zinc-500">No plans yet.</p>
+          <EmptyState icon={ClipboardList} title="No plans yet">
+            <Link href="/plans/new" className="text-brand-600 hover:underline">
+              Create the first one
+            </Link>
+          </EmptyState>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+          <Table
+            head={
               <tr>
-                <th className="px-4 py-2.5">Plan</th>
-                <th className="px-4 py-2.5">Customer</th>
-                <th className="px-4 py-2.5">Created by</th>
-                <th className="px-4 py-2.5">Status</th>
-                <th className="px-4 py-2.5 text-right">Price</th>
-                <th className="px-4 py-2.5 text-right">Updated</th>
+                <Th>Plan</Th>
+                <Th>Customer</Th>
+                <Th>Created by</Th>
+                <Th>Status</Th>
+                <Th right>Price</Th>
+                <Th right>Updated</Th>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {plans.map((p) => {
-                const t = totals.get(p.id);
-                return (
-                  <tr key={p.id} className="hover:bg-zinc-50">
-                    <td className="px-4 py-2.5">
+            }
+          >
+            {plans.map((p) => {
+              const t = totals.get(p.id);
+              return (
+                <tr
+                  key={p.id}
+                  className="transition-colors hover:bg-surface/60"
+                >
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-2">
                       <Link
                         href={`/plans/${p.id}`}
-                        className="font-medium text-zinc-900 hover:underline"
+                        className="font-medium text-ink-900 hover:text-brand-600"
                       >
                         {p.title}
                       </Link>
                       {p.version > 1 && (
-                        <span className="ml-1.5 text-xs text-zinc-400">
+                        <span className="text-xs text-ink-400">
                           v{p.version}
                         </span>
                       )}
-                      {t && t.tbd > 0 && (
-                        <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-                          {t.tbd} TBD
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {p.customer?.display_name ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {p.creator?.full_name || p.creator?.email || "—"}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <StatusBadge status={p.status} />
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      {t ? money(t.price) : "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-zinc-500">
-                      {shortDate(p.updated_at)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      {t && <TbdBadge count={t.tbd} />}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-ink-600">
+                    {p.customer?.display_name ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-ink-600">
+                    {p.creator?.full_name || p.creator?.email || "—"}
+                  </td>
+                  <td className="px-4 py-3">
+                    <StatusBadge status={p.status} />
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {t ? money(t.price) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right text-ink-400">
+                    {shortDate(p.updated_at)}
+                  </td>
+                </tr>
+              );
+            })}
+          </Table>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

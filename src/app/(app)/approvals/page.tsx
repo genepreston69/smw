@@ -1,6 +1,16 @@
 import Link from "next/link";
+import { Stamp } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
+import { TbdBadge } from "@/components/StatusBadge";
+import {
+  Card,
+  CardTitle,
+  EmptyState,
+  PageHeader,
+  Table,
+  Th,
+} from "@/components/ui";
 import type { ApprovalThreshold } from "@/lib/types";
 
 interface QueueRow {
@@ -67,105 +77,107 @@ export default async function ApprovalsPage() {
   const canApprove = profile.role === "approver" || profile.role === "admin";
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Approvals</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          {canApprove
+    <div>
+      <PageHeader
+        title="Approvals"
+        subtitle={
+          canApprove
             ? "Plans waiting for review. Open a plan to approve, reject, or request changes."
-            : "Plans currently waiting for approval."}
-        </p>
-      </div>
+            : "Plans currently waiting for approval."
+        }
+      />
 
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <Card pad={false} className="mb-6">
         {plans.length === 0 ? (
-          <p className="p-6 text-sm text-zinc-500">
-            Nothing waiting for approval. 🎉
-          </p>
+          <EmptyState icon={Stamp} title="Nothing waiting for approval">
+            Submitted plans land here for review.
+          </EmptyState>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+          <Table
+            head={
               <tr>
-                <th className="px-4 py-2.5">Plan</th>
-                <th className="px-4 py-2.5">Customer</th>
-                <th className="px-4 py-2.5">Submitted by</th>
-                <th className="px-4 py-2.5 text-right">Price</th>
-                <th className="px-4 py-2.5">Approvals</th>
-                <th className="px-4 py-2.5 text-right">Submitted</th>
+                <Th>Plan</Th>
+                <Th>Customer</Th>
+                <Th>Submitted by</Th>
+                <Th right>Price</Th>
+                <Th>Approvals</Th>
+                <Th right>Submitted</Th>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {plans.map((p) => {
-                const t = totals.get(p.id);
-                const price = t?.price ?? 0;
-                const needed = requiredFor(price);
-                const got = (approvalRows ?? []).filter(
-                  (a) =>
-                    (a as { plan_id: string }).plan_id === p.id &&
-                    (a as { plan_version: number }).plan_version === p.version,
-                ).length;
-                return (
-                  <tr key={p.id} className="hover:bg-zinc-50">
-                    <td className="px-4 py-2.5">
+            }
+          >
+            {plans.map((p) => {
+              const t = totals.get(p.id);
+              const price = t?.price ?? 0;
+              const needed = requiredFor(price);
+              const got = (approvalRows ?? []).filter(
+                (a) =>
+                  (a as { plan_id: string }).plan_id === p.id &&
+                  (a as { plan_version: number }).plan_version === p.version,
+              ).length;
+              return (
+                <tr
+                  key={p.id}
+                  className="transition-colors hover:bg-surface/60"
+                >
+                  <td className="px-4 py-3">
+                    <span className="flex items-center gap-2">
                       <Link
                         href={`/plans/${p.id}`}
-                        className="font-medium text-zinc-900 hover:underline"
+                        className="font-medium text-ink-900 hover:text-brand-600"
                       >
                         {p.title}
                       </Link>
-                      {t && t.tbd > 0 && (
-                        <span className="ml-1.5 rounded-full bg-amber-50 px-2 py-0.5 text-xs font-medium text-amber-700">
-                          {t.tbd} TBD — blocked
-                        </span>
-                      )}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {p.customer?.display_name ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {p.creator?.full_name || p.creator?.email || "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      {money(price)}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <span
-                        className={`rounded-full px-2 py-0.5 text-xs font-medium ${got >= needed ? "bg-emerald-50 text-emerald-700" : "bg-blue-50 text-blue-700"}`}
-                      >
-                        {got} / {needed}
-                      </span>
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-zinc-500">
-                      {shortDate(p.submitted_at)}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                      {t && <TbdBadge count={t.tbd} />}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-ink-600">
+                    {p.customer?.display_name ?? "—"}
+                  </td>
+                  <td className="px-4 py-3 text-ink-600">
+                    {p.creator?.full_name || p.creator?.email || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums">
+                    {money(price)}
+                  </td>
+                  <td className="px-4 py-3">
+                    <span
+                      className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-0.5 text-xs font-medium tabular-nums ${
+                        got >= needed
+                          ? "border-ok-600/25 bg-ok-50 text-ok-600"
+                          : "border-brand-500/25 bg-brand-50 text-brand-700"
+                      }`}
+                    >
+                      {got} / {needed}
+                    </span>
+                  </td>
+                  <td className="px-4 py-3 text-right text-ink-400">
+                    {shortDate(p.submitted_at)}
+                  </td>
+                </tr>
+              );
+            })}
+          </Table>
         )}
-      </div>
+      </Card>
 
-      <section className="rounded-xl border border-zinc-200 bg-white p-5">
-        <h2 className="mb-3 text-sm font-semibold uppercase tracking-wide text-zinc-500">
-          Approval thresholds
-        </h2>
-        <ul className="space-y-1 text-sm text-zinc-600">
+      <Card>
+        <CardTitle>Approval thresholds</CardTitle>
+        <ul className="space-y-1.5 text-sm text-ink-600">
           {ths.map((t) => (
-            <li key={t.id}>
+            <li key={t.id} className="tabular-nums">
               {money(Number(t.min_amount))}
               {t.max_amount !== null
                 ? ` – ${money(Number(t.max_amount))}`
                 : " and up"}{" "}
-              → <span className="font-medium">{t.label}</span>
+              → <span className="font-medium text-ink-900">{t.label}</span>
             </li>
           ))}
         </ul>
-        <p className="mt-2 text-xs text-zinc-400">
-          Thresholds are evaluated against a plan&apos;s total price at approval
-          time. Admins can adjust them in the database (approval_thresholds).
+        <p className="mt-3 text-xs text-ink-400">
+          Thresholds are evaluated against a plan&apos;s total price at
+          approval time.
         </p>
-      </section>
+      </Card>
     </div>
   );
 }

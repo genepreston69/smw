@@ -1,13 +1,24 @@
 import Link from "next/link";
+import { ClipboardList, Plus, Stamp, Users } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
+import {
+  Card,
+  CardTitle,
+  EmptyState,
+  PageHeader,
+  StatTile,
+  Table,
+  Th,
+  buttonCls,
+} from "@/components/ui";
 import type { PlanStatus } from "@/lib/types";
 
 export default async function DashboardPage() {
   const { supabase, profile } = await requireUser();
 
-  const [plansRes, submittedRes, customersRes] = await Promise.all([
+  const [plansRes, submittedRes, activeRes, customersRes] = await Promise.all([
     supabase
       .from("project_plans")
       .select("id, title, status, updated_at, customer:customers(display_name)")
@@ -17,6 +28,10 @@ export default async function DashboardPage() {
       .from("project_plans")
       .select("id", { count: "exact", head: true })
       .eq("status", "submitted"),
+    supabase
+      .from("project_plans")
+      .select("id", { count: "exact", head: true })
+      .in("status", ["draft", "changes_requested"]),
     supabase.from("customers").select("id", { count: "exact", head: true }),
   ]);
 
@@ -39,107 +54,95 @@ export default async function DashboardPage() {
     (totalsRows ?? []).map((t) => [t.plan_id as string, Number(t.total_price)]),
   );
 
-  const canApprove = profile.role === "approver" || profile.role === "admin";
+  const firstName =
+    (profile.full_name || profile.email || "").split(/[\s@]/)[0] || "there";
 
   return (
-    <div className="space-y-8">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-semibold">Dashboard</h1>
-        <Link
-          href="/plans/new"
-          className="rounded-md bg-zinc-900 px-4 py-2 text-sm font-medium text-white hover:bg-zinc-700"
-        >
-          New job plan
-        </Link>
-      </div>
-
-      <div className="grid gap-4 sm:grid-cols-3">
-        <div className="rounded-xl border border-zinc-200 bg-white p-5">
-          <p className="text-sm text-zinc-500">Awaiting approval</p>
-          <p className="mt-1 text-3xl font-semibold">
-            {submittedRes.count ?? 0}
-          </p>
-          {canApprove && (
-            <Link
-              href="/approvals"
-              className="mt-2 inline-block text-sm text-blue-600 hover:underline"
-            >
-              Review queue →
-            </Link>
-          )}
-        </div>
-        <div className="rounded-xl border border-zinc-200 bg-white p-5">
-          <p className="text-sm text-zinc-500">Customers (from QuickBooks)</p>
-          <p className="mt-1 text-3xl font-semibold">
-            {customersRes.count ?? 0}
-          </p>
-          <Link
-            href="/customers"
-            className="mt-2 inline-block text-sm text-blue-600 hover:underline"
-          >
-            View customers →
+    <div>
+      <PageHeader
+        title={`Welcome back, ${firstName}`}
+        subtitle="Here's where your job plans stand."
+        action={
+          <Link href="/plans/new" className={buttonCls("primary")}>
+            <Plus size={16} strokeWidth={2} />
+            New job plan
           </Link>
-        </div>
-        <div className="rounded-xl border border-zinc-200 bg-white p-5">
-          <p className="text-sm text-zinc-500">Your role</p>
-          <p className="mt-1 text-3xl font-semibold capitalize">
-            {profile.role}
-          </p>
-        </div>
+        }
+      />
+
+      <div className="mb-8 grid gap-4 sm:grid-cols-3">
+        <StatTile
+          label="Awaiting approval"
+          value={submittedRes.count ?? 0}
+          hint="Open the review queue"
+          href="/approvals"
+          icon={Stamp}
+        />
+        <StatTile
+          label="In progress"
+          value={activeRes.count ?? 0}
+          hint="Drafts & changes requested"
+          href="/plans"
+          icon={ClipboardList}
+        />
+        <StatTile
+          label="Customers"
+          value={customersRes.count ?? 0}
+          hint="Synced from QuickBooks"
+          href="/customers"
+          icon={Users}
+        />
       </div>
 
-      <section>
-        <h2 className="mb-3 text-lg font-medium">Recent plans</h2>
-        <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
-          {plans.length === 0 ? (
-            <p className="p-6 text-sm text-zinc-500">
-              No plans yet.{" "}
-              <Link href="/plans/new" className="text-blue-600 hover:underline">
-                Create the first one
-              </Link>
-              .
-            </p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
-                <tr>
-                  <th className="px-4 py-2.5">Plan</th>
-                  <th className="px-4 py-2.5">Customer</th>
-                  <th className="px-4 py-2.5">Status</th>
-                  <th className="px-4 py-2.5 text-right">Price</th>
-                  <th className="px-4 py-2.5 text-right">Updated</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-zinc-100">
-                {plans.map((p) => (
-                  <tr key={p.id} className="hover:bg-zinc-50">
-                    <td className="px-4 py-2.5">
-                      <Link
-                        href={`/plans/${p.id}`}
-                        className="font-medium text-zinc-900 hover:underline"
-                      >
-                        {p.title}
-                      </Link>
-                    </td>
-                    <td className="px-4 py-2.5 text-zinc-600">
-                      {p.customer?.display_name ?? "—"}
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <StatusBadge status={p.status} />
-                    </td>
-                    <td className="px-4 py-2.5 text-right tabular-nums">
-                      {totals.has(p.id) ? money(totals.get(p.id)) : "—"}
-                    </td>
-                    <td className="px-4 py-2.5 text-right text-zinc-500">
-                      {shortDate(p.updated_at)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
+      <Card pad={false}>
+        <div className="border-b border-line px-6 pb-4 pt-5">
+          <CardTitle>Recent plans</CardTitle>
         </div>
-      </section>
+        {plans.length === 0 ? (
+          <EmptyState icon={ClipboardList} title="No plans yet">
+            <Link href="/plans/new" className="text-brand-600 hover:underline">
+              Create the first one
+            </Link>
+          </EmptyState>
+        ) : (
+          <Table
+            head={
+              <tr>
+                <Th>Plan</Th>
+                <Th>Customer</Th>
+                <Th>Status</Th>
+                <Th right>Price</Th>
+                <Th right>Updated</Th>
+              </tr>
+            }
+          >
+            {plans.map((p) => (
+              <tr key={p.id} className="transition-colors hover:bg-surface/60">
+                <td className="px-4 py-3">
+                  <Link
+                    href={`/plans/${p.id}`}
+                    className="font-medium text-ink-900 hover:text-brand-600"
+                  >
+                    {p.title}
+                  </Link>
+                </td>
+                <td className="px-4 py-3 text-ink-600">
+                  {p.customer?.display_name ?? "—"}
+                </td>
+                <td className="px-4 py-3">
+                  <StatusBadge status={p.status} />
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums">
+                  {totals.has(p.id) ? money(totals.get(p.id)) : "—"}
+                </td>
+                <td className="px-4 py-3 text-right text-ink-400">
+                  {shortDate(p.updated_at)}
+                </td>
+              </tr>
+            ))}
+          </Table>
+        )}
+      </Card>
     </div>
   );
 }

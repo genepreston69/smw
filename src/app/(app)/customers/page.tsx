@@ -1,60 +1,62 @@
+import { Users } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { shortDate } from "@/lib/format";
+import { Card, EmptyState, PageHeader, Table, Th } from "@/components/ui";
 import type { Customer } from "@/lib/types";
 
 export default async function CustomersPage() {
   const { supabase } = await requireUser();
   const { data } = await supabase
     .from("customers")
-    .select("id, qb_id, display_name, company_name, email, phone, active, last_synced_at")
+    .select(
+      "id, qb_id, display_name, company_name, email, phone, active, last_synced_at",
+    )
     .order("display_name");
 
   const customers = (data ?? []) as Customer[];
 
   return (
-    <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-semibold">Customers</h1>
-        <p className="mt-1 text-sm text-zinc-500">
-          Imported from QuickBooks Online. Read-only — manage customers in
-          QuickBooks and re-sync from Settings.
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="Customers"
+        subtitle="Imported from QuickBooks Online. Read-only — manage customers in QuickBooks and re-sync from Settings."
+      />
 
-      <div className="overflow-hidden rounded-xl border border-zinc-200 bg-white">
+      <Card pad={false}>
         {customers.length === 0 ? (
-          <p className="p-6 text-sm text-zinc-500">
-            No customers yet. Connect QuickBooks in Settings and run a sync.
-          </p>
+          <EmptyState icon={Users} title="No customers yet">
+            Connect QuickBooks in Settings and run a sync.
+          </EmptyState>
         ) : (
-          <table className="w-full text-sm">
-            <thead className="bg-zinc-50 text-left text-xs uppercase tracking-wide text-zinc-500">
+          <Table
+            head={
               <tr>
-                <th className="px-4 py-2.5">Name</th>
-                <th className="px-4 py-2.5">Company</th>
-                <th className="px-4 py-2.5">Email</th>
-                <th className="px-4 py-2.5">Phone</th>
-                <th className="px-4 py-2.5 text-right">Last synced</th>
+                <Th>Name</Th>
+                <Th>Company</Th>
+                <Th>Email</Th>
+                <Th>Phone</Th>
+                <Th right>Last synced</Th>
               </tr>
-            </thead>
-            <tbody className="divide-y divide-zinc-100">
-              {customers.map((c) => (
-                <tr key={c.id} className="hover:bg-zinc-50">
-                  <td className="px-4 py-2.5 font-medium">{c.display_name}</td>
-                  <td className="px-4 py-2.5 text-zinc-600">
-                    {c.company_name ?? "—"}
-                  </td>
-                  <td className="px-4 py-2.5 text-zinc-600">{c.email ?? "—"}</td>
-                  <td className="px-4 py-2.5 text-zinc-600">{c.phone ?? "—"}</td>
-                  <td className="px-4 py-2.5 text-right text-zinc-500">
-                    {shortDate(c.last_synced_at)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+            }
+          >
+            {customers.map((c) => (
+              <tr key={c.id} className="transition-colors hover:bg-surface/60">
+                <td className="px-4 py-3 font-medium text-ink-900">
+                  {c.display_name}
+                </td>
+                <td className="px-4 py-3 text-ink-600">
+                  {c.company_name ?? "—"}
+                </td>
+                <td className="px-4 py-3 text-ink-600">{c.email ?? "—"}</td>
+                <td className="px-4 py-3 text-ink-600">{c.phone ?? "—"}</td>
+                <td className="px-4 py-3 text-right text-ink-400">
+                  {shortDate(c.last_synced_at)}
+                </td>
+              </tr>
+            ))}
+          </Table>
         )}
-      </div>
+      </Card>
     </div>
   );
 }

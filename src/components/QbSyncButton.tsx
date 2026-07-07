@@ -1,7 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import { RefreshCw } from "lucide-react";
 import { useRouter } from "next/navigation";
+import { buttonCls } from "@/components/ui";
 
 export function QbSyncButton() {
   const router = useRouter();
@@ -26,14 +28,15 @@ export function QbSyncButton() {
 
   return (
     <span className="flex items-center gap-3">
-      <button
-        onClick={sync}
-        disabled={busy}
-        className="rounded-md border border-zinc-300 px-4 py-2 text-sm font-medium hover:bg-zinc-50 disabled:opacity-50"
-      >
+      <button onClick={sync} disabled={busy} className={buttonCls("secondary")}>
+        <RefreshCw
+          size={15}
+          strokeWidth={2}
+          className={busy ? "animate-spin" : undefined}
+        />
         {busy ? "Syncing…" : "Sync customers & jobs"}
       </button>
-      {message && <span className="text-sm text-zinc-600">{message}</span>}
+      {message && <span className="text-sm text-ink-600">{message}</span>}
     </span>
   );
 }
