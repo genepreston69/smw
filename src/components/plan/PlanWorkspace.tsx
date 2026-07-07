@@ -152,6 +152,19 @@ export function PlanWorkspace(props: Props) {
   const [adding, setAdding] = useState<Draft>(newDraft(null));
   const [newPhaseName, setNewPhaseName] = useState("");
 
+  // Re-sync rows whenever the server sends fresh items (e.g. after adding or
+  // deleting a line), keeping any rows with unsaved local edits.
+  const [syncedItems, setSyncedItems] = useState(props.items);
+  if (props.items !== syncedItems) {
+    setSyncedItems(props.items);
+    setRows((rs) =>
+      props.items.map((li) => {
+        const local = rs.find((r) => r.id === li.id);
+        return local?.dirty ? local : toDraft(li);
+      }),
+    );
+  }
+
   const costs = useMemo(() => computeLineCosts(rows, params), [rows, params]);
   const totals = useMemo(() => sumCosts(costs), [costs]);
   const tbdCount = rows.filter((r) => r.is_tbd).length;
@@ -696,27 +709,28 @@ export function PlanWorkspace(props: Props) {
           )}
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[980px] text-xs">
-            <thead className="whitespace-nowrap border-b border-line bg-surface/70 text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
+        <div className="max-h-[70vh] overflow-auto">
+          <table className="w-full min-w-[1080px] text-xs">
+            <thead className="sticky top-0 z-10 whitespace-nowrap bg-surface text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-ink-400 shadow-[0_1px_0_0_var(--color-line)]">
               <tr>
                 <th className="px-2 py-2.5">Description</th>
                 <th className="px-1 py-2.5">Phase</th>
-                <th className="px-1 py-2.5">Pri</th>
+                <th className="px-1 py-2.5">Priority</th>
                 <th className="px-1 py-2.5">TBD</th>
                 <th className="px-1 py-2.5 text-right">Events</th>
-                <th className="px-1 py-2.5 text-right">Hrs/Pc</th>
+                <th className="px-1 py-2.5 text-right">Hrs / Piece</th>
                 <th className="px-1 py-2.5 text-right">Qty</th>
-                <th className="px-1 py-2.5 text-right">Bill $/hr</th>
+                <th className="px-1 py-2.5 text-right">Bill Rate</th>
                 <th className="px-1 py-2.5">Basis</th>
-                <th className="px-1 py-2.5 text-right">Len/SF</th>
-                <th className="px-1 py-2.5 text-right">Wt/LF</th>
-                <th className="px-1 py-2.5 text-right">Unit $</th>
-                <th className="px-1 py-2.5 text-right">Lump $</th>
-                <th className="px-1 py-2.5 text-right">Mkup %</th>
+                <th className="px-1 py-2.5 text-right">Length / SF</th>
+                <th className="px-1 py-2.5 text-right">Wt per LF</th>
+                <th className="px-1 py-2.5 text-right">Unit Cost</th>
+                <th className="px-1 py-2.5 text-right">Lump Sum</th>
+                <th className="px-1 py-2.5 text-right">Markup %</th>
                 <th className="px-1 py-2.5 text-right">Hours</th>
-                <th className="px-1 py-2.5 text-right">Mat $</th>
-                <th className="px-1 py-2.5 text-right">Price</th>
+                <th className="px-1 py-2.5 text-right">Labor $</th>
+                <th className="px-1 py-2.5 text-right">Material $</th>
+                <th className="px-1 py-2.5 text-right">Line Price</th>
                 {canEdit && <th className="px-1 py-2.5" />}
               </tr>
             </thead>
@@ -958,8 +972,6 @@ function LineRow({
   onDelete: () => void;
 }) {
   const num = (v: string) => parseFloat(v) || 0;
-  const weightBased = row.material_basis === "per_lb";
-  const lump = row.material_basis === "lump_sum";
 
   if (!edit) {
     const phase = phases.find((p) => p.id === row.phase_id);
@@ -1008,6 +1020,9 @@ function LineRow({
         </td>
         <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {round2(cost.totalHours)}
+        </td>
+        <td className="px-1 py-2 text-right tabular-nums text-ink-600">
+          {money(cost.laborPrice)}
         </td>
         <td className="px-1 py-2 text-right tabular-nums text-ink-600">
           {money(cost.materialPrice)}
@@ -1135,7 +1150,6 @@ function LineRow({
           step="any"
           min={0}
           value={row.length_per_piece}
-          disabled={lump}
           onChange={(e) => onPatch({ length_per_piece: num(e.target.value) })}
           className={`${inputCls} w-12 text-right`}
         />
@@ -1146,7 +1160,6 @@ function LineRow({
           step="any"
           min={0}
           value={row.weight_per_lf}
-          disabled={!weightBased}
           onChange={(e) => onPatch({ weight_per_lf: num(e.target.value) })}
           className={`${inputCls} w-12 text-right`}
         />
@@ -1157,7 +1170,6 @@ function LineRow({
           step="any"
           min={0}
           value={row.unit_cost}
-          disabled={lump}
           onChange={(e) => onPatch({ unit_cost: num(e.target.value) })}
           className={`${inputCls} w-14 text-right`}
         />
@@ -1168,7 +1180,6 @@ function LineRow({
           step="any"
           min={0}
           value={row.lump_sum_cost}
-          disabled={!lump}
           onChange={(e) => onPatch({ lump_sum_cost: num(e.target.value) })}
           className={`${inputCls} w-16 text-right`}
         />
@@ -1185,10 +1196,13 @@ function LineRow({
           className={`${inputCls} w-12 text-right`}
         />
       </td>
-      <td className="px-1 py-1.5 text-right tabular-nums text-ink-400">
+      <td className="px-1 py-1.5 text-right tabular-nums text-ink-600">
         {round2(cost.totalHours)}
       </td>
-      <td className="px-1 py-1.5 text-right tabular-nums text-ink-400">
+      <td className="px-1 py-1.5 text-right tabular-nums text-ink-600">
+        {money(cost.laborPrice)}
+      </td>
+      <td className="px-1 py-1.5 text-right tabular-nums text-ink-600">
         {money(cost.materialPrice)}
       </td>
       <td className="px-1 py-1.5 text-right font-medium tabular-nums text-ink-900">
