@@ -282,17 +282,24 @@ Every transition writes an `approvals` row and an `audit_log` entry.
 
 ---
 
-## 10. Open Questions / Decisions Needed From You
+## 10. Open Questions / Decisions
 
-1. **QuickBooks Online or Desktop/Enterprise?** (Determines the entire sync layer — see §2.)
-2. **How many companies (QB realms)?** One, or multi-tenant from day one?
-3. **What does an approved plan become in QB?** Estimate, Budget, Purchase Order, or nothing (stay app-only in v1)?
-4. **Approval routing rules** — single approver, or dollar-threshold / multi-step?
-5. **Line-item categories** — confirm the cost buckets (labor, material, subcontractor, equipment, other) and whether markup/margin is per-line or per-plan.
+**Decided 2026-07-07:**
+
+1. ~~QuickBooks Online or Desktop?~~ → **QuickBooks Online.** The webhook + OAuth2 sync design in §5 applies as written.
+2. ~~How many companies (QB realms)?~~ → **One enterprise** (single QB realm). Keep `org_id` columns for future-proofing but build single-tenant.
+3. ~~What does an approved plan become in QB?~~ → **Nothing for now — plans stay app-only.** Phase 5 (push to QB) is deferred indefinitely.
+4. ~~Approval routing rules?~~ → **Dollar thresholds with multiple approvers** (multi-step). See `SPREADSHEET_REVIEW.md` §6.5 for the proposed threshold table.
+5. ~~Line-item categories / markup model?~~ → Defined by the current Excel workbook (see `SPREADSHEET_REVIEW.md`): weight-based steel, per-each, per-SF, and lump-sum material lines; per-line material markup; labor cost rate vs billing rate; consumables as % of labor price; job-level overhead pool allocated pro-rata; Priority 1/2/3 scope tiers; phase grouping.
+
+**Still open:**
+
 6. **User count & roles** — how many users, and who approves?
-7. **Do you need actual-vs-estimate tracking** (pulling actual costs back from QB) in the roadmap, or is estimating enough for v1?
+7. **Actual-vs-estimate tracking** (pulling actual costs back from QB) — in the roadmap, or is estimating enough?
+8. The five open items in `SPREADSHEET_REVIEW.md` §8 (consumables base, overhead derivation, threshold amounts, TBD gate, blended vs per-crew labor cost rate).
 
 ---
 
-*Next step: confirm the answers to §10 (especially #1), and I'll turn this into a
-concrete schema (SQL migrations) + a scaffolded Next.js/Supabase repo.*
+*Next step: answer the remaining items above, then this becomes a concrete schema
+(SQL migrations) + a scaffolded Next.js/Supabase repo. The line-item schema is
+already drafted in `SPREADSHEET_REVIEW.md` §6.*
