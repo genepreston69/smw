@@ -1,15 +1,19 @@
-import { NextResponse } from "next/server";
+import { NextResponse, type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
 import { createClient } from "@/lib/supabase/server";
 import { authorizeUrl } from "@/lib/quickbooks";
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // The domain the admin is browsing — used as the OAuth redirect origin so
+  // the registered redirect URI always matches the canonical domain.
+  const origin = request.nextUrl.origin;
+
   const supabase = await createClient();
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return NextResponse.redirect(new URL("/login", baseUrl()));
+  if (!user) return NextResponse.redirect(new URL("/login", origin));
 
   const { data: profile } = await supabase
     .from("profiles")
@@ -33,14 +37,5 @@ export async function GET() {
     path: "/",
   });
 
-  return NextResponse.redirect(authorizeUrl(state));
-}
-
-function baseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000")
-  );
+  return NextResponse.redirect(authorizeUrl(state, origin));
 }

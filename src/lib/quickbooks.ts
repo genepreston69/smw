@@ -29,20 +29,22 @@ function clientSecret(): string {
   return v;
 }
 
-export function redirectUri(): string {
-  const base =
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : null);
+// The redirect URI must match Intuit's registered value exactly. Prefer the
+// canonical configured URL; otherwise derive it from the domain the user is
+// actually browsing (requestOrigin) so per-deployment *.vercel.app hosts are
+// never sent to Intuit by accident.
+export function redirectUri(requestOrigin?: string): string {
+  const base = process.env.NEXT_PUBLIC_APP_URL ?? requestOrigin;
   if (!base) throw new Error("Missing NEXT_PUBLIC_APP_URL");
   return `${base.replace(/\/$/, "")}/api/qb/callback`;
 }
 
-export function authorizeUrl(state: string): string {
+export function authorizeUrl(state: string, requestOrigin?: string): string {
   const params = new URLSearchParams({
     client_id: clientId(),
     response_type: "code",
     scope: "com.intuit.quickbooks.accounting",
-    redirect_uri: redirectUri(),
+    redirect_uri: redirectUri(requestOrigin),
     state,
   });
   return `${AUTH_BASE}?${params}`;
@@ -76,12 +78,15 @@ async function tokenRequest(body: URLSearchParams): Promise<TokenResponse> {
   return res.json();
 }
 
-export async function exchangeCode(code: string): Promise<TokenResponse> {
+export async function exchangeCode(
+  code: string,
+  requestOrigin?: string,
+): Promise<TokenResponse> {
   return tokenRequest(
     new URLSearchParams({
       grant_type: "authorization_code",
       code,
-      redirect_uri: redirectUri(),
+      redirect_uri: redirectUri(requestOrigin),
     }),
   );
 }

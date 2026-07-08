@@ -5,11 +5,12 @@ import { exchangeCode, saveConnection } from "@/lib/quickbooks";
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
+  const origin = url.origin;
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const realmId = url.searchParams.get("realmId");
 
-  const settings = new URL("/settings", baseUrl());
+  const settings = new URL("/settings", origin);
 
   const cookieStore = await cookies();
   const expectedState = cookieStore.get("qb_oauth_state")?.value;
@@ -24,10 +25,10 @@ export async function GET(request: NextRequest) {
   const {
     data: { user },
   } = await supabase.auth.getUser();
-  if (!user) return NextResponse.redirect(new URL("/login", baseUrl()));
+  if (!user) return NextResponse.redirect(new URL("/login", origin));
 
   try {
-    const tokens = await exchangeCode(code);
+    const tokens = await exchangeCode(code, origin);
     await saveConnection({ realmId, tokens, connectedBy: user.id });
     settings.searchParams.set("qb_connected", "1");
   } catch (e) {
@@ -37,13 +38,4 @@ export async function GET(request: NextRequest) {
     );
   }
   return NextResponse.redirect(settings);
-}
-
-function baseUrl(): string {
-  return (
-    process.env.NEXT_PUBLIC_APP_URL ??
-    (process.env.VERCEL_URL
-      ? `https://${process.env.VERCEL_URL}`
-      : "http://localhost:3000")
-  );
 }
