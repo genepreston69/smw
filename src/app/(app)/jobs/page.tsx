@@ -2,6 +2,8 @@ import { Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { shortDate } from "@/lib/format";
 import { Card, EmptyState, PageHeader, Table, Th } from "@/components/ui";
+import { DeleteRowButton } from "@/components/DeleteRowButton";
+import { deleteJob } from "./actions";
 
 interface JobRow {
   id: string;
@@ -13,7 +15,8 @@ interface JobRow {
 }
 
 export default async function JobsPage() {
-  const { supabase } = await requireUser();
+  const { supabase, profile } = await requireUser();
+  const isAdmin = profile.role === "admin";
   const { data } = await supabase
     .from("jobs")
     .select(
@@ -43,6 +46,7 @@ export default async function JobsPage() {
                 <Th>Customer</Th>
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
+                {isAdmin && <Th right />}
               </tr>
             }
           >
@@ -58,6 +62,15 @@ export default async function JobsPage() {
                 <td className="px-4 py-3 text-right text-ink-400">
                   {shortDate(j.last_synced_at)}
                 </td>
+                {isAdmin && (
+                  <td className="px-4 py-3 text-right">
+                    <DeleteRowButton
+                      action={deleteJob.bind(null, j.id)}
+                      confirmText={`Delete job "${j.name}"? This only removes the local record — the job stays in QuickBooks and will re-import on the next sync.`}
+                      title="Delete job"
+                    />
+                  </td>
+                )}
               </tr>
             ))}
           </Table>

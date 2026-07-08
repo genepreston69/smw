@@ -2,10 +2,13 @@ import { Users } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { shortDate } from "@/lib/format";
 import { Card, EmptyState, PageHeader, Table, Th } from "@/components/ui";
+import { DeleteRowButton } from "@/components/DeleteRowButton";
+import { deleteCustomer } from "./actions";
 import type { Customer } from "@/lib/types";
 
 export default async function CustomersPage() {
-  const { supabase } = await requireUser();
+  const { supabase, profile } = await requireUser();
+  const isAdmin = profile.role === "admin";
   const { data } = await supabase
     .from("customers")
     .select(
@@ -19,7 +22,11 @@ export default async function CustomersPage() {
     <div>
       <PageHeader
         title="Customers"
-        subtitle="Imported from QuickBooks Online. Read-only — manage customers in QuickBooks and re-sync from Settings."
+        subtitle={
+          isAdmin
+            ? "Imported from QuickBooks Online. Manage customers in QuickBooks and re-sync from Settings; admins can delete records here (a re-sync will re-import anything still in QuickBooks)."
+            : "Imported from QuickBooks Online. Read-only — manage customers in QuickBooks and re-sync from Settings."
+        }
       />
 
       <Card pad={false}>
@@ -36,6 +43,7 @@ export default async function CustomersPage() {
                 <Th>Email</Th>
                 <Th>Phone</Th>
                 <Th right>Last synced</Th>
+                {isAdmin && <Th right />}
               </tr>
             }
           >
@@ -52,6 +60,15 @@ export default async function CustomersPage() {
                 <td className="px-4 py-3 text-right text-ink-400">
                   {shortDate(c.last_synced_at)}
                 </td>
+                {isAdmin && (
+                  <td className="px-4 py-3 text-right">
+                    <DeleteRowButton
+                      action={deleteCustomer.bind(null, c.id)}
+                      confirmText={`Delete customer "${c.display_name}"? This only removes the local record — the customer stays in QuickBooks and will re-import on the next sync.`}
+                      title="Delete customer"
+                    />
+                  </td>
+                )}
               </tr>
             ))}
           </Table>
