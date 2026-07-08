@@ -1,11 +1,11 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { exchangeCode, saveConnection } from "@/lib/quickbooks";
+import { exchangeCode, publicOrigin, saveConnection } from "@/lib/quickbooks";
 
 export async function GET(request: NextRequest) {
   const url = request.nextUrl;
-  const origin = url.origin;
+  const origin = publicOrigin(request);
   const code = url.searchParams.get("code");
   const state = url.searchParams.get("state");
   const realmId = url.searchParams.get("realmId");

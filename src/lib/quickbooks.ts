@@ -29,6 +29,19 @@ function clientSecret(): string {
   return v;
 }
 
+// The public origin the user is browsing. On Vercel the request's own URL
+// carries the internal deployment host — the real domain is in
+// x-forwarded-host — so headers take priority.
+export function publicOrigin(request: {
+  headers: Headers;
+  nextUrl: { origin: string };
+}): string {
+  const host =
+    request.headers.get("x-forwarded-host") ?? request.headers.get("host");
+  const proto = request.headers.get("x-forwarded-proto") ?? "https";
+  return host ? `${proto}://${host}` : request.nextUrl.origin;
+}
+
 // The redirect URI must match Intuit's registered value exactly. Prefer the
 // canonical configured URL; otherwise derive it from the domain the user is
 // actually browsing (requestOrigin) so per-deployment *.vercel.app hosts are

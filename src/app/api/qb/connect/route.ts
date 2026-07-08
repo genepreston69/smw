@@ -2,12 +2,12 @@ import { NextResponse, type NextRequest } from "next/server";
 import { cookies } from "next/headers";
 import { randomBytes } from "crypto";
 import { createClient } from "@/lib/supabase/server";
-import { authorizeUrl } from "@/lib/quickbooks";
+import { authorizeUrl, publicOrigin } from "@/lib/quickbooks";
 
 export async function GET(request: NextRequest) {
   // The domain the admin is browsing — used as the OAuth redirect origin so
   // the registered redirect URI always matches the canonical domain.
-  const origin = request.nextUrl.origin;
+  const origin = publicOrigin(request);
 
   const supabase = await createClient();
   const {
