@@ -399,7 +399,18 @@ export async function syncCustomersAndJobs(): Promise<{
   let customerCount = 0;
   let jobCount = 0;
 
-  for (const { accessToken, realmId } of connections) {
+  for (const { accessToken, realmId, companyName } of connections) {
+    // Self-heal connections created before company names were captured.
+    if (!companyName) {
+      const fetched = await fetchCompanyName(accessToken, realmId);
+      if (fetched) {
+        await supabase
+          .from("qb_connections")
+          .update({ company_name: fetched })
+          .eq("realm_id", realmId);
+      }
+    }
+
     const all = await qboQuery<QboCustomer>(
       accessToken,
       realmId,
