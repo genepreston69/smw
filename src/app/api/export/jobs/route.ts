@@ -24,7 +24,9 @@ export async function GET() {
       supabase.from("qb_connection_status").select("realm_id, company_name"),
       supabase
         .from("job_cost_totals")
-        .select("job_id, total_amount, total_hours"),
+        .select(
+          "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount",
+        ),
     ]);
 
   const companyByRealm = new Map(
@@ -36,6 +38,9 @@ export async function GET() {
       {
         amount: Number(r.total_amount ?? 0),
         hours: Number(r.total_hours ?? 0),
+        materials: Number(r.materials_amount ?? 0),
+        labor: Number(r.labor_amount ?? 0),
+        other: Number(r.other_amount ?? 0),
       },
     ]),
   );
@@ -55,6 +60,9 @@ export async function GET() {
       "QB Company",
       "Customer",
       "Intercompany",
+      "Materials",
+      "Labor",
+      "Other Direct Costs",
       "Actual Cost",
       "Actual Hours",
       "Active",
@@ -70,6 +78,9 @@ export async function GET() {
         isEnterpriseName(j.customer?.company_name)
           ? "Yes"
           : "No",
+        cost ? cost.materials.toFixed(2) : "",
+        cost ? cost.labor.toFixed(2) : "",
+        cost ? cost.other.toFixed(2) : "",
         cost ? cost.amount.toFixed(2) : "",
         cost && cost.hours > 0 ? cost.hours.toFixed(1) : "",
         j.active ? "Yes" : "No",

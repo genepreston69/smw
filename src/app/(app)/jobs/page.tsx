@@ -2,10 +2,8 @@ import Link from "next/link";
 import { Download, Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { isEnterpriseName } from "@/lib/enterprise";
-import { money, shortDate } from "@/lib/format";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
-import { DeleteRowButton } from "@/components/DeleteRowButton";
-import { deleteJob } from "./actions";
+import { JobRows, type JobRowData } from "./JobRows";
 
 interface JobRow {
   id: string;
@@ -44,10 +42,7 @@ export default async function JobsPage({
   );
   const showCompany = companyByRealm.size > 1;
   const costByJob = new Map(
-    (costRows ?? []).map((r) => [
-      r.job_id as string,
-      { amount: Number(r.total_amount ?? 0), hours: Number(r.total_hours ?? 0) },
-    ]),
+    (costRows ?? []).map((r) => [r.job_id as string, Number(r.total_amount ?? 0)]),
   );
 
   const isIntercompany = (j: JobRow) =>
@@ -57,6 +52,16 @@ export default async function JobsPage({
   const intercompanyJobs = allJobs.filter(isIntercompany);
   const customerJobs = allJobs.filter((j) => !isIntercompany(j));
   const jobs = intercompanyTab ? intercompanyJobs : customerJobs;
+
+  const rows: JobRowData[] = jobs.map((j) => ({
+    id: j.id,
+    name: j.name,
+    companyName: (j.realm_id && companyByRealm.get(j.realm_id)) || null,
+    customerName: j.customer?.display_name ?? null,
+    active: j.active,
+    lastSyncedAt: j.last_synced_at,
+    totalCost: costByJob.has(j.id) ? costByJob.get(j.id)! : null,
+  }));
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -72,7 +77,7 @@ export default async function JobsPage({
         subtitle={
           intercompanyTab
             ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
-            : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these."
+            : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, labor, and other direct costs since Jan 1, 2026)."
         }
         action={
           <a href="/api/export/jobs" className={buttonCls("secondary")}>
@@ -92,7 +97,7 @@ export default async function JobsPage({
       </div>
 
       <Card pad={false}>
-        {jobs.length === 0 ? (
+        {rows.length === 0 ? (
           <EmptyState
             icon={Wrench}
             title={
@@ -117,39 +122,7 @@ export default async function JobsPage({
               </tr>
             }
           >
-            {jobs.map((j) => (
-              <tr key={j.id} className="transition-colors hover:bg-surface/60">
-                <td className="px-4 py-3 font-medium text-ink-900">{j.name}</td>
-                {showCompany && (
-                  <td className="px-4 py-3 text-ink-600">
-                    {(j.realm_id && companyByRealm.get(j.realm_id)) ?? "—"}
-                  </td>
-                )}
-                <td className="px-4 py-3 text-ink-600">
-                  {j.customer?.display_name ?? "—"}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {costByJob.has(j.id)
-                    ? money(costByJob.get(j.id)!.amount)
-                    : "—"}
-                </td>
-                <td className="px-4 py-3 text-ink-600">
-                  {j.active ? "Yes" : "No"}
-                </td>
-                <td className="px-4 py-3 text-right text-ink-400">
-                  {shortDate(j.last_synced_at)}
-                </td>
-                {isAdmin && (
-                  <td className="px-4 py-3 text-right">
-                    <DeleteRowButton
-                      action={deleteJob.bind(null, j.id)}
-                      confirmText={`Delete job "${j.name}"? This only removes the local record — the job stays in QuickBooks and will re-import on the next sync.`}
-                      title="Delete job"
-                    />
-                  </td>
-                )}
-              </tr>
-            ))}
+            <JobRows jobs={rows} showCompany={showCompany} isAdmin={isAdmin} />
           </Table>
         )}
       </Card>
