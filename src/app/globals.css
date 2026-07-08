@@ -1,0 +1,46 @@
+@import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   SMW design tokens — marine-industrial palette.
+   Harbor navy for chrome, steel blue for actions, cool grays for surfaces.
+--------------------------------------------------------------------------- */
+@theme {
+  --font-sans: var(--font-geist-sans), system-ui, sans-serif;
+  --font-mono: var(--font-geist-mono), ui-monospace, monospace;
+
+  /* Harbor navy (sidebar / chrome) */
+  --color-navy-950: #081a2b;
+  --color-navy-900: #0d2438;
+  --color-navy-800: #123351;
+  --color-navy-700: #1d4467;
+  --color-navy-600: #2a577f;
+
+  /* Steel blue (actions / brand accent) */
+  --color-brand-700: #14539e;
+  --color-brand-600: #1a63b8;
+  --color-brand-500: #2374d4;
+  --color-brand-100: #dcebfa;
+  --color-brand-50: #eef5fc;
+
+  /* Cool ink + surfaces */
+  --color-ink-900: #16222e;
+  --color-ink-600: #52616f;
+  --color-ink-400: #93a1ae;
+  --color-surface: #f4f6f8;
+  --color-line: #e2e8ee;
+
+  /* Status (reserved) */
+  --color-ok-600: #177245;
+  --color-ok-50: #e9f6ef;
+  --color-warn-700: #9a5b08;
+  --color-warn-50: #fdf4e3;
+  --color-bad-600: #bb3333;
+  --color-bad-50: #fbeeee;
+}
+
+body {
+  background: var(--color-surface);
+  color: var(--color-ink-900);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
