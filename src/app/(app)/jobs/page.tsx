@@ -21,7 +21,8 @@ export default async function JobsPage({
   searchParams: Promise<{ tab?: string }>;
 }) {
   const { tab } = await searchParams;
-  const intercompanyTab = tab === "intercompany";
+  const activeTab =
+    tab === "intercompany" || tab === "nonbillable" ? tab : "customer";
 
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
@@ -48,10 +49,19 @@ export default async function JobsPage({
   const isIntercompany = (j: JobRow) =>
     isEnterpriseName(j.customer?.display_name) ||
     isEnterpriseName(j.customer?.company_name);
+  // EQP-prefixed job numbers are internal equipment work — never billable.
+  const isNonBillable = (j: JobRow) => /^eqp/i.test(j.name.trim());
 
-  const intercompanyJobs = allJobs.filter(isIntercompany);
-  const customerJobs = allJobs.filter((j) => !isIntercompany(j));
-  const jobs = intercompanyTab ? intercompanyJobs : customerJobs;
+  const nonBillableJobs = allJobs.filter(isNonBillable);
+  const billableJobs = allJobs.filter((j) => !isNonBillable(j));
+  const intercompanyJobs = billableJobs.filter(isIntercompany);
+  const customerJobs = billableJobs.filter((j) => !isIntercompany(j));
+  const jobs =
+    activeTab === "nonbillable"
+      ? nonBillableJobs
+      : activeTab === "intercompany"
+        ? intercompanyJobs
+        : customerJobs;
 
   const rows: JobRowData[] = jobs.map((j) => ({
     id: j.id,
@@ -75,9 +85,11 @@ export default async function JobsPage({
       <PageHeader
         title="Jobs"
         subtitle={
-          intercompanyTab
-            ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
-            : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, labor, and other direct costs since Jan 1, 2026)."
+          activeTab === "nonbillable"
+            ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
+            : activeTab === "intercompany"
+              ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
+              : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, labor, and other direct costs since Jan 1, 2026)."
         }
         action={
           <a href="/api/export/jobs" className={buttonCls("secondary")}>
@@ -88,11 +100,20 @@ export default async function JobsPage({
       />
 
       <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
-        <Link href="/jobs" className={tabCls(!intercompanyTab)}>
+        <Link href="/jobs" className={tabCls(activeTab === "customer")}>
           Customer jobs ({customerJobs.length})
         </Link>
-        <Link href="/jobs?tab=intercompany" className={tabCls(intercompanyTab)}>
+        <Link
+          href="/jobs?tab=intercompany"
+          className={tabCls(activeTab === "intercompany")}
+        >
           Intercompany ({intercompanyJobs.length})
+        </Link>
+        <Link
+          href="/jobs?tab=nonbillable"
+          className={tabCls(activeTab === "nonbillable")}
+        >
+          Non-Billable ({nonBillableJobs.length})
         </Link>
       </div>
 
@@ -101,12 +122,18 @@ export default async function JobsPage({
           <EmptyState
             icon={Wrench}
             title={
-              intercompanyTab ? "No intercompany jobs" : "No customer jobs yet"
+              activeTab === "nonbillable"
+                ? "No non-billable jobs"
+                : activeTab === "intercompany"
+                  ? "No intercompany jobs"
+                  : "No customer jobs yet"
             }
           >
-            {intercompanyTab
-              ? "Jobs whose customer is an enterprise company will appear here."
-              : "Connect QuickBooks in Settings and run a sync."}
+            {activeTab === "nonbillable"
+              ? "Jobs whose number starts with EQP will appear here."
+              : activeTab === "intercompany"
+                ? "Jobs whose customer is an enterprise company will appear here."
+                : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (
           <Table
