@@ -1,7 +1,14 @@
-import { Users } from "lucide-react";
+import { Download, Users } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { shortDate } from "@/lib/format";
-import { Card, EmptyState, PageHeader, Table, Th } from "@/components/ui";
+import {
+  Card,
+  EmptyState,
+  PageHeader,
+  Table,
+  Th,
+  buttonCls,
+} from "@/components/ui";
 import { DeleteRowButton } from "@/components/DeleteRowButton";
 import { deleteCustomer } from "./actions";
 import type { Customer } from "@/lib/types";
@@ -33,6 +40,12 @@ export default async function CustomersPage() {
           isAdmin
             ? "Imported from QuickBooks Online. Manage customers in QuickBooks and re-sync from Settings; admins can delete records here (a re-sync will re-import anything still in QuickBooks)."
             : "Imported from QuickBooks Online. Read-only — manage customers in QuickBooks and re-sync from Settings."
+        }
+        action={
+          <a href="/api/export/customers" className={buttonCls("secondary")}>
+            <Download size={15} strokeWidth={2} />
+            Export to Excel
+          </a>
         }
       />
 

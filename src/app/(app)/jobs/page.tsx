@@ -1,34 +1,44 @@
-import { Wrench } from "lucide-react";
+import Link from "next/link";
+import { Download, Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { isEnterpriseName } from "@/lib/enterprise";
 import { money, shortDate } from "@/lib/format";
-import { Card, EmptyState, PageHeader, Table, Th } from "@/components/ui";
+import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import { DeleteRowButton } from "@/components/DeleteRowButton";
 import { deleteJob } from "./actions";
 
 interface JobRow {
   id: string;
   name: string;
+  realm_id: string | null;
   fully_qualified_name: string | null;
   active: boolean;
   last_synced_at: string | null;
-  customer: { display_name: string } | null;
+  customer: { display_name: string; company_name: string | null } | null;
 }
 
-export default async function JobsPage() {
+export default async function JobsPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string }>;
+}) {
+  const { tab } = await searchParams;
+  const intercompanyTab = tab === "intercompany";
+
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
   const [{ data }, { data: connRows }, { data: costRows }] = await Promise.all([
     supabase
       .from("jobs")
       .select(
-        "id, name, realm_id, fully_qualified_name, active, last_synced_at, customer:customers(display_name)",
+        "id, name, realm_id, fully_qualified_name, active, last_synced_at, customer:customers(display_name, company_name)",
       )
       .order("name"),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
     supabase.from("job_cost_totals").select("job_id, total_amount, total_hours"),
   ]);
 
-  const jobs = (data ?? []) as unknown as (JobRow & { realm_id: string | null })[];
+  const allJobs = (data ?? []) as unknown as JobRow[];
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
   );
@@ -40,17 +50,58 @@ export default async function JobsPage() {
     ]),
   );
 
+  const isIntercompany = (j: JobRow) =>
+    isEnterpriseName(j.customer?.display_name) ||
+    isEnterpriseName(j.customer?.company_name);
+
+  const intercompanyJobs = allJobs.filter(isIntercompany);
+  const customerJobs = allJobs.filter((j) => !isIntercompany(j));
+  const jobs = intercompanyTab ? intercompanyJobs : customerJobs;
+
+  const tabCls = (active: boolean) =>
+    `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
+      active
+        ? "bg-navy-900 text-white"
+        : "text-ink-600 hover:bg-surface hover:text-ink-900"
+    }`;
+
   return (
     <div>
       <PageHeader
         title="Jobs"
-        subtitle="QuickBooks projects and sub-customers. Job plans attach to these."
+        subtitle={
+          intercompanyTab
+            ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
+            : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these."
+        }
+        action={
+          <a href="/api/export/jobs" className={buttonCls("secondary")}>
+            <Download size={15} strokeWidth={2} />
+            Export to Excel
+          </a>
+        }
       />
+
+      <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
+        <Link href="/jobs" className={tabCls(!intercompanyTab)}>
+          Customer jobs ({customerJobs.length})
+        </Link>
+        <Link href="/jobs?tab=intercompany" className={tabCls(intercompanyTab)}>
+          Intercompany ({intercompanyJobs.length})
+        </Link>
+      </div>
 
       <Card pad={false}>
         {jobs.length === 0 ? (
-          <EmptyState icon={Wrench} title="No jobs yet">
-            Connect QuickBooks in Settings and run a sync.
+          <EmptyState
+            icon={Wrench}
+            title={
+              intercompanyTab ? "No intercompany jobs" : "No customer jobs yet"
+            }
+          >
+            {intercompanyTab
+              ? "Jobs whose customer is an enterprise company will appear here."
+              : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (
           <Table
