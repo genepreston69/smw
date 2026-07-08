@@ -89,7 +89,7 @@ export default async function JobsPage({
             ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
             : activeTab === "intercompany"
               ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
-              : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, labor, and other direct costs since Jan 1, 2026)."
+              : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
         }
         action={
           <a href="/api/export/jobs" className={buttonCls("secondary")}>

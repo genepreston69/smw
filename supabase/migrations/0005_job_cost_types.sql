@@ -8,9 +8,9 @@
 --               name indicates labor, payroll, or wages
 --   other     — all remaining account-based direct costs
 --
--- The sync only imports transactions dated on or after 2026-01-01
--- (JOB_COSTS_START_DATE in src/lib/quickbooks.ts); each sync fully
--- refreshes a company's rows, so pre-2026 rows disappear on the next run.
+-- The sync only imports transactions dated on or after JOB_COSTS_START_DATE
+-- (src/lib/quickbooks.ts); each sync fully refreshes a company's rows, so
+-- rows before the cutoff disappear on the next run.
 -- =============================================================================
 
 -- Idempotent guards so re-running (e.g. pasted into the SQL editor twice)

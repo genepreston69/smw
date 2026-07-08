@@ -347,8 +347,8 @@ interface QboTimeActivity {
 const DEFAULT_LABOR_COST_RATE = 37.15;
 
 // Only transactions dated on or after this are imported into job_costs.
-// The transaction-history feature pools costs from the start of 2026.
-const JOB_COSTS_START_DATE = "2026-01-01";
+// The transaction-history feature pools costs from the start of 2023.
+const JOB_COSTS_START_DATE = "2023-01-01";
 
 // Direct-cost buckets for the per-job transaction history.
 type CostType = "materials" | "labor" | "other";
