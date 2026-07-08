@@ -308,6 +308,44 @@ interface QboCustomer {
   BillAddr?: Record<string, unknown>;
 }
 
+interface QboExpenseLine {
+  Id?: string;
+  Amount?: number;
+  Description?: string;
+  DetailType?: string;
+  ItemBasedExpenseLineDetail?: {
+    CustomerRef?: { value: string };
+    ItemRef?: { name?: string };
+  };
+  AccountBasedExpenseLineDetail?: {
+    CustomerRef?: { value: string };
+    AccountRef?: { name?: string };
+  };
+}
+
+interface QboTxn {
+  Id: string;
+  TxnDate?: string;
+  VendorRef?: { name?: string };
+  EntityRef?: { name?: string };
+  Line?: QboExpenseLine[];
+}
+
+interface QboTimeActivity {
+  Id: string;
+  TxnDate?: string;
+  CustomerRef?: { value: string };
+  EmployeeRef?: { name?: string };
+  VendorRef?: { name?: string };
+  Description?: string;
+  Hours?: number;
+  Minutes?: number;
+}
+
+// Internal blended labor cost rate used to value time entries — matches the
+// estimating default (project_plans.labor_cost_rate default).
+const DEFAULT_LABOR_COST_RATE = 37.15;
+
 async function qboQuery<T>(
   accessToken: string,
   realmId: string,
@@ -429,4 +467,149 @@ export async function syncCustomersAndJobs(): Promise<{
     jobs: jobCount,
     companies: connections.length,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Actual job costs: bill/purchase lines tagged to a job in QuickBooks
+// ---------------------------------------------------------------------------
+
+function extractJobCostRows(
+  txns: QboTxn[],
+  txnType: "Bill" | "Purchase",
+  jobIdByQbId: Map<string, string>,
+  orgId: string,
+  realmId: string,
+  now: string,
+) {
+  const rows = [];
+  for (const txn of txns) {
+    const vendor = txn.VendorRef?.name ?? txn.EntityRef?.name ?? null;
+    for (const line of txn.Line ?? []) {
+      const detail =
+        line.ItemBasedExpenseLineDetail ?? line.AccountBasedExpenseLineDetail;
+      const customerQbId = detail?.CustomerRef?.value;
+      if (!customerQbId) continue;
+      const jobId = jobIdByQbId.get(customerQbId);
+      if (!jobId) continue; // tagged to a top-level customer, not a job
+      rows.push({
+        org_id: orgId,
+        realm_id: realmId,
+        job_id: jobId,
+        qb_txn_type: txnType,
+        qb_txn_id: txn.Id,
+        qb_line_id: line.Id ?? "0",
+        txn_date: txn.TxnDate ?? null,
+        vendor_name: vendor,
+        description: line.Description ?? null,
+        category:
+          line.ItemBasedExpenseLineDetail?.ItemRef?.name ??
+          line.AccountBasedExpenseLineDetail?.AccountRef?.name ??
+          null,
+        amount: line.Amount ?? 0,
+        last_synced_at: now,
+      });
+    }
+  }
+  return rows;
+}
+
+/** Import actual costs (bill/purchase lines tagged to jobs) for all companies. */
+export async function syncJobCosts(): Promise<{
+  costLines: number;
+  companies: number;
+}> {
+  const connections = await getValidConnections();
+  const supabase = createServiceClient();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("id")
+    .order("created_at")
+    .limit(1)
+    .single();
+  if (!org) throw new Error("No organization found");
+
+  let costLines = 0;
+
+  for (const { accessToken, realmId } of connections) {
+    const now = new Date().toISOString();
+
+    const { data: jobRows } = await supabase
+      .from("jobs")
+      .select("id, qb_id")
+      .eq("org_id", org.id)
+      .eq("realm_id", realmId);
+    const jobIdByQbId = new Map(
+      (jobRows ?? []).map((j) => [j.qb_id as string, j.id as string]),
+    );
+    if (jobIdByQbId.size === 0) continue; // no jobs synced for this company yet
+
+    const [bills, purchases, timeActivities] = [
+      await qboQuery<QboTxn>(accessToken, realmId, "SELECT * FROM Bill"),
+      await qboQuery<QboTxn>(accessToken, realmId, "SELECT * FROM Purchase"),
+      await qboQuery<QboTimeActivity>(
+        accessToken,
+        realmId,
+        "SELECT * FROM TimeActivity",
+      ),
+    ];
+
+    const timeRows = [];
+    for (const t of timeActivities) {
+      const jobId = t.CustomerRef?.value
+        ? jobIdByQbId.get(t.CustomerRef.value)
+        : undefined;
+      if (!jobId) continue;
+      const hours = (t.Hours ?? 0) + (t.Minutes ?? 0) / 60;
+      if (hours <= 0) continue;
+      timeRows.push({
+        org_id: org.id,
+        realm_id: realmId,
+        job_id: jobId,
+        qb_txn_type: "TimeActivity",
+        qb_txn_id: t.Id,
+        qb_line_id: "0",
+        txn_date: t.TxnDate ?? null,
+        vendor_name: t.EmployeeRef?.name ?? t.VendorRef?.name ?? null,
+        description: t.Description ?? null,
+        category: "Labor (time entries)",
+        amount: hours * DEFAULT_LABOR_COST_RATE,
+        hours,
+        last_synced_at: now,
+      });
+    }
+
+    const rows = [
+      ...extractJobCostRows(bills, "Bill", jobIdByQbId, org.id, realmId, now),
+      ...extractJobCostRows(
+        purchases,
+        "Purchase",
+        jobIdByQbId,
+        org.id,
+        realmId,
+        now,
+      ),
+      ...timeRows,
+    ];
+
+    // Full refresh per company so edits/deletions in QuickBooks are reflected.
+    const { error: delError } = await supabase
+      .from("job_costs")
+      .delete()
+      .eq("org_id", org.id)
+      .eq("realm_id", realmId);
+    if (delError) throw new Error(`Job cost refresh failed: ${delError.message}`);
+
+    if (rows.length > 0) {
+      // Insert in chunks to stay under request size limits.
+      for (let i = 0; i < rows.length; i += 500) {
+        const { error } = await supabase
+          .from("job_costs")
+          .insert(rows.slice(i, i + 500));
+        if (error) throw new Error(`Job cost insert failed: ${error.message}`);
+      }
+    }
+    costLines += rows.length;
+  }
+
+  return { costLines, companies: connections.length };
 }

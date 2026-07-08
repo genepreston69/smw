@@ -18,7 +18,7 @@ export function QbSyncButton() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Sync failed");
       setMessage(
-        `Imported ${json.customers} customers and ${json.jobs} jobs from ${json.companies} ${json.companies === 1 ? "company" : "companies"}.`,
+        `Imported ${json.customers} customers, ${json.jobs} jobs, and ${json.costLines ?? 0} cost lines from ${json.companies} ${json.companies === 1 ? "company" : "companies"}.`,
       );
       router.refresh();
     } catch (e) {

@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { syncCustomersAndJobs } from "@/lib/quickbooks";
+import { syncCustomersAndJobs, syncJobCosts } from "@/lib/quickbooks";
 
 export async function POST() {
   const supabase = await createClient();
@@ -25,7 +25,8 @@ export async function POST() {
 
   try {
     const result = await syncCustomersAndJobs();
-    return NextResponse.json({ ok: true, ...result });
+    const costs = await syncJobCosts();
+    return NextResponse.json({ ok: true, ...result, costLines: costs.costLines });
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Sync failed" },

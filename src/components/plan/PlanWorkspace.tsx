@@ -64,6 +64,11 @@ interface Props {
   jobs: { id: string; name: string; customer_id: string | null }[];
   profiles: Profile[];
   me: Profile;
+  actuals?: {
+    total: number;
+    hours: number;
+    byCategory: { name: string; amount: number }[];
+  } | null;
 }
 
 type Draft = LineItemInput & { id: string; dirty?: boolean };
@@ -701,6 +706,43 @@ export function PlanWorkspace(props: Props) {
                   </div>
                 );
               })}
+            </div>
+          )}
+          {props.actuals && (
+            <div className="mt-4 border-t border-line/70 pt-3">
+              <h3 className="mb-2 text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
+                Actuals from QuickBooks
+              </h3>
+              <div className="flex justify-between py-0.5 text-sm">
+                <span className="text-ink-600">Actual cost to date</span>
+                <span
+                  className={`font-medium tabular-nums ${props.actuals.total > totals.totalCost ? "text-bad-600" : "text-ink-900"}`}
+                >
+                  {money(props.actuals.total)}
+                </span>
+              </div>
+              <div className="flex justify-between py-0.5 text-sm text-ink-600">
+                <span>vs. estimated cost</span>
+                <span className="tabular-nums">{money(totals.totalCost)}</span>
+              </div>
+              {props.actuals.hours > 0 && (
+                <div className="flex justify-between py-0.5 text-sm text-ink-600">
+                  <span>Actual labor hours</span>
+                  <span className="tabular-nums">
+                    {hours(props.actuals.hours)} / {hours(totals.totalHours)}{" "}
+                    est.
+                  </span>
+                </div>
+              )}
+              {props.actuals.byCategory.slice(0, 5).map((c) => (
+                <div
+                  key={c.name}
+                  className="flex justify-between py-0.5 text-xs text-ink-400"
+                >
+                  <span className="truncate pr-2">{c.name}</span>
+                  <span className="tabular-nums">{money(c.amount)}</span>
+                </div>
+              ))}
             </div>
           )}
           <p className="mt-3 text-xs text-ink-400">

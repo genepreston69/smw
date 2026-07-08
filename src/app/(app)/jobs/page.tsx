@@ -1,6 +1,6 @@
 import { Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { shortDate } from "@/lib/format";
+import { money, shortDate } from "@/lib/format";
 import { Card, EmptyState, PageHeader, Table, Th } from "@/components/ui";
 import { DeleteRowButton } from "@/components/DeleteRowButton";
 import { deleteJob } from "./actions";
@@ -17,7 +17,7 @@ interface JobRow {
 export default async function JobsPage() {
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
-  const [{ data }, { data: connRows }] = await Promise.all([
+  const [{ data }, { data: connRows }, { data: costRows }] = await Promise.all([
     supabase
       .from("jobs")
       .select(
@@ -25,6 +25,7 @@ export default async function JobsPage() {
       )
       .order("name"),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
+    supabase.from("job_cost_totals").select("job_id, total_amount, total_hours"),
   ]);
 
   const jobs = (data ?? []) as unknown as (JobRow & { realm_id: string | null })[];
@@ -32,6 +33,12 @@ export default async function JobsPage() {
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
   );
   const showCompany = companyByRealm.size > 1;
+  const costByJob = new Map(
+    (costRows ?? []).map((r) => [
+      r.job_id as string,
+      { amount: Number(r.total_amount ?? 0), hours: Number(r.total_hours ?? 0) },
+    ]),
+  );
 
   return (
     <div>
@@ -52,6 +59,7 @@ export default async function JobsPage() {
                 <Th>Job</Th>
                 {showCompany && <Th>QB Company</Th>}
                 <Th>Customer</Th>
+                <Th right>Actual cost</Th>
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
                 {isAdmin && <Th right />}
@@ -68,6 +76,11 @@ export default async function JobsPage() {
                 )}
                 <td className="px-4 py-3 text-ink-600">
                   {j.customer?.display_name ?? "—"}
+                </td>
+                <td className="px-4 py-3 text-right tabular-nums">
+                  {costByJob.has(j.id)
+                    ? money(costByJob.get(j.id)!.amount)
+                    : "—"}
                 </td>
                 <td className="px-4 py-3 text-ink-600">
                   {j.active ? "Yes" : "No"}

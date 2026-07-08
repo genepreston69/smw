@@ -69,6 +69,37 @@ export default async function PlanPage({
     supabase.from("profiles").select("id, email, full_name, role"),
   ]);
 
+  // Actual costs from QuickBooks for the linked job (if any).
+  let actuals: {
+    total: number;
+    hours: number;
+    byCategory: { name: string; amount: number }[];
+  } | null = null;
+  if (plan.job_id) {
+    const { data: costLines } = await supabase
+      .from("job_costs")
+      .select("category, amount, hours")
+      .eq("job_id", plan.job_id);
+    if (costLines && costLines.length > 0) {
+      const byCat = new Map<string, number>();
+      let total = 0;
+      let hoursTotal = 0;
+      for (const l of costLines) {
+        total += Number(l.amount ?? 0);
+        hoursTotal += Number(l.hours ?? 0);
+        const key = (l.category as string) ?? "Uncategorized";
+        byCat.set(key, (byCat.get(key) ?? 0) + Number(l.amount ?? 0));
+      }
+      actuals = {
+        total,
+        hours: hoursTotal,
+        byCategory: [...byCat.entries()]
+          .map(([name, amount]) => ({ name, amount }))
+          .sort((a, b) => b.amount - a.amount),
+      };
+    }
+  }
+
   return (
     <PlanWorkspace
       plan={plan as ProjectPlan}
@@ -80,6 +111,7 @@ export default async function PlanPage({
       jobs={(jobs ?? []) as Pick<Job, "id" | "name" | "customer_id">[]}
       profiles={(profiles ?? []) as Profile[]}
       me={profile}
+      actuals={actuals}
     />
   );
 }
