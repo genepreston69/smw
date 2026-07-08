@@ -13,17 +13,20 @@
 -- refreshes a company's rows, so pre-2026 rows disappear on the next run.
 -- =============================================================================
 
+-- Idempotent guards so re-running (e.g. pasted into the SQL editor twice)
+-- is harmless.
 alter table public.job_costs
-  add column cost_type text not null default 'other'
+  add column if not exists cost_type text not null default 'other'
   check (cost_type in ('materials', 'labor', 'other'));
 
 -- Backfill what we can distinguish today; bill/purchase rows are corrected
 -- on the next sync, which rebuilds the table from QuickBooks anyway.
 update public.job_costs set cost_type = 'labor'
-  where qb_txn_type = 'TimeActivity';
+  where qb_txn_type = 'TimeActivity' and cost_type <> 'labor';
 
 -- Transaction-history reads are per job, newest first.
-create index job_costs_job_date_idx on public.job_costs (job_id, txn_date desc);
+create index if not exists job_costs_job_date_idx
+  on public.job_costs (job_id, txn_date desc);
 
 -- Extend the per-job rollup with per-bucket totals (new columns appended so
 -- create-or-replace is allowed).
