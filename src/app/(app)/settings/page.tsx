@@ -2,6 +2,7 @@ import { Link2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
 import { QbSyncButton } from "@/components/QbSyncButton";
+import { QbDisconnectButton } from "@/components/QbDisconnectButton";
 import { RoleSelect } from "@/components/RoleSelect";
 import { Alert, Card, CardTitle, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import type { ApprovalThreshold, Profile } from "@/lib/types";
@@ -82,6 +83,7 @@ export default async function SettingsPage({
                 {conn ? "Reconnect QuickBooks" : "Connect QuickBooks"}
               </a>
               {conn && <QbSyncButton />}
+              {conn && <QbDisconnectButton />}
             </div>
           ) : (
             <p className="mt-3 text-xs text-ink-400">

@@ -10,6 +10,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 
 const AUTH_BASE = "https://appcenter.intuit.com/connect/oauth2";
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
+const REVOKE_URL = "https://developer.api.intuit.com/v2/oauth2/tokens/revoke";
 
 function apiBase(): string {
   // Production is the default; sandbox must be requested explicitly so a
@@ -161,6 +162,47 @@ export async function saveConnection(opts: {
 }
 
 /** Returns a valid access token + realm, refreshing (and persisting) if expired. */
+// Revoke the current grant at Intuit (equivalent to disconnecting the app
+// from the QuickBooks side) and mark the local connection revoked. A fresh
+// Connect afterwards mints a brand-new grant.
+export async function revokeConnection(): Promise<void> {
+  const supabase = createServiceClient();
+  const { data: conn, error } = await supabase
+    .from("qb_connections")
+    .select("id, refresh_token")
+    .limit(1)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!conn) throw new Error("QuickBooks is not connected");
+
+  const auth = Buffer.from(`${clientId()}:${clientSecret()}`).toString(
+    "base64",
+  );
+  const res = await fetch(REVOKE_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${auth}`,
+      "Content-Type": "application/json",
+      Accept: "application/json",
+    },
+    body: JSON.stringify({ token: conn.refresh_token }),
+  });
+  // Intuit returns 200 on success and 400 if the token was already invalid —
+  // either way the grant is dead, so clear the local record.
+  if (!res.ok && res.status !== 400) {
+    const tid = res.headers.get("intuit_tid");
+    throw new Error(
+      `QuickBooks revoke failed: ${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`,
+    );
+  }
+
+  const { error: delError } = await supabase
+    .from("qb_connections")
+    .delete()
+    .eq("id", conn.id);
+  if (delError) throw new Error(delError.message);
+}
+
 export async function getValidConnection(): Promise<{
   accessToken: string;
   realmId: string;
