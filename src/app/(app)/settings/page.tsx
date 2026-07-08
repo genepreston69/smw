@@ -88,6 +88,16 @@ export default async function SettingsPage({
               Ask an admin to connect QuickBooks or run a sync.
             </p>
           )}
+          <p className="mt-4 border-t border-line pt-3 text-xs text-ink-400">
+            Trouble with the QuickBooks connection or anything else? Contact
+            support:{" "}
+            <a
+              href="mailto:gene@stravisor.com?subject=SMW%20Job%20Plans%20support"
+              className="text-brand-600 hover:underline"
+            >
+              gene@stravisor.com
+            </a>
+          </p>
         </Card>
 
         {/* Approval thresholds */}

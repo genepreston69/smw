@@ -67,7 +67,11 @@ async function tokenRequest(body: URLSearchParams): Promise<TokenResponse> {
     body,
   });
   if (!res.ok) {
-    throw new Error(`QuickBooks token request failed: ${res.status} ${await res.text()}`);
+    // intuit_tid identifies the request in Intuit's logs for support cases.
+    const tid = res.headers.get("intuit_tid");
+    const detail = `${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`;
+    console.error(`QuickBooks token request failed: ${detail}`);
+    throw new Error(`QuickBooks token request failed: ${detail}`);
   }
   return res.json();
 }
@@ -219,7 +223,10 @@ async function qboQuery<T>(
       },
     });
     if (!res.ok) {
-      throw new Error(`QuickBooks query failed: ${res.status} ${await res.text()}`);
+      const tid = res.headers.get("intuit_tid");
+      const detail = `${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`;
+      console.error(`QuickBooks query failed: ${detail}`);
+      throw new Error(`QuickBooks query failed: ${detail}`);
     }
     const json = await res.json();
     const rows: T[] =
