@@ -135,11 +135,20 @@ export async function saveConnection(opts: {
     .single();
   if (!org) throw new Error("No organization found");
 
+  // Fetch the company name so the settings page can tell companies apart.
+  let companyName: string | null = null;
+  try {
+    companyName = await fetchCompanyName(opts.tokens.access_token, opts.realmId);
+  } catch {
+    // Non-fatal: the connection still works without a display name.
+  }
+
   const now = Date.now();
   const { error } = await supabase.from("qb_connections").upsert(
     {
       org_id: org.id,
       realm_id: opts.realmId,
+      company_name: companyName,
       access_token: opts.tokens.access_token,
       refresh_token: opts.tokens.refresh_token,
       access_token_expires_at: new Date(
@@ -151,27 +160,35 @@ export async function saveConnection(opts: {
       connected_by: opts.connectedBy,
       status: "connected",
     },
-    { onConflict: "org_id" },
+    { onConflict: "org_id,realm_id" },
   );
   if (error) throw new Error(error.message);
-
-  await supabase
-    .from("organizations")
-    .update({ qb_realm_id: opts.realmId })
-    .eq("id", org.id);
 }
 
-/** Returns a valid access token + realm, refreshing (and persisting) if expired. */
-// Revoke the current grant at Intuit (equivalent to disconnecting the app
-// from the QuickBooks side) and mark the local connection revoked. A fresh
+async function fetchCompanyName(
+  accessToken: string,
+  realmId: string,
+): Promise<string | null> {
+  const url = `${apiBase()}/v3/company/${realmId}/companyinfo/${realmId}?minorversion=75`;
+  const res = await fetch(url, {
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      Accept: "application/json",
+    },
+  });
+  if (!res.ok) return null;
+  const json = await res.json();
+  return json.CompanyInfo?.CompanyName ?? null;
+}
+
+// Revoke a company's grant at Intuit (equivalent to disconnecting the app
+// from the QuickBooks side) and remove the local connection. A fresh
 // Connect afterwards mints a brand-new grant.
-export async function revokeConnection(): Promise<void> {
+export async function revokeConnection(realmId?: string): Promise<void> {
   const supabase = createServiceClient();
-  const { data: conn, error } = await supabase
-    .from("qb_connections")
-    .select("id, refresh_token")
-    .limit(1)
-    .maybeSingle();
+  let query = supabase.from("qb_connections").select("id, refresh_token");
+  if (realmId) query = query.eq("realm_id", realmId);
+  const { data: conn, error } = await query.limit(1).maybeSingle();
   if (error) throw new Error(error.message);
   if (!conn) throw new Error("QuickBooks is not connected");
 
@@ -203,23 +220,46 @@ export async function revokeConnection(): Promise<void> {
   if (delError) throw new Error(delError.message);
 }
 
-export async function getValidConnection(): Promise<{
-  accessToken: string;
-  realmId: string;
-}> {
-  const supabase = createServiceClient();
-  const { data: conn, error } = await supabase
-    .from("qb_connections")
-    .select("*")
-    .eq("status", "connected")
-    .limit(1)
-    .maybeSingle();
-  if (error) throw new Error(error.message);
-  if (!conn) throw new Error("QuickBooks is not connected");
+interface ConnectionRow {
+  id: string;
+  realm_id: string;
+  company_name: string | null;
+  access_token: string;
+  refresh_token: string;
+  access_token_expires_at: string;
+}
 
+/** All connected companies, each with a valid access token (refreshed if expired). */
+export async function getValidConnections(): Promise<
+  { accessToken: string; realmId: string; companyName: string | null }[]
+> {
+  const supabase = createServiceClient();
+  const { data: conns, error } = await supabase
+    .from("qb_connections")
+    .select("id, realm_id, company_name, access_token, refresh_token, access_token_expires_at")
+    .eq("status", "connected")
+    .order("created_at");
+  if (error) throw new Error(error.message);
+  if (!conns || conns.length === 0) {
+    throw new Error("QuickBooks is not connected");
+  }
+
+  const results = [];
+  for (const conn of conns as ConnectionRow[]) {
+    results.push({
+      accessToken: await validAccessToken(conn),
+      realmId: conn.realm_id,
+      companyName: conn.company_name,
+    });
+  }
+  return results;
+}
+
+async function validAccessToken(conn: ConnectionRow): Promise<string> {
+  const supabase = createServiceClient();
   const expiresAt = new Date(conn.access_token_expires_at).getTime();
   if (expiresAt - Date.now() > 60_000) {
-    return { accessToken: conn.access_token, realmId: conn.realm_id };
+    return conn.access_token;
   }
 
   try {
@@ -238,7 +278,7 @@ export async function getValidConnection(): Promise<{
         ).toISOString(),
       })
       .eq("id", conn.id);
-    return { accessToken: tokens.access_token, realmId: conn.realm_id };
+    return tokens.access_token;
   } catch (e) {
     await supabase
       .from("qb_connections")
@@ -306,8 +346,9 @@ async function qboQuery<T>(
 export async function syncCustomersAndJobs(): Promise<{
   customers: number;
   jobs: number;
+  companies: number;
 }> {
-  const { accessToken, realmId } = await getValidConnection();
+  const connections = await getValidConnections();
   const supabase = createServiceClient();
   const { data: org } = await supabase
     .from("organizations")
@@ -317,65 +358,75 @@ export async function syncCustomersAndJobs(): Promise<{
     .single();
   if (!org) throw new Error("No organization found");
 
-  const all = await qboQuery<QboCustomer>(
-    accessToken,
-    realmId,
-    "SELECT * FROM Customer",
-  );
-
-  const now = new Date().toISOString();
-  const topLevel = all.filter((c) => !c.Job);
-  const jobRecords = all.filter((c) => c.Job && c.ParentRef?.value);
-
   let customerCount = 0;
-  if (topLevel.length > 0) {
-    const { error } = await supabase.from("customers").upsert(
-      topLevel.map((c) => ({
-        org_id: org.id,
-        qb_id: c.Id,
-        display_name: c.DisplayName,
-        company_name: c.CompanyName ?? null,
-        email: c.PrimaryEmailAddr?.Address ?? null,
-        phone: c.PrimaryPhone?.FreeFormNumber ?? null,
-        billing_address: c.BillAddr ?? null,
-        active: c.Active ?? true,
-        last_synced_at: now,
-      })),
-      { onConflict: "org_id,qb_id" },
-    );
-    if (error) throw new Error(`Customer upsert failed: ${error.message}`);
-    customerCount = topLevel.length;
-  }
-
-  // Map QB parent ids -> our customer uuids for job linking
-  const { data: customerRows } = await supabase
-    .from("customers")
-    .select("id, qb_id")
-    .eq("org_id", org.id);
-  const byQbId = new Map((customerRows ?? []).map((c) => [c.qb_id, c.id]));
-
   let jobCount = 0;
-  if (jobRecords.length > 0) {
-    const { error } = await supabase.from("jobs").upsert(
-      jobRecords.map((j) => ({
-        org_id: org.id,
-        qb_id: j.Id,
-        customer_id: byQbId.get(j.ParentRef!.value) ?? null,
-        name: j.DisplayName,
-        fully_qualified_name: j.FullyQualifiedName ?? null,
-        active: j.Active ?? true,
-        last_synced_at: now,
-      })),
-      { onConflict: "org_id,qb_id" },
+
+  for (const { accessToken, realmId } of connections) {
+    const all = await qboQuery<QboCustomer>(
+      accessToken,
+      realmId,
+      "SELECT * FROM Customer",
     );
-    if (error) throw new Error(`Job upsert failed: ${error.message}`);
-    jobCount = jobRecords.length;
+
+    const now = new Date().toISOString();
+    const topLevel = all.filter((c) => !c.Job);
+    const jobRecords = all.filter((c) => c.Job && c.ParentRef?.value);
+
+    if (topLevel.length > 0) {
+      const { error } = await supabase.from("customers").upsert(
+        topLevel.map((c) => ({
+          org_id: org.id,
+          realm_id: realmId,
+          qb_id: c.Id,
+          display_name: c.DisplayName,
+          company_name: c.CompanyName ?? null,
+          email: c.PrimaryEmailAddr?.Address ?? null,
+          phone: c.PrimaryPhone?.FreeFormNumber ?? null,
+          billing_address: c.BillAddr ?? null,
+          active: c.Active ?? true,
+          last_synced_at: now,
+        })),
+        { onConflict: "org_id,realm_id,qb_id" },
+      );
+      if (error) throw new Error(`Customer upsert failed: ${error.message}`);
+      customerCount += topLevel.length;
+    }
+
+    // Map QB parent ids -> our customer uuids for job linking (per company)
+    const { data: customerRows } = await supabase
+      .from("customers")
+      .select("id, qb_id")
+      .eq("org_id", org.id)
+      .eq("realm_id", realmId);
+    const byQbId = new Map((customerRows ?? []).map((c) => [c.qb_id, c.id]));
+
+    if (jobRecords.length > 0) {
+      const { error } = await supabase.from("jobs").upsert(
+        jobRecords.map((j) => ({
+          org_id: org.id,
+          realm_id: realmId,
+          qb_id: j.Id,
+          customer_id: byQbId.get(j.ParentRef!.value) ?? null,
+          name: j.DisplayName,
+          fully_qualified_name: j.FullyQualifiedName ?? null,
+          active: j.Active ?? true,
+          last_synced_at: now,
+        })),
+        { onConflict: "org_id,realm_id,qb_id" },
+      );
+      if (error) throw new Error(`Job upsert failed: ${error.message}`);
+      jobCount += jobRecords.length;
+    }
+
+    await supabase
+      .from("qb_connections")
+      .update({ last_sync_at: now, last_sync_error: null })
+      .eq("realm_id", realmId);
   }
 
-  await supabase
-    .from("qb_connections")
-    .update({ last_sync_at: now, last_sync_error: null })
-    .eq("realm_id", realmId);
-
-  return { customers: customerCount, jobs: jobCount };
+  return {
+    customers: customerCount,
+    jobs: jobCount,
+    companies: connections.length,
+  };
 }

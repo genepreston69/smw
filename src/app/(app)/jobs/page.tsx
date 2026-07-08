@@ -17,14 +17,21 @@ interface JobRow {
 export default async function JobsPage() {
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
-  const { data } = await supabase
-    .from("jobs")
-    .select(
-      "id, name, fully_qualified_name, active, last_synced_at, customer:customers(display_name)",
-    )
-    .order("name");
+  const [{ data }, { data: connRows }] = await Promise.all([
+    supabase
+      .from("jobs")
+      .select(
+        "id, name, realm_id, fully_qualified_name, active, last_synced_at, customer:customers(display_name)",
+      )
+      .order("name"),
+    supabase.from("qb_connection_status").select("realm_id, company_name"),
+  ]);
 
-  const jobs = (data ?? []) as unknown as JobRow[];
+  const jobs = (data ?? []) as unknown as (JobRow & { realm_id: string | null })[];
+  const companyByRealm = new Map(
+    (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
+  );
+  const showCompany = companyByRealm.size > 1;
 
   return (
     <div>
@@ -43,6 +50,7 @@ export default async function JobsPage() {
             head={
               <tr>
                 <Th>Job</Th>
+                {showCompany && <Th>QB Company</Th>}
                 <Th>Customer</Th>
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
@@ -53,6 +61,11 @@ export default async function JobsPage() {
             {jobs.map((j) => (
               <tr key={j.id} className="transition-colors hover:bg-surface/60">
                 <td className="px-4 py-3 font-medium text-ink-900">{j.name}</td>
+                {showCompany && (
+                  <td className="px-4 py-3 text-ink-600">
+                    {(j.realm_id && companyByRealm.get(j.realm_id)) ?? "—"}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-ink-600">
                   {j.customer?.display_name ?? "—"}
                 </td>

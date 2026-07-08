@@ -9,14 +9,21 @@ import type { Customer } from "@/lib/types";
 export default async function CustomersPage() {
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
-  const { data } = await supabase
-    .from("customers")
-    .select(
-      "id, qb_id, display_name, company_name, email, phone, active, last_synced_at",
-    )
-    .order("display_name");
+  const [{ data }, { data: connRows }] = await Promise.all([
+    supabase
+      .from("customers")
+      .select(
+        "id, qb_id, realm_id, display_name, company_name, email, phone, active, last_synced_at",
+      )
+      .order("display_name"),
+    supabase.from("qb_connection_status").select("realm_id, company_name"),
+  ]);
 
-  const customers = (data ?? []) as Customer[];
+  const customers = (data ?? []) as (Customer & { realm_id: string | null })[];
+  const companyByRealm = new Map(
+    (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
+  );
+  const showCompany = companyByRealm.size > 1;
 
   return (
     <div>
@@ -39,6 +46,7 @@ export default async function CustomersPage() {
             head={
               <tr>
                 <Th>Name</Th>
+                {showCompany && <Th>QB Company</Th>}
                 <Th>Company</Th>
                 <Th>Email</Th>
                 <Th>Phone</Th>
@@ -52,6 +60,11 @@ export default async function CustomersPage() {
                 <td className="px-4 py-3 font-medium text-ink-900">
                   {c.display_name}
                 </td>
+                {showCompany && (
+                  <td className="px-4 py-3 text-ink-600">
+                    {(c.realm_id && companyByRealm.get(c.realm_id)) ?? "—"}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-ink-600">
                   {c.company_name ?? "—"}
                 </td>

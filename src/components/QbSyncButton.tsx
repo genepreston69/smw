@@ -17,7 +17,9 @@ export function QbSyncButton() {
       const res = await fetch("/api/qb/sync", { method: "POST" });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Sync failed");
-      setMessage(`Imported ${json.customers} customers and ${json.jobs} jobs.`);
+      setMessage(
+        `Imported ${json.customers} customers and ${json.jobs} jobs from ${json.companies} ${json.companies === 1 ? "company" : "companies"}.`,
+      );
       router.refresh();
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Sync failed");

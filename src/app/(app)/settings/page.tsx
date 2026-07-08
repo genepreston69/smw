@@ -16,9 +16,9 @@ export default async function SettingsPage({
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
 
-  const [{ data: conn }, { data: thresholds }, { data: users }] =
+  const [{ data: connRows }, { data: thresholds }, { data: users }] =
     await Promise.all([
-      supabase.from("qb_connection_status").select("*").limit(1).maybeSingle(),
+      supabase.from("qb_connection_status").select("*").order("created_at"),
       supabase
         .from("approval_thresholds")
         .select("id, min_amount, max_amount, required_approvals, label")
@@ -28,6 +28,14 @@ export default async function SettingsPage({
         .select("id, email, full_name, role")
         .order("email"),
     ]);
+
+  const connections = (connRows ?? []) as Array<{
+    realm_id: string;
+    company_name: string | null;
+    status: string;
+    last_sync_at: string | null;
+    last_sync_error: string | null;
+  }>;
 
   return (
     <div className="max-w-3xl">
@@ -44,30 +52,40 @@ export default async function SettingsPage({
         {/* QuickBooks */}
         <Card>
           <CardTitle>QuickBooks Online</CardTitle>
-          {conn ? (
-            <div className="space-y-1 text-sm text-ink-600">
-              <p>
-                Status:{" "}
-                <span
-                  className={
-                    conn.status === "connected"
-                      ? "font-medium text-ok-600"
-                      : "font-medium text-bad-600"
-                  }
+          {connections.length > 0 ? (
+            <div className="space-y-3">
+              {connections.map((conn) => (
+                <div
+                  key={conn.realm_id}
+                  className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-line bg-surface/50 px-3 py-2.5"
                 >
-                  {conn.status}
-                </span>{" "}
-                · Company (realm) {conn.realm_id}
-              </p>
-              <p>
-                Last sync:{" "}
-                {conn.last_sync_at ? shortDate(conn.last_sync_at) : "never"}
-                {conn.last_sync_error && (
-                  <span className="ml-2 text-bad-600">
-                    Last error: {conn.last_sync_error}
-                  </span>
-                )}
-              </p>
+                  <div className="text-sm">
+                    <p className="font-medium text-ink-900">
+                      {conn.company_name ?? `Company ${conn.realm_id}`}
+                      <span
+                        className={`ml-2 text-xs font-medium ${conn.status === "connected" ? "text-ok-600" : "text-bad-600"}`}
+                      >
+                        {conn.status}
+                      </span>
+                    </p>
+                    <p className="text-xs text-ink-400">
+                      Realm {conn.realm_id} · Last sync:{" "}
+                      {conn.last_sync_at ? shortDate(conn.last_sync_at) : "never"}
+                      {conn.last_sync_error && (
+                        <span className="ml-1 text-bad-600">
+                          · {conn.last_sync_error}
+                        </span>
+                      )}
+                    </p>
+                  </div>
+                  {isAdmin && (
+                    <QbDisconnectButton
+                      realmId={conn.realm_id}
+                      companyLabel={conn.company_name ?? conn.realm_id}
+                    />
+                  )}
+                </div>
+              ))}
             </div>
           ) : (
             <p className="text-sm text-ink-600">
@@ -80,10 +98,11 @@ export default async function SettingsPage({
             <div className="mt-4 flex items-center gap-3">
               <a href="/api/qb/connect" className={buttonCls("dark")}>
                 <Link2 size={15} strokeWidth={2} />
-                {conn ? "Reconnect QuickBooks" : "Connect QuickBooks"}
+                {connections.length > 0
+                  ? "Connect another company"
+                  : "Connect QuickBooks"}
               </a>
-              {conn && <QbSyncButton />}
-              {conn && <QbDisconnectButton />}
+              {connections.length > 0 && <QbSyncButton />}
             </div>
           ) : (
             <p className="mt-3 text-xs text-ink-400">
