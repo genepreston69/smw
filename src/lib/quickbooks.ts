@@ -12,9 +12,12 @@ const AUTH_BASE = "https://appcenter.intuit.com/connect/oauth2";
 const TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer";
 
 function apiBase(): string {
-  return process.env.QB_ENVIRONMENT === "production"
-    ? "https://quickbooks.api.intuit.com"
-    : "https://sandbox-quickbooks.api.intuit.com";
+  // Production is the default; sandbox must be requested explicitly so a
+  // missing env var never sends production tokens to the sandbox API (403
+  // ApplicationAuthorizationFailed).
+  return process.env.QB_ENVIRONMENT === "sandbox"
+    ? "https://sandbox-quickbooks.api.intuit.com"
+    : "https://quickbooks.api.intuit.com";
 }
 
 function clientId(): string {
