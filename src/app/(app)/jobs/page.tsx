@@ -17,6 +17,19 @@ interface JobRow {
   customer: { display_name: string; company_name: string | null } | null;
 }
 
+// Jobs with no cost transactions on or after this date move to the
+// "No transactions" tab (except US Army Corps of Engineers jobs).
+const NO_TXN_CUTOFF = "2025-01-01";
+
+// US Army Corps of Engineers jobs stay under Customer jobs even without
+// recent transactions. QuickBooks names vary ("US Army Corps of Engineers",
+// "U.S. Army Corps...", "USACE"), so match loosely like isEnterpriseName.
+function isArmyCorpsName(name: string | null | undefined): boolean {
+  if (!name) return false;
+  const n = name.toLowerCase();
+  return n.includes("army corps") || n.split(/[^a-z0-9]+/).includes("usace");
+}
+
 export default async function JobsPage({
   searchParams,
 }: {
@@ -24,6 +37,7 @@ export default async function JobsPage({
 }) {
   const { tab } = await searchParams;
   const intercompanyTab = tab === "intercompany";
+  const noTxnTab = tab === "no-transactions";
 
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
@@ -35,7 +49,9 @@ export default async function JobsPage({
       )
       .order("name"),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
-    supabase.from("job_cost_totals").select("job_id, total_amount, total_hours"),
+    supabase
+      .from("job_cost_totals")
+      .select("job_id, total_amount, total_hours, latest_txn_date"),
   ]);
 
   const allJobs = (data ?? []) as unknown as JobRow[];
@@ -46,7 +62,11 @@ export default async function JobsPage({
   const costByJob = new Map(
     (costRows ?? []).map((r) => [
       r.job_id as string,
-      { amount: Number(r.total_amount ?? 0), hours: Number(r.total_hours ?? 0) },
+      {
+        amount: Number(r.total_amount ?? 0),
+        hours: Number(r.total_hours ?? 0),
+        latestTxnDate: (r.latest_txn_date as string | null) ?? null,
+      },
     ]),
   );
 
@@ -54,9 +74,29 @@ export default async function JobsPage({
     isEnterpriseName(j.customer?.display_name) ||
     isEnterpriseName(j.customer?.company_name);
 
+  const isArmyCorps = (j: JobRow) =>
+    isArmyCorpsName(j.customer?.display_name) ||
+    isArmyCorpsName(j.customer?.company_name);
+
+  // txn_date is a date string (YYYY-MM-DD), so string compare works.
+  const hasRecentTxns = (j: JobRow) => {
+    const latest = costByJob.get(j.id)?.latestTxnDate;
+    return !!latest && latest >= NO_TXN_CUTOFF;
+  };
+
   const intercompanyJobs = allJobs.filter(isIntercompany);
-  const customerJobs = allJobs.filter((j) => !isIntercompany(j));
-  const jobs = intercompanyTab ? intercompanyJobs : customerJobs;
+  const outsideJobs = allJobs.filter((j) => !isIntercompany(j));
+  const noTxnJobs = outsideJobs.filter(
+    (j) => !hasRecentTxns(j) && !isArmyCorps(j),
+  );
+  const customerJobs = outsideJobs.filter(
+    (j) => hasRecentTxns(j) || isArmyCorps(j),
+  );
+  const jobs = intercompanyTab
+    ? intercompanyJobs
+    : noTxnTab
+      ? noTxnJobs
+      : customerJobs;
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -72,7 +112,9 @@ export default async function JobsPage({
         subtitle={
           intercompanyTab
             ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
-            : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these."
+            : noTxnTab
+              ? "Customer jobs with no cost transactions since 1/1/2025. US Army Corps of Engineers jobs stay under Customer jobs."
+              : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these."
         }
         action={
           <a href="/api/export/jobs" className={buttonCls("secondary")}>
@@ -83,8 +125,11 @@ export default async function JobsPage({
       />
 
       <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
-        <Link href="/jobs" className={tabCls(!intercompanyTab)}>
+        <Link href="/jobs" className={tabCls(!intercompanyTab && !noTxnTab)}>
           Customer jobs ({customerJobs.length})
+        </Link>
+        <Link href="/jobs?tab=no-transactions" className={tabCls(noTxnTab)}>
+          No transactions ({noTxnJobs.length})
         </Link>
         <Link href="/jobs?tab=intercompany" className={tabCls(intercompanyTab)}>
           Intercompany ({intercompanyJobs.length})
@@ -96,12 +141,18 @@ export default async function JobsPage({
           <EmptyState
             icon={Wrench}
             title={
-              intercompanyTab ? "No intercompany jobs" : "No customer jobs yet"
+              intercompanyTab
+                ? "No intercompany jobs"
+                : noTxnTab
+                  ? "No jobs without transactions"
+                  : "No customer jobs yet"
             }
           >
             {intercompanyTab
               ? "Jobs whose customer is an enterprise company will appear here."
-              : "Connect QuickBooks in Settings and run a sync."}
+              : noTxnTab
+                ? "Customer jobs with no cost transactions since 1/1/2025 will appear here."
+                : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (
           <Table
@@ -111,6 +162,7 @@ export default async function JobsPage({
                 {showCompany && <Th>QB Company</Th>}
                 <Th>Customer</Th>
                 <Th right>Actual cost</Th>
+                {noTxnTab && <Th right>Latest transaction</Th>}
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
                 {isAdmin && <Th right />}
@@ -133,6 +185,11 @@ export default async function JobsPage({
                     ? money(costByJob.get(j.id)!.amount)
                     : "—"}
                 </td>
+                {noTxnTab && (
+                  <td className="px-4 py-3 text-right text-ink-400">
+                    {shortDate(costByJob.get(j.id)?.latestTxnDate ?? null)}
+                  </td>
+                )}
                 <td className="px-4 py-3 text-ink-600">
                   {j.active ? "Yes" : "No"}
                 </td>
