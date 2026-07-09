@@ -19,7 +19,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [{ data: jobs }, { data: connRows }, { data: costRows }] =
+  const [{ data: jobs }, { data: connRows }, { data: costRows }, { data: invRows }] =
     await Promise.all([
       supabase
         .from("jobs")
@@ -31,8 +31,9 @@ export async function GET() {
       supabase
         .from("job_cost_totals")
         .select(
-          "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount",
+          "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount, latest_txn_date",
         ),
+      supabase.from("job_invoice_totals").select("job_id, latest_invoice_date"),
     ]);
 
   const companyByRealm = new Map(
@@ -47,9 +48,25 @@ export async function GET() {
         materials: Number(r.materials_amount ?? 0),
         labor: Number(r.labor_amount ?? 0),
         other: Number(r.other_amount ?? 0),
+        latestTxnDate: (r.latest_txn_date as string | null) ?? null,
       },
     ]),
   );
+  const invoiceDateByJob = new Map(
+    (invRows ?? []).map((r) => [
+      r.job_id as string,
+      (r.latest_invoice_date as string | null) ?? null,
+    ]),
+  );
+
+  // Latest activity across costs and invoices, same as the Jobs dashboard.
+  // Dates are YYYY-MM-DD strings, so string compare works.
+  const latestActivityDate = (jobId: string): string | null => {
+    const cost = costByJob.get(jobId)?.latestTxnDate ?? null;
+    const inv = invoiceDateByJob.get(jobId) ?? null;
+    if (cost && inv) return cost >= inv ? cost : inv;
+    return cost ?? inv;
+  };
 
   interface Row {
     id: string;
@@ -73,7 +90,7 @@ export async function GET() {
         name: j.name,
         customerDisplayName: j.customer?.display_name,
         customerCompanyName: j.customer?.company_name,
-        hasTransactions: costByJob.has(j.id),
+        latestActivityDate: latestActivityDate(j.id),
       })
     ].push(j);
   }

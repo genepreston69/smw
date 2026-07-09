@@ -106,7 +106,7 @@ export default async function JobsPage({
         name: j.name,
         customerDisplayName: j.customer?.display_name,
         customerCompanyName: j.customer?.company_name,
-        hasTransactions: costByJob.has(j.id),
+        latestActivityDate: latestTxnDate(j.id),
       })
     ].push(j);
   }
@@ -164,7 +164,7 @@ export default async function JobsPage({
         title="Jobs"
         subtitle={
           activeTab === "notransactions"
-            ? "Jobs with no cost transactions since Jan 1, 2023. They move to the other tabs once costs are tagged to them in QuickBooks."
+            ? "Jobs with no cost or invoice activity since Jan 1, 2025. US Army Corps of Engineers jobs stay under Customer jobs. Jobs move to the other tabs once costs are tagged to them in QuickBooks."
             : activeTab === "nonbillable"
               ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
               : activeTab === "intercompany"
@@ -231,7 +231,7 @@ export default async function JobsPage({
             }
           >
             {activeTab === "notransactions"
-              ? "Jobs with no cost activity since Jan 1, 2023 will appear here."
+              ? "Jobs with no cost or invoice activity since Jan 1, 2025 will appear here."
               : activeTab === "nonbillable"
                 ? "Jobs whose number starts with EQP will appear here."
                 : activeTab === "intercompany"
