@@ -1,11 +1,9 @@
 import Link from "next/link";
-import { Download, Wrench } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { isEnterpriseName } from "@/lib/enterprise";
-import { money, shortDate } from "@/lib/format";
+import { classifyJobView, type JobView } from "@/lib/jobViews";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
-import { DeleteRowButton } from "@/components/DeleteRowButton";
-import { deleteJob } from "./actions";
+import { JobRows, type JobRowData } from "./JobRows";
 
 interface JobRow {
   id: string;
@@ -20,10 +18,25 @@ interface JobRow {
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; sort?: string }>;
 }) {
-  const { tab } = await searchParams;
-  const intercompanyTab = tab === "intercompany";
+  const { tab, sort } = await searchParams;
+  const activeTab =
+    tab === "intercompany" || tab === "nonbillable" || tab === "notransactions"
+      ? tab
+      : "customer";
+  const costSort =
+    sort === "cost_desc" ? "desc" : sort === "cost_asc" ? "asc" : null;
+
+  const jobsHref = (opts?: { tab?: string; sort?: string | null }) => {
+    const params = new URLSearchParams();
+    const t = opts && "tab" in opts ? opts.tab : activeTab;
+    if (t && t !== "customer") params.set("tab", t);
+    const s = opts && "sort" in opts ? opts.sort : sort;
+    if (s === "cost_desc" || s === "cost_asc") params.set("sort", s);
+    const q = params.toString();
+    return q ? `/jobs?${q}` : "/jobs";
+  };
 
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
@@ -44,19 +57,58 @@ export default async function JobsPage({
   );
   const showCompany = companyByRealm.size > 1;
   const costByJob = new Map(
-    (costRows ?? []).map((r) => [
-      r.job_id as string,
-      { amount: Number(r.total_amount ?? 0), hours: Number(r.total_hours ?? 0) },
-    ]),
+    (costRows ?? []).map((r) => [r.job_id as string, Number(r.total_amount ?? 0)]),
   );
 
-  const isIntercompany = (j: JobRow) =>
-    isEnterpriseName(j.customer?.display_name) ||
-    isEnterpriseName(j.customer?.company_name);
+  const grouped: Record<JobView, JobRow[]> = {
+    customer: [],
+    intercompany: [],
+    nonbillable: [],
+    notransactions: [],
+  };
+  for (const j of allJobs) {
+    grouped[
+      classifyJobView({
+        name: j.name,
+        customerDisplayName: j.customer?.display_name,
+        customerCompanyName: j.customer?.company_name,
+        hasTransactions: costByJob.has(j.id),
+      })
+    ].push(j);
+  }
+  const customerJobs = grouped.customer;
+  const intercompanyJobs = grouped.intercompany;
+  const nonBillableJobs = grouped.nonbillable;
+  const noTxnJobs = grouped.notransactions;
+  const jobs = grouped[activeTab as JobView];
 
-  const intercompanyJobs = allJobs.filter(isIntercompany);
-  const customerJobs = allJobs.filter((j) => !isIntercompany(j));
-  const jobs = intercompanyTab ? intercompanyJobs : customerJobs;
+  const rows: JobRowData[] = jobs.map((j) => ({
+    id: j.id,
+    name: j.name,
+    companyName: (j.realm_id && companyByRealm.get(j.realm_id)) || null,
+    customerName: j.customer?.display_name ?? null,
+    active: j.active,
+    lastSyncedAt: j.last_synced_at,
+    totalCost: costByJob.has(j.id) ? costByJob.get(j.id)! : null,
+  }));
+
+  // Jobs come name-sorted from the query; cost sort puts costless jobs last.
+  if (costSort) {
+    rows.sort((a, b) => {
+      if (a.totalCost == null && b.totalCost == null) return 0;
+      if (a.totalCost == null) return 1;
+      if (b.totalCost == null) return -1;
+      return costSort === "asc"
+        ? a.totalCost - b.totalCost
+        : b.totalCost - a.totalCost;
+    });
+  }
+
+  // Click cycles: default (name) -> highest first -> lowest first -> default.
+  const nextCostSort =
+    costSort === null ? "cost_desc" : costSort === "desc" ? "cost_asc" : null;
+  const CostSortIcon =
+    costSort === "desc" ? ArrowDown : costSort === "asc" ? ArrowUp : ArrowUpDown;
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -70,38 +122,70 @@ export default async function JobsPage({
       <PageHeader
         title="Jobs"
         subtitle={
-          intercompanyTab
-            ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
-            : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these."
+          activeTab === "notransactions"
+            ? "Jobs with no cost transactions since Jan 1, 2023. They move to the other tabs once costs are tagged to them in QuickBooks."
+            : activeTab === "nonbillable"
+              ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
+              : activeTab === "intercompany"
+                ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
+                : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
         }
         action={
-          <a href="/api/export/jobs" className={buttonCls("secondary")}>
+          <a href="/api/export/jobs-workbook" className={buttonCls("secondary")}>
             <Download size={15} strokeWidth={2} />
-            Export to Excel
+            Download workbook
           </a>
         }
       />
 
       <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
-        <Link href="/jobs" className={tabCls(!intercompanyTab)}>
+        <Link
+          href={jobsHref({ tab: "customer" })}
+          className={tabCls(activeTab === "customer")}
+        >
           Customer jobs ({customerJobs.length})
         </Link>
-        <Link href="/jobs?tab=intercompany" className={tabCls(intercompanyTab)}>
+        <Link
+          href={jobsHref({ tab: "intercompany" })}
+          className={tabCls(activeTab === "intercompany")}
+        >
           Intercompany ({intercompanyJobs.length})
+        </Link>
+        <Link
+          href={jobsHref({ tab: "nonbillable" })}
+          className={tabCls(activeTab === "nonbillable")}
+        >
+          Non-Billable ({nonBillableJobs.length})
+        </Link>
+        <Link
+          href={jobsHref({ tab: "notransactions" })}
+          className={tabCls(activeTab === "notransactions")}
+        >
+          No transactions ({noTxnJobs.length})
         </Link>
       </div>
 
       <Card pad={false}>
-        {jobs.length === 0 ? (
+        {rows.length === 0 ? (
           <EmptyState
             icon={Wrench}
             title={
-              intercompanyTab ? "No intercompany jobs" : "No customer jobs yet"
+              activeTab === "notransactions"
+                ? "Every job has transactions"
+                : activeTab === "nonbillable"
+                  ? "No non-billable jobs"
+                  : activeTab === "intercompany"
+                    ? "No intercompany jobs"
+                    : "No customer jobs yet"
             }
           >
-            {intercompanyTab
-              ? "Jobs whose customer is an enterprise company will appear here."
-              : "Connect QuickBooks in Settings and run a sync."}
+            {activeTab === "notransactions"
+              ? "Jobs with no cost activity since Jan 1, 2023 will appear here."
+              : activeTab === "nonbillable"
+                ? "Jobs whose number starts with EQP will appear here."
+                : activeTab === "intercompany"
+                  ? "Jobs whose customer is an enterprise company will appear here."
+                  : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (
           <Table
@@ -110,46 +194,31 @@ export default async function JobsPage({
                 <Th>Job</Th>
                 {showCompany && <Th>QB Company</Th>}
                 <Th>Customer</Th>
-                <Th right>Actual cost</Th>
+                <Th right>
+                  <Link
+                    href={jobsHref({ sort: nextCostSort })}
+                    title={
+                      costSort === "desc"
+                        ? "Sorted highest first — click for lowest first"
+                        : costSort === "asc"
+                          ? "Sorted lowest first — click to clear"
+                          : "Sort by actual cost"
+                    }
+                    className={`inline-flex items-center gap-1 uppercase transition-colors hover:text-ink-900 ${
+                      costSort ? "text-ink-900" : ""
+                    }`}
+                  >
+                    Actual cost
+                    <CostSortIcon size={12} strokeWidth={2} />
+                  </Link>
+                </Th>
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
                 {isAdmin && <Th right />}
               </tr>
             }
           >
-            {jobs.map((j) => (
-              <tr key={j.id} className="transition-colors hover:bg-surface/60">
-                <td className="px-4 py-3 font-medium text-ink-900">{j.name}</td>
-                {showCompany && (
-                  <td className="px-4 py-3 text-ink-600">
-                    {(j.realm_id && companyByRealm.get(j.realm_id)) ?? "—"}
-                  </td>
-                )}
-                <td className="px-4 py-3 text-ink-600">
-                  {j.customer?.display_name ?? "—"}
-                </td>
-                <td className="px-4 py-3 text-right tabular-nums">
-                  {costByJob.has(j.id)
-                    ? money(costByJob.get(j.id)!.amount)
-                    : "—"}
-                </td>
-                <td className="px-4 py-3 text-ink-600">
-                  {j.active ? "Yes" : "No"}
-                </td>
-                <td className="px-4 py-3 text-right text-ink-400">
-                  {shortDate(j.last_synced_at)}
-                </td>
-                {isAdmin && (
-                  <td className="px-4 py-3 text-right">
-                    <DeleteRowButton
-                      action={deleteJob.bind(null, j.id)}
-                      confirmText={`Delete job "${j.name}"? This only removes the local record — the job stays in QuickBooks and will re-import on the next sync.`}
-                      title="Delete job"
-                    />
-                  </td>
-                )}
-              </tr>
-            ))}
+            <JobRows jobs={rows} showCompany={showCompany} isAdmin={isAdmin} />
           </Table>
         )}
       </Card>
