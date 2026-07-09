@@ -355,12 +355,11 @@ interface QboInvoice {
 // estimating default (project_plans.labor_cost_rate default).
 const DEFAULT_LABOR_COST_RATE = 37.15;
 
-// Only transactions dated on or after this are imported into job_costs
-// and job_invoices.
-// Matches NO_TXN_CUTOFF on the jobs page: a job with no imported activity
-// since this date lands on the "No transactions" tab, so the import window
-// must reach back at least that far.
-const JOB_COSTS_START_DATE = "2025-01-01";
+// Only transactions dated on or after this are imported into job_costs.
+// The transaction-history feature pools costs from the start of 2023. Must
+// reach back at least to NO_TXN_CUTOFF (src/lib/jobViews.ts) so the
+// No Transactions view can classify against real data.
+const JOB_COSTS_START_DATE = "2023-01-01";
 
 // Direct-cost buckets for the per-job transaction history.
 type CostType = "materials" | "labor" | "other";

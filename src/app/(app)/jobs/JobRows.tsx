@@ -23,7 +23,7 @@ export interface JobRowData {
 
 const COST_SECTIONS = [
   { type: "materials", label: "Materials" },
-  { type: "labor", label: "Labor" },
+  { type: "labor", label: "Direct labor" },
   { type: "other", label: "Other direct costs" },
 ] as const;
 
@@ -152,7 +152,7 @@ function TransactionHistory({ state }: { state: LoadState | undefined }) {
   if (state.lines.length === 0) {
     return (
       <p className="py-2 text-sm text-ink-600">
-        No transactions since Jan 1, 2025. Run a QuickBooks sync in Settings to
+        No transactions since Jan 1, 2023. Run a QuickBooks sync in Settings to
         pull the latest costs.
       </p>
     );
@@ -161,11 +161,13 @@ function TransactionHistory({ state }: { state: LoadState | undefined }) {
   const total = state.lines.reduce((s, l) => s + l.amount, 0);
   return (
     <div className="space-y-4">
-      {COST_SECTIONS.map(({ type, label }) => {
-        const lines = state.lines.filter((l) => l.cost_type === type);
-        if (lines.length === 0) return null;
-        return <CostSection key={type} label={label} lines={lines} />;
-      })}
+      {COST_SECTIONS.map(({ type, label }) => (
+        <CostSection
+          key={type}
+          label={label}
+          lines={state.lines.filter((l) => l.cost_type === type)}
+        />
+      ))}
       <p className="flex justify-between border-t border-line pt-2 text-sm font-semibold text-ink-900">
         <span>Total direct cost</span>
         <span className="tabular-nums">{money(total)}</span>
@@ -192,6 +194,9 @@ function CostSection({ label, lines }: { label: string; lines: JobCostLine[] }) 
           {money(subtotal)}
         </span>
       </div>
+      {lines.length === 0 && (
+        <p className="py-1 text-[0.8rem] text-ink-400">No transactions.</p>
+      )}
       <table className="w-full text-[0.8rem]">
         <tbody className="divide-y divide-line/50">
           {lines.map((l) => (
