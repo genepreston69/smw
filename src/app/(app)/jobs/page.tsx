@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
-import { isEnterpriseName } from "@/lib/enterprise";
+import { classifyJobView, type JobView } from "@/lib/jobViews";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import { JobRows, type JobRowData } from "./JobRows";
 
@@ -60,28 +60,27 @@ export default async function JobsPage({
     (costRows ?? []).map((r) => [r.job_id as string, Number(r.total_amount ?? 0)]),
   );
 
-  const isIntercompany = (j: JobRow) =>
-    isEnterpriseName(j.customer?.display_name) ||
-    isEnterpriseName(j.customer?.company_name);
-  // EQP-prefixed job numbers are internal equipment work — never billable.
-  const isNonBillable = (j: JobRow) => /^eqp/i.test(j.name.trim());
-
-  // Jobs with no imported cost lines get their own tab and stay out of the
-  // other lists entirely.
-  const noTxnJobs = allJobs.filter((j) => !costByJob.has(j.id));
-  const jobsWithCosts = allJobs.filter((j) => costByJob.has(j.id));
-  const nonBillableJobs = jobsWithCosts.filter(isNonBillable);
-  const billableJobs = jobsWithCosts.filter((j) => !isNonBillable(j));
-  const intercompanyJobs = billableJobs.filter(isIntercompany);
-  const customerJobs = billableJobs.filter((j) => !isIntercompany(j));
-  const jobs =
-    activeTab === "notransactions"
-      ? noTxnJobs
-      : activeTab === "nonbillable"
-        ? nonBillableJobs
-        : activeTab === "intercompany"
-          ? intercompanyJobs
-          : customerJobs;
+  const grouped: Record<JobView, JobRow[]> = {
+    customer: [],
+    intercompany: [],
+    nonbillable: [],
+    notransactions: [],
+  };
+  for (const j of allJobs) {
+    grouped[
+      classifyJobView({
+        name: j.name,
+        customerDisplayName: j.customer?.display_name,
+        customerCompanyName: j.customer?.company_name,
+        hasTransactions: costByJob.has(j.id),
+      })
+    ].push(j);
+  }
+  const customerJobs = grouped.customer;
+  const intercompanyJobs = grouped.intercompany;
+  const nonBillableJobs = grouped.nonbillable;
+  const noTxnJobs = grouped.notransactions;
+  const jobs = grouped[activeTab as JobView];
 
   const rows: JobRowData[] = jobs.map((j) => ({
     id: j.id,
@@ -132,9 +131,9 @@ export default async function JobsPage({
                 : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
         }
         action={
-          <a href="/api/export/jobs" className={buttonCls("secondary")}>
+          <a href="/api/export/jobs-workbook" className={buttonCls("secondary")}>
             <Download size={15} strokeWidth={2} />
-            Export to Excel
+            Download workbook
           </a>
         }
       />
