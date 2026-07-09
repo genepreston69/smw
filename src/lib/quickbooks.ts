@@ -351,6 +351,26 @@ interface QboInvoice {
   CustomerRef?: { value: string };
 }
 
+// Journal entries carry payroll allocations (e.g. Paychex gross wages posted
+// as direct labor per job): each line debits a labor account with the job as
+// the line's entity.
+interface QboJournalLine {
+  Id?: string;
+  Amount?: number;
+  Description?: string;
+  JournalEntryLineDetail?: {
+    PostingType?: "Debit" | "Credit";
+    AccountRef?: { name?: string };
+    Entity?: { Type?: string; EntityRef?: { value?: string } };
+  };
+}
+
+interface QboJournalEntry {
+  Id: string;
+  TxnDate?: string;
+  Line?: QboJournalLine[];
+}
+
 // Internal blended labor cost rate used to value time entries — matches the
 // estimating default (project_plans.labor_cost_rate default).
 const DEFAULT_LABOR_COST_RATE = 37.15;
@@ -594,7 +614,7 @@ export async function syncJobCosts(): Promise<{
     if (jobIdByQbId.size === 0) continue; // no jobs synced for this company yet
 
     const since = `WHERE TxnDate >= '${JOB_COSTS_START_DATE}'`;
-    const [bills, purchases, timeActivities, qbInvoices] = [
+    const [bills, purchases, timeActivities, qbInvoices, journalEntries] = [
       await qboQuery<QboTxn>(accessToken, realmId, `SELECT * FROM Bill ${since}`),
       await qboQuery<QboTxn>(
         accessToken,
@@ -610,6 +630,11 @@ export async function syncJobCosts(): Promise<{
         accessToken,
         realmId,
         `SELECT * FROM Invoice ${since}`,
+      ),
+      await qboQuery<QboJournalEntry>(
+        accessToken,
+        realmId,
+        `SELECT * FROM JournalEntry ${since}`,
       ),
     ];
 
@@ -639,6 +664,40 @@ export async function syncJobCosts(): Promise<{
       });
     }
 
+    // Journal-entry lines tagged to a job (e.g. Paychex gross wages posted
+    // as direct labor). Debits are costs; credits reduce them. Only
+    // customer-type entities can be jobs — vendor/employee refs share the
+    // same id space and must not match.
+    const journalRows = [];
+    for (const je of journalEntries) {
+      for (const line of je.Line ?? []) {
+        const detail = line.JournalEntryLineDetail;
+        const entity = detail?.Entity;
+        if (entity?.Type && entity.Type !== "Customer") continue;
+        const jobId = entity?.EntityRef?.value
+          ? jobIdByQbId.get(entity.EntityRef.value)
+          : undefined;
+        if (!jobId) continue;
+        const account = detail?.AccountRef?.name ?? "";
+        const amount = line.Amount ?? 0;
+        journalRows.push({
+          org_id: org.id,
+          realm_id: realmId,
+          job_id: jobId,
+          qb_txn_type: "JournalEntry",
+          qb_txn_id: je.Id,
+          qb_line_id: line.Id ?? "0",
+          txn_date: je.TxnDate ?? null,
+          vendor_name: null,
+          description: line.Description ?? null,
+          category: account || null,
+          cost_type: LABOR_NAME.test(account) ? "labor" : "other",
+          amount: detail?.PostingType === "Credit" ? -amount : amount,
+          last_synced_at: now,
+        });
+      }
+    }
+
     const rows = [
       ...extractJobCostRows(bills, "Bill", jobIdByQbId, org.id, realmId, now),
       ...extractJobCostRows(
@@ -650,6 +709,7 @@ export async function syncJobCosts(): Promise<{
         now,
       ),
       ...timeRows,
+      ...journalRows,
     ];
 
     // Full refresh per company so edits/deletions in QuickBooks are reflected.
