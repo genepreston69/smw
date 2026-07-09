@@ -15,6 +15,10 @@ export interface JobRowData {
   lastSyncedAt: string | null;
   /** null when the job has no imported cost lines. */
   totalCost: number | null;
+  /** null when the job has no imported invoices. */
+  invoiced: number | null;
+  /** Date of the most recent imported cost line or invoice, if any. */
+  latestTxnDate: string | null;
 }
 
 const COST_SECTIONS = [
@@ -41,8 +45,9 @@ export function JobRows({
   const [costs, setCosts] = useState<Record<string, LoadState>>({});
   const [, startTransition] = useTransition();
 
-  // Job + Customer + Actual cost + Active + Last synced, plus optional columns.
-  const colSpan = 5 + (showCompany ? 1 : 0) + (isAdmin ? 1 : 0);
+  // Job + Customer + Actual cost + Invoiced + Latest transaction + Active +
+  // Last synced, plus optional columns.
+  const colSpan = 7 + (showCompany ? 1 : 0) + (isAdmin ? 1 : 0);
 
   const toggle = (jobId: string) => {
     setOpen((prev) => {
@@ -93,6 +98,12 @@ export function JobRows({
               <td className="px-4 py-3 text-ink-600">{j.customerName ?? "—"}</td>
               <td className="px-4 py-3 text-right tabular-nums">
                 {j.totalCost != null ? money(j.totalCost) : "—"}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {j.invoiced != null ? money(j.invoiced) : "—"}
+              </td>
+              <td className="px-4 py-3 text-right text-ink-400">
+                {shortDate(j.latestTxnDate)}
               </td>
               <td className="px-4 py-3 text-ink-600">{j.active ? "Yes" : "No"}</td>
               <td className="px-4 py-3 text-right text-ink-400">
