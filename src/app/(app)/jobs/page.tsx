@@ -15,6 +15,29 @@ interface JobRow {
   customer: { display_name: string; company_name: string | null } | null;
 }
 
+// Sortable dashboard columns. Numbers and dates sort highest/newest first on
+// the first click (Active shows "Yes" first); text columns sort A→Z first.
+type SortKey =
+  | "name"
+  | "company"
+  | "customer"
+  | "cost"
+  | "invoiced"
+  | "latest"
+  | "active"
+  | "synced";
+
+const SORT_PATTERN =
+  /^(name|company|customer|cost|invoiced|latest|active|synced)_(asc|desc)$/;
+
+const DESC_FIRST: ReadonlySet<SortKey> = new Set([
+  "cost",
+  "invoiced",
+  "latest",
+  "active",
+  "synced",
+]);
+
 export default async function JobsPage({
   searchParams,
 }: {
@@ -25,15 +48,16 @@ export default async function JobsPage({
     tab === "intercompany" || tab === "nonbillable" || tab === "notransactions"
       ? tab
       : "customer";
-  const costSort =
-    sort === "cost_desc" ? "desc" : sort === "cost_asc" ? "asc" : null;
+  const sortMatch = SORT_PATTERN.exec(sort ?? "");
+  const sortKey = sortMatch ? (sortMatch[1] as SortKey) : null;
+  const sortDir = sortMatch ? (sortMatch[2] as "asc" | "desc") : null;
 
   const jobsHref = (opts?: { tab?: string; sort?: string | null }) => {
     const params = new URLSearchParams();
     const t = opts && "tab" in opts ? opts.tab : activeTab;
     if (t && t !== "customer") params.set("tab", t);
     const s = opts && "sort" in opts ? opts.sort : sort;
-    if (s === "cost_desc" || s === "cost_asc") params.set("sort", s);
+    if (s && SORT_PATTERN.test(s)) params.set("sort", s);
     const q = params.toString();
     return q ? `/jobs?${q}` : "/jobs";
   };
@@ -128,23 +152,73 @@ export default async function JobsPage({
     };
   });
 
-  // Jobs come name-sorted from the query; cost sort puts costless jobs last.
-  if (costSort) {
+  // Jobs come name-sorted from the query; sorting a column keeps blank
+  // values last regardless of direction.
+  const sortValue = (r: JobRowData): string | number | null => {
+    switch (sortKey) {
+      case "name":
+        return r.name.toLowerCase();
+      case "company":
+        return r.companyName?.toLowerCase() ?? null;
+      case "customer":
+        return r.customerName?.toLowerCase() ?? null;
+      case "cost":
+        return r.totalCost;
+      case "invoiced":
+        return r.invoiced;
+      case "latest":
+        return r.latestTxnDate;
+      case "active":
+        return r.active ? 1 : 0;
+      case "synced":
+        return r.lastSyncedAt;
+      default:
+        return null;
+    }
+  };
+  if (sortKey) {
     rows.sort((a, b) => {
-      if (a.totalCost == null && b.totalCost == null) return 0;
-      if (a.totalCost == null) return 1;
-      if (b.totalCost == null) return -1;
-      return costSort === "asc"
-        ? a.totalCost - b.totalCost
-        : b.totalCost - a.totalCost;
+      const va = sortValue(a);
+      const vb = sortValue(b);
+      if (va == null && vb == null) return 0;
+      if (va == null) return 1;
+      if (vb == null) return -1;
+      const cmp = va < vb ? -1 : va > vb ? 1 : 0;
+      return sortDir === "desc" ? -cmp : cmp;
     });
   }
 
-  // Click cycles: default (name) -> highest first -> lowest first -> default.
-  const nextCostSort =
-    costSort === null ? "cost_desc" : costSort === "desc" ? "cost_asc" : null;
-  const CostSortIcon =
-    costSort === "desc" ? ArrowDown : costSort === "asc" ? ArrowUp : ArrowUpDown;
+  // Click cycles a column: first direction -> reverse -> back to name order.
+  const nextSort = (key: SortKey): string | null => {
+    const first = DESC_FIRST.has(key) ? "desc" : "asc";
+    if (sortKey !== key) return `${key}_${first}`;
+    if (sortDir === first)
+      return `${key}_${first === "desc" ? "asc" : "desc"}`;
+    return null;
+  };
+
+  const sortHeader = (k: SortKey, label: string) => {
+    const active = sortKey === k;
+    const Icon = !active ? ArrowUpDown : sortDir === "desc" ? ArrowDown : ArrowUp;
+    return (
+      <Link
+        href={jobsHref({ sort: nextSort(k) })}
+        title={
+          !active
+            ? "Sort"
+            : `Sorted ${sortDir === "desc" ? "descending" : "ascending"} — click to ${
+                nextSort(k) ? "reverse" : "clear"
+              }`
+        }
+        className={`inline-flex items-center gap-1 uppercase transition-colors hover:text-ink-900 ${
+          active ? "text-ink-900" : ""
+        }`}
+      >
+        {label}
+        <Icon size={12} strokeWidth={2} />
+      </Link>
+    );
+  };
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -227,31 +301,14 @@ export default async function JobsPage({
           <Table
             head={
               <tr>
-                <Th>Job</Th>
-                {showCompany && <Th>QB Company</Th>}
-                <Th>Customer</Th>
-                <Th right>
-                  <Link
-                    href={jobsHref({ sort: nextCostSort })}
-                    title={
-                      costSort === "desc"
-                        ? "Sorted highest first — click for lowest first"
-                        : costSort === "asc"
-                          ? "Sorted lowest first — click to clear"
-                          : "Sort by actual cost"
-                    }
-                    className={`inline-flex items-center gap-1 uppercase transition-colors hover:text-ink-900 ${
-                      costSort ? "text-ink-900" : ""
-                    }`}
-                  >
-                    Actual cost
-                    <CostSortIcon size={12} strokeWidth={2} />
-                  </Link>
-                </Th>
-                <Th right>Invoiced</Th>
-                <Th right>Latest transaction</Th>
-                <Th>Active</Th>
-                <Th right>Last synced</Th>
+                <Th>{sortHeader("name", "Job")}</Th>
+                {showCompany && <Th>{sortHeader("company", "QB Company")}</Th>}
+                <Th>{sortHeader("customer", "Customer")}</Th>
+                <Th right>{sortHeader("cost", "Actual cost")}</Th>
+                <Th right>{sortHeader("invoiced", "Invoiced")}</Th>
+                <Th right>{sortHeader("latest", "Latest transaction")}</Th>
+                <Th>{sortHeader("active", "Active")}</Th>
+                <Th right>{sortHeader("synced", "Last synced")}</Th>
                 {isAdmin && <Th right />}
               </tr>
             }

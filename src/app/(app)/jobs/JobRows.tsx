@@ -205,7 +205,11 @@ function CostSection({ label, lines }: { label: string; lines: JobCostLine[] }) 
                 {shortDate(l.txn_date)}
               </td>
               <td className="w-20 py-1.5 pr-3 text-ink-400">
-                {l.qb_txn_type === "TimeActivity" ? "Time" : l.qb_txn_type}
+                {l.qb_txn_type === "TimeActivity"
+                  ? "Time"
+                  : l.qb_txn_type === "JournalEntry"
+                    ? "Journal"
+                    : l.qb_txn_type}
               </td>
               <td className="py-1.5 pr-3 text-ink-900">
                 {l.vendor_name ?? "—"}
