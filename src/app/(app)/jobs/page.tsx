@@ -22,7 +22,9 @@ export default async function JobsPage({
 }) {
   const { tab, sort } = await searchParams;
   const activeTab =
-    tab === "intercompany" || tab === "nonbillable" ? tab : "customer";
+    tab === "intercompany" || tab === "nonbillable" || tab === "notransactions"
+      ? tab
+      : "customer";
   const costSort =
     sort === "cost_desc" ? "desc" : sort === "cost_asc" ? "asc" : null;
 
@@ -64,16 +66,22 @@ export default async function JobsPage({
   // EQP-prefixed job numbers are internal equipment work — never billable.
   const isNonBillable = (j: JobRow) => /^eqp/i.test(j.name.trim());
 
-  const nonBillableJobs = allJobs.filter(isNonBillable);
-  const billableJobs = allJobs.filter((j) => !isNonBillable(j));
+  // Jobs with no imported cost lines get their own tab and stay out of the
+  // other lists entirely.
+  const noTxnJobs = allJobs.filter((j) => !costByJob.has(j.id));
+  const jobsWithCosts = allJobs.filter((j) => costByJob.has(j.id));
+  const nonBillableJobs = jobsWithCosts.filter(isNonBillable);
+  const billableJobs = jobsWithCosts.filter((j) => !isNonBillable(j));
   const intercompanyJobs = billableJobs.filter(isIntercompany);
   const customerJobs = billableJobs.filter((j) => !isIntercompany(j));
   const jobs =
-    activeTab === "nonbillable"
-      ? nonBillableJobs
-      : activeTab === "intercompany"
-        ? intercompanyJobs
-        : customerJobs;
+    activeTab === "notransactions"
+      ? noTxnJobs
+      : activeTab === "nonbillable"
+        ? nonBillableJobs
+        : activeTab === "intercompany"
+          ? intercompanyJobs
+          : customerJobs;
 
   const rows: JobRowData[] = jobs.map((j) => ({
     id: j.id,
@@ -115,11 +123,13 @@ export default async function JobsPage({
       <PageHeader
         title="Jobs"
         subtitle={
-          activeTab === "nonbillable"
-            ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
-            : activeTab === "intercompany"
-              ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
-              : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
+          activeTab === "notransactions"
+            ? "Jobs with no cost transactions since Jan 1, 2023. They move to the other tabs once costs are tagged to them in QuickBooks."
+            : activeTab === "nonbillable"
+              ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
+              : activeTab === "intercompany"
+                ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
+                : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
         }
         action={
           <a href="/api/export/jobs" className={buttonCls("secondary")}>
@@ -148,6 +158,12 @@ export default async function JobsPage({
         >
           Non-Billable ({nonBillableJobs.length})
         </Link>
+        <Link
+          href={jobsHref({ tab: "notransactions" })}
+          className={tabCls(activeTab === "notransactions")}
+        >
+          No transactions ({noTxnJobs.length})
+        </Link>
       </div>
 
       <Card pad={false}>
@@ -155,18 +171,22 @@ export default async function JobsPage({
           <EmptyState
             icon={Wrench}
             title={
-              activeTab === "nonbillable"
-                ? "No non-billable jobs"
-                : activeTab === "intercompany"
-                  ? "No intercompany jobs"
-                  : "No customer jobs yet"
+              activeTab === "notransactions"
+                ? "Every job has transactions"
+                : activeTab === "nonbillable"
+                  ? "No non-billable jobs"
+                  : activeTab === "intercompany"
+                    ? "No intercompany jobs"
+                    : "No customer jobs yet"
             }
           >
-            {activeTab === "nonbillable"
-              ? "Jobs whose number starts with EQP will appear here."
-              : activeTab === "intercompany"
-                ? "Jobs whose customer is an enterprise company will appear here."
-                : "Connect QuickBooks in Settings and run a sync."}
+            {activeTab === "notransactions"
+              ? "Jobs with no cost activity since Jan 1, 2023 will appear here."
+              : activeTab === "nonbillable"
+                ? "Jobs whose number starts with EQP will appear here."
+                : activeTab === "intercompany"
+                  ? "Jobs whose customer is an enterprise company will appear here."
+                  : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (
           <Table
