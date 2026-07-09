@@ -7,12 +7,14 @@ import { isEnterpriseName } from "@/lib/enterprise";
 
 export type JobView =
   | "customer"
+  | "transportation"
   | "intercompany"
   | "nonbillable"
   | "notransactions";
 
 export const JOB_VIEWS: JobView[] = [
   "customer",
+  "transportation",
   "intercompany",
   "nonbillable",
   "notransactions",
@@ -20,6 +22,7 @@ export const JOB_VIEWS: JobView[] = [
 
 export const JOB_VIEW_LABELS: Record<JobView, string> = {
   customer: "Customer Jobs",
+  transportation: "Transportation",
   intercompany: "Intercompany",
   nonbillable: "Non-Billable",
   notransactions: "No Transactions",
@@ -30,12 +33,20 @@ export function isNonBillableJobName(name: string): boolean {
   return /^eqp/i.test(name.trim());
 }
 
+// Transportation work is identified by the job number suffix: LH, HS, or FL.
+export function isTransportationJobName(name: string): boolean {
+  return /(lh|hs|fl)$/i.test(name.trim());
+}
+
 export function classifyJobView(j: {
   name: string;
   customerDisplayName?: string | null;
   customerCompanyName?: string | null;
   hasTransactions: boolean;
 }): JobView {
+  // Transportation wins over everything: every LH/HS/FL job lives on the
+  // Transportation tab and nowhere else.
+  if (isTransportationJobName(j.name)) return "transportation";
   if (!j.hasTransactions) return "notransactions";
   if (isNonBillableJobName(j.name)) return "nonbillable";
   if (
