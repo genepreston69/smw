@@ -346,6 +346,30 @@ interface QboTimeActivity {
 // estimating default (project_plans.labor_cost_rate default).
 const DEFAULT_LABOR_COST_RATE = 37.15;
 
+// Only transactions dated on or after this are imported into job_costs.
+// Matches NO_TXN_CUTOFF on the jobs page: a job with no imported activity
+// since this date lands on the "No transactions" tab, so the import window
+// must reach back at least that far.
+const JOB_COSTS_START_DATE = "2025-01-01";
+
+// Direct-cost buckets for the per-job transaction history.
+type CostType = "materials" | "labor" | "other";
+
+const LABOR_NAME = /labor|payroll|wages?/i;
+
+// Item-based lines are purchased goods (materials); account-based lines are
+// other direct costs — except lines whose item/account name marks them as
+// labor. Time entries are always labor (classified at the call site).
+function classifyCostType(line: QboExpenseLine): CostType {
+  if (line.ItemBasedExpenseLineDetail) {
+    const itemName = line.ItemBasedExpenseLineDetail.ItemRef?.name ?? "";
+    return LABOR_NAME.test(itemName) ? "labor" : "materials";
+  }
+  const accountName =
+    line.AccountBasedExpenseLineDetail?.AccountRef?.name ?? "";
+  return LABOR_NAME.test(accountName) ? "labor" : "other";
+}
+
 async function qboQuery<T>(
   accessToken: string,
   realmId: string,
@@ -516,6 +540,7 @@ function extractJobCostRows(
           line.ItemBasedExpenseLineDetail?.ItemRef?.name ??
           line.AccountBasedExpenseLineDetail?.AccountRef?.name ??
           null,
+        cost_type: classifyCostType(line),
         amount: line.Amount ?? 0,
         last_synced_at: now,
       });
@@ -554,13 +579,18 @@ export async function syncJobCosts(): Promise<{
     );
     if (jobIdByQbId.size === 0) continue; // no jobs synced for this company yet
 
+    const since = `WHERE TxnDate >= '${JOB_COSTS_START_DATE}'`;
     const [bills, purchases, timeActivities] = [
-      await qboQuery<QboTxn>(accessToken, realmId, "SELECT * FROM Bill"),
-      await qboQuery<QboTxn>(accessToken, realmId, "SELECT * FROM Purchase"),
+      await qboQuery<QboTxn>(accessToken, realmId, `SELECT * FROM Bill ${since}`),
+      await qboQuery<QboTxn>(
+        accessToken,
+        realmId,
+        `SELECT * FROM Purchase ${since}`,
+      ),
       await qboQuery<QboTimeActivity>(
         accessToken,
         realmId,
-        "SELECT * FROM TimeActivity",
+        `SELECT * FROM TimeActivity ${since}`,
       ),
     ];
 
@@ -583,6 +613,7 @@ export async function syncJobCosts(): Promise<{
         vendor_name: t.EmployeeRef?.name ?? t.VendorRef?.name ?? null,
         description: t.Description ?? null,
         category: "Labor (time entries)",
+        cost_type: "labor",
         amount: hours * DEFAULT_LABOR_COST_RATE,
         hours,
         last_synced_at: now,
