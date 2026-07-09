@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Download, Wrench } from "lucide-react";
+import { ArrowDown, ArrowUp, ArrowUpDown, Download, Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { isEnterpriseName } from "@/lib/enterprise";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
@@ -18,11 +18,23 @@ interface JobRow {
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string; sort?: string }>;
 }) {
-  const { tab } = await searchParams;
+  const { tab, sort } = await searchParams;
   const activeTab =
     tab === "intercompany" || tab === "nonbillable" ? tab : "customer";
+  const costSort =
+    sort === "cost_desc" ? "desc" : sort === "cost_asc" ? "asc" : null;
+
+  const jobsHref = (opts?: { tab?: string; sort?: string | null }) => {
+    const params = new URLSearchParams();
+    const t = opts && "tab" in opts ? opts.tab : activeTab;
+    if (t && t !== "customer") params.set("tab", t);
+    const s = opts && "sort" in opts ? opts.sort : sort;
+    if (s === "cost_desc" || s === "cost_asc") params.set("sort", s);
+    const q = params.toString();
+    return q ? `/jobs?${q}` : "/jobs";
+  };
 
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
@@ -73,6 +85,24 @@ export default async function JobsPage({
     totalCost: costByJob.has(j.id) ? costByJob.get(j.id)! : null,
   }));
 
+  // Jobs come name-sorted from the query; cost sort puts costless jobs last.
+  if (costSort) {
+    rows.sort((a, b) => {
+      if (a.totalCost == null && b.totalCost == null) return 0;
+      if (a.totalCost == null) return 1;
+      if (b.totalCost == null) return -1;
+      return costSort === "asc"
+        ? a.totalCost - b.totalCost
+        : b.totalCost - a.totalCost;
+    });
+  }
+
+  // Click cycles: default (name) -> highest first -> lowest first -> default.
+  const nextCostSort =
+    costSort === null ? "cost_desc" : costSort === "desc" ? "cost_asc" : null;
+  const CostSortIcon =
+    costSort === "desc" ? ArrowDown : costSort === "asc" ? ArrowUp : ArrowUpDown;
+
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
       active
@@ -100,17 +130,20 @@ export default async function JobsPage({
       />
 
       <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
-        <Link href="/jobs" className={tabCls(activeTab === "customer")}>
+        <Link
+          href={jobsHref({ tab: "customer" })}
+          className={tabCls(activeTab === "customer")}
+        >
           Customer jobs ({customerJobs.length})
         </Link>
         <Link
-          href="/jobs?tab=intercompany"
+          href={jobsHref({ tab: "intercompany" })}
           className={tabCls(activeTab === "intercompany")}
         >
           Intercompany ({intercompanyJobs.length})
         </Link>
         <Link
-          href="/jobs?tab=nonbillable"
+          href={jobsHref({ tab: "nonbillable" })}
           className={tabCls(activeTab === "nonbillable")}
         >
           Non-Billable ({nonBillableJobs.length})
@@ -142,7 +175,24 @@ export default async function JobsPage({
                 <Th>Job</Th>
                 {showCompany && <Th>QB Company</Th>}
                 <Th>Customer</Th>
-                <Th right>Actual cost</Th>
+                <Th right>
+                  <Link
+                    href={jobsHref({ sort: nextCostSort })}
+                    title={
+                      costSort === "desc"
+                        ? "Sorted highest first — click for lowest first"
+                        : costSort === "asc"
+                          ? "Sorted lowest first — click to clear"
+                          : "Sort by actual cost"
+                    }
+                    className={`inline-flex items-center gap-1 uppercase transition-colors hover:text-ink-900 ${
+                      costSort ? "text-ink-900" : ""
+                    }`}
+                  >
+                    Actual cost
+                    <CostSortIcon size={12} strokeWidth={2} />
+                  </Link>
+                </Th>
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
                 {isAdmin && <Th right />}
