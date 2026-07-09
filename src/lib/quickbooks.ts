@@ -356,7 +356,9 @@ interface QboInvoice {
 const DEFAULT_LABOR_COST_RATE = 37.15;
 
 // Only transactions dated on or after this are imported into job_costs.
-// The transaction-history feature pools costs from the start of 2023.
+// The transaction-history feature pools costs from the start of 2023. Must
+// reach back at least to NO_TXN_CUTOFF (src/lib/jobViews.ts) so the
+// No Transactions view can classify against real data.
 const JOB_COSTS_START_DATE = "2023-01-01";
 
 // Direct-cost buckets for the per-job transaction history.

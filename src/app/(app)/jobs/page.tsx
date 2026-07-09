@@ -15,20 +15,6 @@ interface JobRow {
   customer: { display_name: string; company_name: string | null } | null;
 }
 
-// Jobs with no cost or invoice activity on or after this date move to the
-// "No transactions" tab (except US Army Corps of Engineers jobs).
-// Matches JOB_COSTS_START_DATE in src/lib/quickbooks.ts.
-const NO_TXN_CUTOFF = "2025-01-01";
-
-// US Army Corps of Engineers jobs stay under Customer jobs even without
-// recent transactions. QuickBooks names vary ("US Army Corps of Engineers",
-// "U.S. Army Corps...", "USACE"), so match loosely like isEnterpriseName.
-function isArmyCorpsName(name: string | null | undefined): boolean {
-  if (!name) return false;
-  const n = name.toLowerCase();
-  return n.includes("army corps") || n.split(/[^a-z0-9]+/).includes("usace");
-}
-
 export default async function JobsPage({
   searchParams,
 }: {
@@ -116,7 +102,7 @@ export default async function JobsPage({
         name: j.name,
         customerDisplayName: j.customer?.display_name,
         customerCompanyName: j.customer?.company_name,
-        hasTransactions: costByJob.has(j.id),
+        latestTxnDate: latestTxnDate(j.id),
       })
     ].push(j);
   }
@@ -125,26 +111,6 @@ export default async function JobsPage({
   const nonBillableJobs = grouped.nonbillable;
   const noTxnJobs = grouped.notransactions;
   const jobs = grouped[activeTab as JobView];
-
-  const hasRecentTxns = (j: JobRow) => {
-    const latest = latestTxnDate(j.id);
-    return !!latest && latest >= NO_TXN_CUTOFF;
-  };
-
-  // No-transactions wins over intercompany: any job (customer or
-  // intercompany) with no cost activity since the cutoff moves there,
-  // except US Army Corps of Engineers jobs, which stay under Customer jobs.
-  const isNoTxn = (j: JobRow) => !hasRecentTxns(j) && !isArmyCorps(j);
-
-  const noTxnJobs = allJobs.filter(isNoTxn);
-  const activeJobs = allJobs.filter((j) => !isNoTxn(j));
-  const intercompanyJobs = activeJobs.filter(isIntercompany);
-  const customerJobs = activeJobs.filter((j) => !isIntercompany(j));
-  const jobs = intercompanyTab
-    ? intercompanyJobs
-    : noTxnTab
-      ? noTxnJobs
-      : customerJobs;
 
   const rows: JobRowData[] = jobs.map((j) => {
     const cost = costByJob.get(j.id);
@@ -193,7 +159,7 @@ export default async function JobsPage({
         title="Jobs"
         subtitle={
           activeTab === "notransactions"
-            ? "Jobs with no cost transactions since Jan 1, 2023. They move to the other tabs once costs are tagged to them in QuickBooks."
+            ? "Jobs with no cost or invoice activity since Jan 1, 2025 (US Army Corps of Engineers jobs stay under Customer jobs). They move to the other tabs once activity is tagged to them in QuickBooks."
             : activeTab === "nonbillable"
               ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
               : activeTab === "intercompany"
@@ -250,7 +216,7 @@ export default async function JobsPage({
             }
           >
             {activeTab === "notransactions"
-              ? "Jobs with no cost activity since Jan 1, 2023 will appear here."
+              ? "Jobs with no cost or invoice activity since Jan 1, 2025 will appear here."
               : activeTab === "nonbillable"
                 ? "Jobs whose number starts with EQP will appear here."
                 : activeTab === "intercompany"
@@ -282,6 +248,8 @@ export default async function JobsPage({
                     <CostSortIcon size={12} strokeWidth={2} />
                   </Link>
                 </Th>
+                <Th right>Invoiced</Th>
+                <Th right>Latest transaction</Th>
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
                 {isAdmin && <Th right />}

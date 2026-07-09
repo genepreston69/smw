@@ -19,7 +19,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [{ data: jobs }, { data: connRows }, { data: costRows }] =
+  const [{ data: jobs }, { data: connRows }, { data: costRows }, { data: invRows }] =
     await Promise.all([
       supabase
         .from("jobs")
@@ -31,8 +31,11 @@ export async function GET() {
       supabase
         .from("job_cost_totals")
         .select(
-          "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount",
+          "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount, latest_txn_date",
         ),
+      supabase
+        .from("job_invoice_totals")
+        .select("job_id, total_invoiced, latest_invoice_date"),
     ]);
 
   const companyByRealm = new Map(
@@ -47,9 +50,27 @@ export async function GET() {
         materials: Number(r.materials_amount ?? 0),
         labor: Number(r.labor_amount ?? 0),
         other: Number(r.other_amount ?? 0),
+        latestTxnDate: (r.latest_txn_date as string | null) ?? null,
       },
     ]),
   );
+  const invoiceByJob = new Map(
+    (invRows ?? []).map((r) => [
+      r.job_id as string,
+      {
+        invoiced: Number(r.total_invoiced ?? 0),
+        latestInvoiceDate: (r.latest_invoice_date as string | null) ?? null,
+      },
+    ]),
+  );
+
+  // Latest activity across costs and invoices (YYYY-MM-DD string compare).
+  const latestTxnDate = (jobId: string): string | null => {
+    const cost = costByJob.get(jobId)?.latestTxnDate ?? null;
+    const inv = invoiceByJob.get(jobId)?.latestInvoiceDate ?? null;
+    if (cost && inv) return cost >= inv ? cost : inv;
+    return cost ?? inv;
+  };
 
   interface Row {
     id: string;
@@ -72,7 +93,7 @@ export async function GET() {
         name: j.name,
         customerDisplayName: j.customer?.display_name,
         customerCompanyName: j.customer?.company_name,
-        hasTransactions: costByJob.has(j.id),
+        latestTxnDate: latestTxnDate(j.id),
       })
     ].push(j);
   }
@@ -91,6 +112,8 @@ export async function GET() {
       { header: "Other Direct Costs", key: "other", width: 18, style: { numFmt: moneyFmt } },
       { header: "Actual Cost", key: "total", width: 14, style: { numFmt: moneyFmt } },
       { header: "Actual Hours", key: "hours", width: 13, style: { numFmt: "#,##0.0" } },
+      { header: "Invoiced Revenue", key: "invoiced", width: 16, style: { numFmt: moneyFmt } },
+      { header: "Latest Transaction", key: "latest", width: 17 },
       { header: "Active", key: "active", width: 9 },
       { header: "Last Synced", key: "synced", width: 14 },
     ];
@@ -99,6 +122,8 @@ export async function GET() {
 
     for (const j of grouped[view]) {
       const cost = costByJob.get(j.id);
+      const invoice = invoiceByJob.get(j.id);
+      const latest = latestTxnDate(j.id);
       sheet.addRow({
         job: j.name,
         company: j.realm_id
@@ -110,6 +135,8 @@ export async function GET() {
         other: cost ? cost.other : null,
         total: cost ? cost.amount : null,
         hours: cost && cost.hours > 0 ? cost.hours : null,
+        invoiced: invoice ? invoice.invoiced : null,
+        latest: latest ? shortDate(latest) : "",
         active: j.active ? "Yes" : "No",
         synced: j.last_synced_at ? shortDate(j.last_synced_at) : "",
       });
