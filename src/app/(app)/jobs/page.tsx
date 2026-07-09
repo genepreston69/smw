@@ -15,7 +15,7 @@ interface JobRow {
   customer: { display_name: string; company_name: string | null } | null;
 }
 
-// Jobs with no cost transactions on or after this date move to the
+// Jobs with no cost or invoice activity on or after this date move to the
 // "No transactions" tab (except US Army Corps of Engineers jobs).
 // Matches JOB_COSTS_START_DATE in src/lib/quickbooks.ts.
 const NO_TXN_CUTOFF = "2025-01-01";
@@ -40,18 +40,22 @@ export default async function JobsPage({
 
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
-  const [{ data }, { data: connRows }, { data: costRows }] = await Promise.all([
-    supabase
-      .from("jobs")
-      .select(
-        "id, name, realm_id, fully_qualified_name, active, last_synced_at, customer:customers(display_name, company_name)",
-      )
-      .order("name"),
-    supabase.from("qb_connection_status").select("realm_id, company_name"),
-    supabase
-      .from("job_cost_totals")
-      .select("job_id, total_amount, latest_txn_date"),
-  ]);
+  const [{ data }, { data: connRows }, { data: costRows }, { data: invRows }] =
+    await Promise.all([
+      supabase
+        .from("jobs")
+        .select(
+          "id, name, realm_id, fully_qualified_name, active, last_synced_at, customer:customers(display_name, company_name)",
+        )
+        .order("name"),
+      supabase.from("qb_connection_status").select("realm_id, company_name"),
+      supabase
+        .from("job_cost_totals")
+        .select("job_id, total_amount, latest_txn_date"),
+      supabase
+        .from("job_invoice_totals")
+        .select("job_id, total_invoiced, latest_invoice_date"),
+    ]);
 
   const allJobs = (data ?? []) as unknown as JobRow[];
   const companyByRealm = new Map(
@@ -67,6 +71,24 @@ export default async function JobsPage({
       },
     ]),
   );
+  const invoiceByJob = new Map(
+    (invRows ?? []).map((r) => [
+      r.job_id as string,
+      {
+        invoiced: Number(r.total_invoiced ?? 0),
+        latestInvoiceDate: (r.latest_invoice_date as string | null) ?? null,
+      },
+    ]),
+  );
+
+  // Latest activity across costs and invoices. Dates are YYYY-MM-DD strings,
+  // so string compare works.
+  const latestTxnDate = (jobId: string): string | null => {
+    const cost = costByJob.get(jobId)?.latestTxnDate ?? null;
+    const inv = invoiceByJob.get(jobId)?.latestInvoiceDate ?? null;
+    if (cost && inv) return cost >= inv ? cost : inv;
+    return cost ?? inv;
+  };
 
   const isIntercompany = (j: JobRow) =>
     isEnterpriseName(j.customer?.display_name) ||
@@ -76,9 +98,8 @@ export default async function JobsPage({
     isArmyCorpsName(j.customer?.display_name) ||
     isArmyCorpsName(j.customer?.company_name);
 
-  // txn_date is a date string (YYYY-MM-DD), so string compare works.
   const hasRecentTxns = (j: JobRow) => {
-    const latest = costByJob.get(j.id)?.latestTxnDate;
+    const latest = latestTxnDate(j.id);
     return !!latest && latest >= NO_TXN_CUTOFF;
   };
 
@@ -99,6 +120,7 @@ export default async function JobsPage({
 
   const rows: JobRowData[] = jobs.map((j) => {
     const cost = costByJob.get(j.id);
+    const invoice = invoiceByJob.get(j.id);
     return {
       id: j.id,
       name: j.name,
@@ -107,7 +129,8 @@ export default async function JobsPage({
       active: j.active,
       lastSyncedAt: j.last_synced_at,
       totalCost: cost ? cost.amount : null,
-      latestTxnDate: cost?.latestTxnDate ?? null,
+      invoiced: invoice ? invoice.invoiced : null,
+      latestTxnDate: latestTxnDate(j.id),
     };
   });
 
@@ -126,7 +149,7 @@ export default async function JobsPage({
           intercompanyTab
             ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
             : noTxnTab
-              ? "Customer and intercompany jobs with no cost transactions since 1/1/2025. US Army Corps of Engineers jobs stay under Customer jobs."
+              ? "Customer and intercompany jobs with no cost or invoice activity since 1/1/2025. US Army Corps of Engineers jobs stay under Customer jobs."
               : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, labor, and other direct costs since Jan 1, 2025)."
         }
         action={
@@ -164,7 +187,7 @@ export default async function JobsPage({
             {intercompanyTab
               ? "Jobs whose customer is an enterprise company will appear here."
               : noTxnTab
-                ? "Jobs with no cost transactions since 1/1/2025 will appear here."
+                ? "Jobs with no cost or invoice activity since 1/1/2025 will appear here."
                 : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (
@@ -175,19 +198,15 @@ export default async function JobsPage({
                 {showCompany && <Th>QB Company</Th>}
                 <Th>Customer</Th>
                 <Th right>Actual cost</Th>
-                {noTxnTab && <Th right>Latest transaction</Th>}
+                <Th right>Invoiced</Th>
+                <Th right>Latest transaction</Th>
                 <Th>Active</Th>
                 <Th right>Last synced</Th>
                 {isAdmin && <Th right />}
               </tr>
             }
           >
-            <JobRows
-              jobs={rows}
-              showCompany={showCompany}
-              isAdmin={isAdmin}
-              showLatestTxn={noTxnTab}
-            />
+            <JobRows jobs={rows} showCompany={showCompany} isAdmin={isAdmin} />
           </Table>
         )}
       </Card>

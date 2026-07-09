@@ -342,11 +342,21 @@ interface QboTimeActivity {
   Minutes?: number;
 }
 
+interface QboInvoice {
+  Id: string;
+  TxnDate?: string;
+  DocNumber?: string;
+  TotalAmt?: number;
+  Balance?: number;
+  CustomerRef?: { value: string };
+}
+
 // Internal blended labor cost rate used to value time entries — matches the
 // estimating default (project_plans.labor_cost_rate default).
 const DEFAULT_LABOR_COST_RATE = 37.15;
 
-// Only transactions dated on or after this are imported into job_costs.
+// Only transactions dated on or after this are imported into job_costs
+// and job_invoices.
 // Matches NO_TXN_CUTOFF on the jobs page: a job with no imported activity
 // since this date lands on the "No transactions" tab, so the import window
 // must reach back at least that far.
@@ -549,9 +559,13 @@ function extractJobCostRows(
   return rows;
 }
 
-/** Import actual costs (bill/purchase lines tagged to jobs) for all companies. */
+/**
+ * Import actual costs (bill/purchase lines tagged to jobs) and invoiced
+ * revenue (invoices billed to jobs) for all companies.
+ */
 export async function syncJobCosts(): Promise<{
   costLines: number;
+  invoices: number;
   companies: number;
 }> {
   const connections = await getValidConnections();
@@ -565,6 +579,7 @@ export async function syncJobCosts(): Promise<{
   if (!org) throw new Error("No organization found");
 
   let costLines = 0;
+  let invoiceCount = 0;
 
   for (const { accessToken, realmId } of connections) {
     const now = new Date().toISOString();
@@ -580,7 +595,7 @@ export async function syncJobCosts(): Promise<{
     if (jobIdByQbId.size === 0) continue; // no jobs synced for this company yet
 
     const since = `WHERE TxnDate >= '${JOB_COSTS_START_DATE}'`;
-    const [bills, purchases, timeActivities] = [
+    const [bills, purchases, timeActivities, qbInvoices] = [
       await qboQuery<QboTxn>(accessToken, realmId, `SELECT * FROM Bill ${since}`),
       await qboQuery<QboTxn>(
         accessToken,
@@ -591,6 +606,11 @@ export async function syncJobCosts(): Promise<{
         accessToken,
         realmId,
         `SELECT * FROM TimeActivity ${since}`,
+      ),
+      await qboQuery<QboInvoice>(
+        accessToken,
+        realmId,
+        `SELECT * FROM Invoice ${since}`,
       ),
     ];
 
@@ -651,7 +671,47 @@ export async function syncJobCosts(): Promise<{
       }
     }
     costLines += rows.length;
+
+    // Invoices billed to a job (sub-customer); ones billed to a top-level
+    // customer aren't job revenue and are skipped.
+    const invoiceRows = [];
+    for (const inv of qbInvoices) {
+      const jobId = inv.CustomerRef?.value
+        ? jobIdByQbId.get(inv.CustomerRef.value)
+        : undefined;
+      if (!jobId) continue;
+      invoiceRows.push({
+        org_id: org.id,
+        realm_id: realmId,
+        job_id: jobId,
+        qb_invoice_id: inv.Id,
+        doc_number: inv.DocNumber ?? null,
+        txn_date: inv.TxnDate ?? null,
+        amount: inv.TotalAmt ?? 0,
+        balance: inv.Balance ?? null,
+        last_synced_at: now,
+      });
+    }
+
+    // Full refresh per company, same as job_costs.
+    const { error: invDelError } = await supabase
+      .from("job_invoices")
+      .delete()
+      .eq("org_id", org.id)
+      .eq("realm_id", realmId);
+    if (invDelError)
+      throw new Error(`Invoice refresh failed: ${invDelError.message}`);
+
+    if (invoiceRows.length > 0) {
+      for (let i = 0; i < invoiceRows.length; i += 500) {
+        const { error } = await supabase
+          .from("job_invoices")
+          .insert(invoiceRows.slice(i, i + 500));
+        if (error) throw new Error(`Invoice insert failed: ${error.message}`);
+      }
+    }
+    invoiceCount += invoiceRows.length;
   }
 
-  return { costLines, companies: connections.length };
+  return { costLines, invoices: invoiceCount, companies: connections.length };
 }
