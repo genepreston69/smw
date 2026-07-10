@@ -45,7 +45,10 @@ export default async function JobsPage({
 }) {
   const { tab, sort } = await searchParams;
   const activeTab =
-    tab === "intercompany" || tab === "nonbillable" || tab === "notransactions"
+    tab === "transportation" ||
+    tab === "intercompany" ||
+    tab === "nonbillable" ||
+    tab === "notransactions"
       ? tab
       : "customer";
   const sortMatch = SORT_PATTERN.exec(sort ?? "");
@@ -116,6 +119,7 @@ export default async function JobsPage({
 
   const grouped: Record<JobView, JobRow[]> = {
     customer: [],
+    transportation: [],
     intercompany: [],
     nonbillable: [],
     notransactions: [],
@@ -131,6 +135,7 @@ export default async function JobsPage({
     ].push(j);
   }
   const customerJobs = grouped.customer;
+  const transportationJobs = grouped.transportation;
   const intercompanyJobs = grouped.intercompany;
   const nonBillableJobs = grouped.nonbillable;
   const noTxnJobs = grouped.notransactions;
@@ -238,7 +243,9 @@ export default async function JobsPage({
               ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
               : activeTab === "intercompany"
                 ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
-                : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
+                : activeTab === "transportation"
+                  ? "Transportation jobs — job numbers ending in LH, HS, or FL."
+                  : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
         }
         action={
           <a href="/api/export/jobs-workbook" className={buttonCls("secondary")}>
@@ -254,6 +261,12 @@ export default async function JobsPage({
           className={tabCls(activeTab === "customer")}
         >
           Customer jobs ({customerJobs.length})
+        </Link>
+        <Link
+          href={jobsHref({ tab: "transportation" })}
+          className={tabCls(activeTab === "transportation")}
+        >
+          Transportation ({transportationJobs.length})
         </Link>
         <Link
           href={jobsHref({ tab: "intercompany" })}
@@ -286,7 +299,9 @@ export default async function JobsPage({
                   ? "No non-billable jobs"
                   : activeTab === "intercompany"
                     ? "No intercompany jobs"
-                    : "No customer jobs yet"
+                    : activeTab === "transportation"
+                      ? "No transportation jobs"
+                      : "No customer jobs yet"
             }
           >
             {activeTab === "notransactions"
@@ -295,7 +310,9 @@ export default async function JobsPage({
                 ? "Jobs whose number starts with EQP will appear here."
                 : activeTab === "intercompany"
                   ? "Jobs whose customer is an enterprise company will appear here."
-                  : "Connect QuickBooks in Settings and run a sync."}
+                  : activeTab === "transportation"
+                    ? "Jobs whose number ends in LH, HS, or FL will appear here."
+                    : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (
           <Table

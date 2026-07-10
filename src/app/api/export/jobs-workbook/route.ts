@@ -83,6 +83,7 @@ export async function GET() {
 
   const grouped: Record<JobView, Row[]> = {
     customer: [],
+    transportation: [],
     intercompany: [],
     nonbillable: [],
     notransactions: [],

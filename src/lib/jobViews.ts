@@ -1,18 +1,20 @@
 import { isEnterpriseName } from "@/lib/enterprise";
 
 /* ---------------------------------------------------------------------------
-   The four Jobs dashboard views. The dashboard tabs and the workbook export
+   The five Jobs dashboard views. The dashboard tabs and the workbook export
    must bucket jobs identically, so the classification lives here.
 --------------------------------------------------------------------------- */
 
 export type JobView =
   | "customer"
+  | "transportation"
   | "intercompany"
   | "nonbillable"
   | "notransactions";
 
 export const JOB_VIEWS: JobView[] = [
   "customer",
+  "transportation",
   "intercompany",
   "nonbillable",
   "notransactions",
@@ -20,6 +22,7 @@ export const JOB_VIEWS: JobView[] = [
 
 export const JOB_VIEW_LABELS: Record<JobView, string> = {
   customer: "Customer Jobs",
+  transportation: "Transportation",
   intercompany: "Intercompany",
   nonbillable: "Non-Billable",
   notransactions: "No Transactions",
@@ -34,6 +37,11 @@ export const NO_TXN_CUTOFF = "2025-01-01";
 // EQP-prefixed job numbers are internal equipment work — never billable.
 export function isNonBillableJobName(name: string): boolean {
   return /^eqp/i.test(name.trim());
+}
+
+// Transportation work is identified by the job number suffix: LH, HS, or FL.
+export function isTransportationJobName(name: string): boolean {
+  return /(lh|hs|fl)$/i.test(name.trim());
 }
 
 // US Army Corps of Engineers jobs stay under Customer Jobs even without
@@ -52,6 +60,9 @@ export function classifyJobView(j: {
   /** Most recent cost line or invoice date (YYYY-MM-DD), if any. */
   latestTxnDate: string | null;
 }): JobView {
+  // Transportation wins over everything: every LH/HS/FL job lives on the
+  // Transportation tab and nowhere else.
+  if (isTransportationJobName(j.name)) return "transportation";
   const armyCorps =
     isArmyCorpsName(j.customerDisplayName) ||
     isArmyCorpsName(j.customerCompanyName);
