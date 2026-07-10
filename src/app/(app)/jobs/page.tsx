@@ -244,7 +244,7 @@ export default async function JobsPage({
               : activeTab === "intercompany"
                 ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
                 : activeTab === "transportation"
-                  ? "Transportation jobs — job numbers ending in LH, HS, or FL."
+                  ? "Transportation jobs — job numbers ending in LH, HS, FL, or BC."
                   : "QuickBooks projects and sub-customers for outside customers. Job plans attach to these. Click a job to see its transaction history (materials, direct labor, and other direct costs since Jan 1, 2023)."
         }
         action={
@@ -311,7 +311,7 @@ export default async function JobsPage({
                 : activeTab === "intercompany"
                   ? "Jobs whose customer is an enterprise company will appear here."
                   : activeTab === "transportation"
-                    ? "Jobs whose number ends in LH, HS, or FL will appear here."
+                    ? "Jobs whose number ends in LH, HS, FL, or BC will appear here."
                     : "Connect QuickBooks in Settings and run a sync."}
           </EmptyState>
         ) : (

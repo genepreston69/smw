@@ -39,9 +39,9 @@ export function isNonBillableJobName(name: string): boolean {
   return /^eqp/i.test(name.trim());
 }
 
-// Transportation work is identified by the job number suffix: LH, HS, or FL.
+// Transportation work is identified by the job number suffix: LH, HS, FL, or BC.
 export function isTransportationJobName(name: string): boolean {
-  return /(lh|hs|fl)$/i.test(name.trim());
+  return /(lh|hs|fl|bc)$/i.test(name.trim());
 }
 
 // US Army Corps of Engineers jobs stay under Customer Jobs even without
