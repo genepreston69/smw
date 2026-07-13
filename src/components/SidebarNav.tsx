@@ -7,6 +7,7 @@ import {
   ClipboardList,
   Stamp,
   Users,
+  PieChart,
   Wrench,
   Settings,
   type LucideIcon,
@@ -17,6 +18,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/plans", label: "Job Plans", icon: ClipboardList },
   { href: "/approvals", label: "Approvals", icon: Stamp },
   { href: "/customers", label: "Customers", icon: Users },
+  { href: "/customers/summary", label: "Customer Summary", icon: PieChart },
   { href: "/jobs", label: "Jobs", icon: Wrench },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
@@ -24,11 +26,21 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
 export function SidebarNav() {
   const pathname = usePathname();
 
+  // Longest matching href wins so nested routes (/customers/summary) light
+  // up their own item, not every prefix (/customers) as well.
+  const activeHref = NAV.reduce<string | null>((best, { href }) => {
+    const match =
+      href === "/"
+        ? pathname === "/"
+        : pathname === href || pathname.startsWith(`${href}/`);
+    if (!match) return best;
+    return !best || href.length > best.length ? href : best;
+  }, null);
+
   return (
     <nav className="flex flex-col gap-0.5 px-2">
       {NAV.map(({ href, label, icon: Icon }) => {
-        const active =
-          href === "/" ? pathname === "/" : pathname.startsWith(href);
+        const active = href === activeHref;
         return (
           <Link
             key={href}

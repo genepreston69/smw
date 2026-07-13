@@ -2,6 +2,7 @@ import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
+import { getCustomerSummary } from "@/lib/customerSummary";
 import { shortDate } from "@/lib/format";
 import {
   JOB_VIEWS,
@@ -115,6 +116,52 @@ export async function GET() {
 
   const workbook = new ExcelJS.Workbook();
   const moneyFmt = "#,##0.00";
+
+  // First sheet: per-customer rollup, same aggregation as /customers/summary.
+  const summary = await getCustomerSummary(supabase);
+  const summarySheet = workbook.addWorksheet("Customer Summary");
+  summarySheet.columns = [
+    { header: "Customer", key: "customer", width: 32 },
+    { header: "QB Company", key: "company", width: 22 },
+    { header: "Intercompany", key: "intercompany", width: 13 },
+    { header: "Jobs", key: "jobs", width: 8 },
+    { header: "Materials", key: "materials", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Direct Labor", key: "labor", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Other Direct Costs", key: "other", width: 18, style: { numFmt: moneyFmt } },
+    { header: "Actual Cost", key: "cost", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Actual Hours", key: "hours", width: 13, style: { numFmt: "#,##0.0" } },
+    { header: "Invoiced Revenue", key: "invoiced", width: 16, style: { numFmt: moneyFmt } },
+    { header: "Net", key: "net", width: 14, style: { numFmt: moneyFmt } },
+  ];
+  summarySheet.getRow(1).font = { bold: true };
+  summarySheet.views = [{ state: "frozen", ySplit: 1 }];
+  for (const r of summary.rows) {
+    summarySheet.addRow({
+      customer: r.name,
+      company: r.companyName ?? "",
+      intercompany: r.intercompany ? "Yes" : "No",
+      jobs: r.jobs,
+      materials: r.materials,
+      labor: r.labor,
+      other: r.other,
+      cost: r.cost,
+      hours: r.hours > 0 ? r.hours : null,
+      invoiced: r.invoiced,
+      net: r.net,
+    });
+  }
+  const totalRow = summarySheet.addRow({
+    customer: "Total",
+    jobs: summary.totals.jobs,
+    materials: summary.totals.materials,
+    labor: summary.totals.labor,
+    other: summary.totals.other,
+    cost: summary.totals.cost,
+    hours: summary.totals.hours > 0 ? summary.totals.hours : null,
+    invoiced: summary.totals.invoiced,
+    net: summary.totals.net,
+  });
+  totalRow.font = { bold: true };
 
   for (const view of JOB_VIEWS) {
     const sheet = workbook.addWorksheet(JOB_VIEW_LABELS[view]);
