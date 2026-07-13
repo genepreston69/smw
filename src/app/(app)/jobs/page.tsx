@@ -302,7 +302,8 @@ export default async function JobsPage({
         </Link>
       </div>
 
-      <Card pad={false}>
+      {/* clip off so the sticky header can escape the card while scrolling */}
+      <Card pad={false} clip={false}>
         {rows.length === 0 ? (
           <EmptyState
             icon={Wrench}
@@ -330,6 +331,7 @@ export default async function JobsPage({
           </EmptyState>
         ) : (
           <Table
+            stickyHeader
             head={
               <tr>
                 <Th>{sortHeader("name", "Job")}</Th>
