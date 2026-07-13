@@ -1,16 +1,8 @@
 import { Download, PieChart } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { getCustomerSummary } from "@/lib/customerSummary";
-import { money } from "@/lib/format";
-import {
-  Card,
-  EmptyState,
-  PageHeader,
-  Table,
-  Th,
-  buttonCls,
-} from "@/components/ui";
-import { SummaryRows } from "./SummaryRows";
+import { Card, EmptyState, PageHeader, buttonCls } from "@/components/ui";
+import { SummaryTable } from "./SummaryRows";
 
 export default async function CustomerSummaryPage() {
   const { supabase } = await requireUser();
@@ -20,7 +12,7 @@ export default async function CustomerSummaryPage() {
     <div>
       <PageHeader
         title="Customer Summary"
-        subtitle="Every job's actual costs and invoiced revenue rolled up by customer, largest invoiced first. Click a customer to list their jobs, a job to break its costs down by vendor, and a vendor to see the individual transactions. Job-level QuickBooks data only — costs tagged to a job (since Jan 1, 2023) and invoices billed to a job. Contract services covers all non-labor, non-materials direct costs (account-based expense lines)."
+        subtitle="Every job's actual costs and invoiced revenue rolled up by customer, largest invoiced first — click any column header to re-sort. Click a customer to list their jobs, a job to break its costs down by vendor, and a vendor to see the individual transactions. Job-level QuickBooks data only — costs tagged to a job (since Jan 1, 2023) and invoices billed to a job. Contract services covers all non-labor, non-materials direct costs (account-based expense lines)."
         action={
           <a
             href="/api/export/customer-summary"
@@ -39,57 +31,11 @@ export default async function CustomerSummaryPage() {
             Connect QuickBooks in Settings and run a sync.
           </EmptyState>
         ) : (
-          <Table
-            stickyHeader
-            head={
-              <tr>
-                <Th>Customer</Th>
-                {showCompany && <Th>QB Company</Th>}
-                <Th>Intercompany</Th>
-                <Th right>Jobs</Th>
-                <Th right>Materials</Th>
-                <Th right>Direct labor</Th>
-                <Th right>Contract services</Th>
-                <Th right>Actual cost</Th>
-                <Th right>Invoiced</Th>
-                <Th right>Net</Th>
-              </tr>
-            }
-          >
-            <SummaryRows rows={rows} showCompany={showCompany} />
-            <tr className="border-t-2 border-line bg-surface/40 font-semibold text-ink-900">
-              <td className="px-4 py-3">
-                Total ({rows.length} customer{rows.length === 1 ? "" : "s"})
-              </td>
-              {showCompany && <td className="px-4 py-3" />}
-              <td className="px-4 py-3" />
-              <td className="px-4 py-3 text-right tabular-nums">
-                {totals.jobs}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {money(totals.materials)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {money(totals.labor)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {money(totals.other)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {money(totals.cost)}
-              </td>
-              <td className="px-4 py-3 text-right tabular-nums">
-                {money(totals.invoiced)}
-              </td>
-              <td
-                className={`px-4 py-3 text-right tabular-nums ${
-                  totals.net < 0 ? "text-bad-600" : ""
-                }`}
-              >
-                {money(totals.net)}
-              </td>
-            </tr>
-          </Table>
+          <SummaryTable
+            rows={rows}
+            totals={totals}
+            showCompany={showCompany}
+          />
         )}
       </Card>
     </div>
