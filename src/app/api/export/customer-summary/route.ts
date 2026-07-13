@@ -22,7 +22,7 @@ export async function GET() {
       "Jobs",
       "Materials",
       "Direct Labor",
-      "Other Direct Costs",
+      "Contract Services",
       "Actual Cost",
       "Actual Hours",
       "Invoiced Revenue",

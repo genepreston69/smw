@@ -14,6 +14,11 @@ export interface CustomerSummaryJob {
   name: string;
   /** null when the job has no imported cost lines / invoices. */
   cost: number | null;
+  /** Cost split; null exactly when cost is null. Contract services is the
+      non-labor, non-materials remainder (account-based expense lines). */
+  materials: number | null;
+  labor: number | null;
+  contractServices: number | null;
   invoiced: number | null;
 }
 
@@ -175,6 +180,9 @@ export async function getCustomerSummary(
       id: j.id,
       name: j.name,
       cost: cost ? Number(cost.total_amount ?? 0) : null,
+      materials: cost ? Number(cost.materials_amount ?? 0) : null,
+      labor: cost ? Number(cost.labor_amount ?? 0) : null,
+      contractServices: cost ? Number(cost.other_amount ?? 0) : null,
       invoiced: invoiced ?? null,
     });
   }

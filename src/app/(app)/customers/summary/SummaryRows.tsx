@@ -14,9 +14,10 @@ export function SummaryRows({
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
 
-  // Customer + Intercompany + Jobs + Actual cost + Invoiced + Net, plus the
-  // optional QB Company column.
-  const colSpan = 6 + (showCompany ? 1 : 0);
+  // Customer + Intercompany + Jobs + Materials + Direct labor + Contract
+  // services + Actual cost + Invoiced + Net, plus the optional QB Company
+  // column.
+  const colSpan = 9 + (showCompany ? 1 : 0);
 
   const toggle = (key: string) =>
     setOpen((prev) => {
@@ -65,6 +66,15 @@ export function SummaryRows({
               </td>
               <td className="px-4 py-3 text-right tabular-nums">{r.jobs}</td>
               <td className="px-4 py-3 text-right tabular-nums">
+                {money(r.materials)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {money(r.labor)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {money(r.other)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
                 {money(r.cost)}
               </td>
               <td className="px-4 py-3 text-right tabular-nums">
@@ -103,6 +113,15 @@ function JobList({ row }: { row: CustomerSummaryRow }) {
           <tr>
             <th className="py-1.5 pr-3 font-semibold">Job</th>
             <th className="w-28 py-1.5 pr-3 text-right font-semibold">
+              Materials
+            </th>
+            <th className="w-28 py-1.5 pr-3 text-right font-semibold">
+              Direct labor
+            </th>
+            <th className="w-32 py-1.5 pr-3 text-right font-semibold">
+              Contract services
+            </th>
+            <th className="w-28 py-1.5 pr-3 text-right font-semibold">
               Actual cost
             </th>
             <th className="w-28 py-1.5 pr-3 text-right font-semibold">
@@ -120,6 +139,15 @@ function JobList({ row }: { row: CustomerSummaryRow }) {
             return (
               <tr key={j.id}>
                 <td className="py-1.5 pr-3 text-ink-900">{j.name}</td>
+                <td className="py-1.5 pr-3 text-right tabular-nums text-ink-600">
+                  {j.materials != null ? money(j.materials) : "—"}
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums text-ink-600">
+                  {j.labor != null ? money(j.labor) : "—"}
+                </td>
+                <td className="py-1.5 pr-3 text-right tabular-nums text-ink-600">
+                  {j.contractServices != null ? money(j.contractServices) : "—"}
+                </td>
                 <td className="py-1.5 pr-3 text-right tabular-nums text-ink-600">
                   {j.cost != null ? money(j.cost) : "—"}
                 </td>
@@ -140,6 +168,15 @@ function JobList({ row }: { row: CustomerSummaryRow }) {
         <tfoot>
           <tr className="border-t border-line font-semibold text-ink-900">
             <td className="py-1.5 pr-3">Total</td>
+            <td className="py-1.5 pr-3 text-right tabular-nums">
+              {money(row.materials)}
+            </td>
+            <td className="py-1.5 pr-3 text-right tabular-nums">
+              {money(row.labor)}
+            </td>
+            <td className="py-1.5 pr-3 text-right tabular-nums">
+              {money(row.other)}
+            </td>
             <td className="py-1.5 pr-3 text-right tabular-nums">
               {money(row.cost)}
             </td>

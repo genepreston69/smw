@@ -20,7 +20,7 @@ export default async function CustomerSummaryPage() {
     <div>
       <PageHeader
         title="Customer Summary"
-        subtitle="Every job's actual costs and invoiced revenue rolled up by customer, largest invoiced first. Click a customer to list their jobs. Job-level QuickBooks data only — costs tagged to a job (since Jan 1, 2023) and invoices billed to a job."
+        subtitle="Every job's actual costs and invoiced revenue rolled up by customer, largest invoiced first. Click a customer to list their jobs. Job-level QuickBooks data only — costs tagged to a job (since Jan 1, 2023) and invoices billed to a job. Contract services covers all non-labor, non-materials direct costs (account-based expense lines)."
         action={
           <a
             href="/api/export/customer-summary"
@@ -47,6 +47,9 @@ export default async function CustomerSummaryPage() {
                 {showCompany && <Th>QB Company</Th>}
                 <Th>Intercompany</Th>
                 <Th right>Jobs</Th>
+                <Th right>Materials</Th>
+                <Th right>Direct labor</Th>
+                <Th right>Contract services</Th>
                 <Th right>Actual cost</Th>
                 <Th right>Invoiced</Th>
                 <Th right>Net</Th>
@@ -62,6 +65,15 @@ export default async function CustomerSummaryPage() {
               <td className="px-4 py-3" />
               <td className="px-4 py-3 text-right tabular-nums">
                 {totals.jobs}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {money(totals.materials)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {money(totals.labor)}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {money(totals.other)}
               </td>
               <td className="px-4 py-3 text-right tabular-nums">
                 {money(totals.cost)}

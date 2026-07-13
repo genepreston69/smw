@@ -127,7 +127,7 @@ export async function GET() {
     { header: "Jobs", key: "jobs", width: 8 },
     { header: "Materials", key: "materials", width: 14, style: { numFmt: moneyFmt } },
     { header: "Direct Labor", key: "labor", width: 14, style: { numFmt: moneyFmt } },
-    { header: "Other Direct Costs", key: "other", width: 18, style: { numFmt: moneyFmt } },
+    { header: "Contract Services", key: "other", width: 18, style: { numFmt: moneyFmt } },
     { header: "Actual Cost", key: "cost", width: 14, style: { numFmt: moneyFmt } },
     { header: "Actual Hours", key: "hours", width: 13, style: { numFmt: "#,##0.0" } },
     { header: "Invoiced Revenue", key: "invoiced", width: 16, style: { numFmt: moneyFmt } },
