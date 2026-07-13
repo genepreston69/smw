@@ -2,7 +2,7 @@
 
 import { Fragment, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
-import { hours as fmtHours, money } from "@/lib/format";
+import { hours as fmtHours, money, shortDate } from "@/lib/format";
 import type { CustomerSummaryRow } from "@/lib/customerSummary";
 import { getJobCosts, type JobCostLine } from "@/app/(app)/jobs/actions";
 
@@ -13,6 +13,8 @@ interface VendorAgg {
   contractServices: number;
   total: number;
   hours: number;
+  /** The vendor's cost lines, newest first (getJobCosts order). */
+  lines: JobCostLine[];
 }
 
 type VendorState =
@@ -35,6 +37,7 @@ function aggregateVendors(lines: JobCostLine[]): VendorAgg[] {
         contractServices: 0,
         total: 0,
         hours: 0,
+        lines: [],
       };
       byVendor.set(key, agg);
     }
@@ -43,6 +46,7 @@ function aggregateVendors(lines: JobCostLine[]): VendorAgg[] {
     else agg.contractServices += l.amount;
     agg.total += l.amount;
     agg.hours += l.hours ?? 0;
+    agg.lines.push(l);
   }
   return [...byVendor.values()].sort(
     (a, b) => b.total - a.total || a.vendor.localeCompare(b.vendor),
@@ -315,7 +319,54 @@ function JobList({
   );
 }
 
+function VendorTransactions({ lines }: { lines: JobCostLine[] }) {
+  return (
+    <div className="border-l-2 border-line/70 pl-4">
+      <table className="w-full text-[0.75rem]">
+        <tbody className="divide-y divide-line/30">
+          {lines.map((l) => (
+            <tr key={l.id}>
+              <td className="w-24 whitespace-nowrap py-1 pr-3 text-ink-400">
+                {shortDate(l.txn_date)}
+              </td>
+              <td className="w-20 py-1 pr-3 text-ink-400">
+                {l.qb_txn_type === "TimeActivity"
+                  ? "Time"
+                  : l.qb_txn_type === "JournalEntry"
+                    ? "Journal"
+                    : l.qb_txn_type}
+              </td>
+              <td className="py-1 pr-3 text-ink-600">
+                {l.description ?? l.category ?? "—"}
+                {l.description && l.category && (
+                  <span className="text-ink-400"> · {l.category}</span>
+                )}
+              </td>
+              <td className="w-20 py-1 pr-3 text-right tabular-nums text-ink-400">
+                {l.hours != null ? fmtHours(l.hours) : ""}
+              </td>
+              <td className="w-24 py-1 text-right tabular-nums text-ink-900">
+                {money(l.amount)}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 function VendorBreakdown({ state }: { state: VendorState | undefined }) {
+  // Local per-vendor expansion; resets when the job row collapses.
+  const [openVendors, setOpenVendors] = useState<Set<string>>(new Set());
+  const toggleVendor = (vendor: string) =>
+    setOpenVendors((prev) => {
+      const next = new Set(prev);
+      if (next.has(vendor)) next.delete(vendor);
+      else next.add(vendor);
+      return next;
+    });
+
   if (!state || state.status === "loading") {
     return (
       <p className="flex items-center gap-2 py-1 text-[0.8rem] text-ink-400">
@@ -363,26 +414,63 @@ function VendorBreakdown({ state }: { state: VendorState | undefined }) {
           </tr>
         </thead>
         <tbody className="divide-y divide-line/40">
-          {state.vendors.map((v) => (
-            <tr key={v.vendor}>
-              <td className="py-1 pr-3 text-ink-900">{v.vendor}</td>
-              <td className="py-1 pr-3 text-right tabular-nums text-ink-400">
-                {v.hours > 0 ? fmtHours(v.hours) : ""}
-              </td>
-              <td className="py-1 pr-3 text-right tabular-nums text-ink-600">
-                {v.materials !== 0 ? money(v.materials) : "—"}
-              </td>
-              <td className="py-1 pr-3 text-right tabular-nums text-ink-600">
-                {v.labor !== 0 ? money(v.labor) : "—"}
-              </td>
-              <td className="py-1 pr-3 text-right tabular-nums text-ink-600">
-                {v.contractServices !== 0 ? money(v.contractServices) : "—"}
-              </td>
-              <td className="py-1 text-right tabular-nums text-ink-900">
-                {money(v.total)}
-              </td>
-            </tr>
-          ))}
+          {state.vendors.map((v) => {
+            const vendorExpanded = openVendors.has(v.vendor);
+            return (
+              <Fragment key={v.vendor}>
+                <tr>
+                  <td className="py-1 pr-3 text-ink-900">
+                    <button
+                      onClick={() => toggleVendor(v.vendor)}
+                      className="flex items-center gap-1.5 text-left text-ink-900 hover:text-brand-700"
+                      title={
+                        vendorExpanded
+                          ? "Hide transactions"
+                          : "View transactions"
+                      }
+                    >
+                      {vendorExpanded ? (
+                        <ChevronDown
+                          size={12}
+                          strokeWidth={2}
+                          className="shrink-0 text-ink-400"
+                        />
+                      ) : (
+                        <ChevronRight
+                          size={12}
+                          strokeWidth={2}
+                          className="shrink-0 text-ink-400"
+                        />
+                      )}
+                      {v.vendor}
+                    </button>
+                  </td>
+                  <td className="py-1 pr-3 text-right tabular-nums text-ink-400">
+                    {v.hours > 0 ? fmtHours(v.hours) : ""}
+                  </td>
+                  <td className="py-1 pr-3 text-right tabular-nums text-ink-600">
+                    {v.materials !== 0 ? money(v.materials) : "—"}
+                  </td>
+                  <td className="py-1 pr-3 text-right tabular-nums text-ink-600">
+                    {v.labor !== 0 ? money(v.labor) : "—"}
+                  </td>
+                  <td className="py-1 pr-3 text-right tabular-nums text-ink-600">
+                    {v.contractServices !== 0 ? money(v.contractServices) : "—"}
+                  </td>
+                  <td className="py-1 text-right tabular-nums text-ink-900">
+                    {money(v.total)}
+                  </td>
+                </tr>
+                {vendorExpanded && (
+                  <tr>
+                    <td colSpan={6} className="py-1.5 pl-5 pr-0">
+                      <VendorTransactions lines={v.lines} />
+                    </td>
+                  </tr>
+                )}
+              </Fragment>
+            );
+          })}
         </tbody>
         <tfoot>
           <tr className="border-t border-line/70 font-semibold text-ink-900">
