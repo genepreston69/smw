@@ -9,6 +9,14 @@ import { isEnterpriseName } from "@/lib/enterprise";
    appear here either.
 --------------------------------------------------------------------------- */
 
+export interface CustomerSummaryJob {
+  id: string;
+  name: string;
+  /** null when the job has no imported cost lines / invoices. */
+  cost: number | null;
+  invoiced: number | null;
+}
+
 export interface CustomerSummaryRow {
   /** customer_id, or "none" for jobs with no customer link. */
   key: string;
@@ -17,6 +25,8 @@ export interface CustomerSummaryRow {
   companyName: string | null;
   intercompany: boolean;
   jobs: number;
+  /** The jobs behind the rollup, largest invoiced first. */
+  jobList: CustomerSummaryJob[];
   materials: number;
   labor: number;
   other: number;
@@ -38,6 +48,7 @@ export interface CustomerSummary {
 
 interface JobRow {
   id: string;
+  name: string;
   customer_id: string | null;
   realm_id: string | null;
   customer: { display_name: string; company_name: string | null } | null;
@@ -66,7 +77,7 @@ export async function getCustomerSummary(
       supabase
         .from("jobs")
         .select(
-          "id, customer_id, realm_id, customer:customers(display_name, company_name)",
+          "id, name, customer_id, realm_id, customer:customers(display_name, company_name)",
         )
         .order("id")
         .range(from, to),
@@ -138,6 +149,7 @@ export async function getCustomerSummary(
           isEnterpriseName(j.customer?.display_name) ||
           isEnterpriseName(j.customer?.company_name),
         jobs: 0,
+        jobList: [],
         materials: 0,
         labor: 0,
         other: 0,
@@ -157,11 +169,25 @@ export async function getCustomerSummary(
       bucket.hours += Number(cost.total_hours ?? 0);
       bucket.cost += Number(cost.total_amount ?? 0);
     }
-    bucket.invoiced += invoicedByJob.get(j.id) ?? 0;
+    const invoiced = invoicedByJob.get(j.id);
+    bucket.invoiced += invoiced ?? 0;
+    bucket.jobList.push({
+      id: j.id,
+      name: j.name,
+      cost: cost ? Number(cost.total_amount ?? 0) : null,
+      invoiced: invoiced ?? null,
+    });
   }
 
   const rows = [...buckets.values()]
-    .map((b) => ({ ...b, net: b.invoiced - b.cost }))
+    .map((b) => ({
+      ...b,
+      net: b.invoiced - b.cost,
+      jobList: [...b.jobList].sort(
+        (x, y) =>
+          (y.invoiced ?? 0) - (x.invoiced ?? 0) || x.name.localeCompare(y.name),
+      ),
+    }))
     .sort((a, b) => b.invoiced - a.invoiced || a.name.localeCompare(b.name));
 
   const totals = rows.reduce(
