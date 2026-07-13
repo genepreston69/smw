@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { csvResponse, toCsv } from "@/lib/csv";
 import { isEnterpriseName } from "@/lib/enterprise";
 import { shortDate } from "@/lib/format";
@@ -13,13 +14,19 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [{ data: customers }, { data: connRows }] = await Promise.all([
-    supabase
-      .from("customers")
-      .select(
-        "realm_id, display_name, company_name, email, phone, active, last_synced_at",
-      )
-      .order("display_name"),
+  // Paged read so the CSV includes every customer past Supabase's
+  // 1000-row cap.
+  const [customers, { data: connRows }] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("customers")
+        .select(
+          "id, realm_id, display_name, company_name, email, phone, active, last_synced_at",
+        )
+        .order("display_name")
+        .order("id")
+        .range(from, to),
+    ),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
   ]);
 
@@ -38,7 +45,7 @@ export async function GET() {
       "Active",
       "Last Synced",
     ],
-    (customers ?? []).map((c) => [
+    customers.map((c) => [
       c.display_name,
       c.realm_id ? (companyByRealm.get(c.realm_id) ?? c.realm_id) : "",
       c.company_name,

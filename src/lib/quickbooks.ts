@@ -1,6 +1,7 @@
 import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
+import { fetchAllRows } from "@/lib/supabase/fetchAll";
 
 // ---------------------------------------------------------------------------
 // QuickBooks Online OAuth2 + API client.
@@ -408,7 +409,9 @@ async function qboQuery<T>(
   const pageSize = 500;
   let start = 1;
   for (;;) {
-    const paged = `${query} STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
+    // ORDERBY Id makes STARTPOSITION paging deterministic — without it QBO
+    // gives no ordering guarantee, so pages can skip or repeat records.
+    const paged = `${query} ORDERBY Id STARTPOSITION ${start} MAXRESULTS ${pageSize}`;
     const url = `${apiBase()}/v3/company/${realmId}/query?query=${encodeURIComponent(paged)}&minorversion=75`;
     const res = await fetch(url, {
       headers: {
@@ -423,10 +426,13 @@ async function qboQuery<T>(
       throw new Error(`QuickBooks query failed: ${detail}`);
     }
     const json = await res.json();
-    const rows: T[] =
-      json.QueryResponse?.Customer ??
-      json.QueryResponse?.[Object.keys(json.QueryResponse ?? {})[0]] ??
-      [];
+    // QueryResponse holds the entity array alongside scalar keys
+    // (startPosition, maxResults, totalCount), so find the array rather
+    // than trusting key order. An empty page has no array at all.
+    const rows =
+      (Object.values(json.QueryResponse ?? {}).find(Array.isArray) as
+        | T[]
+        | undefined) ?? [];
     results.push(...rows);
     if (rows.length < pageSize) break;
     start += pageSize;
@@ -438,6 +444,9 @@ export async function syncCustomersAndJobs(): Promise<{
   customers: number;
   jobs: number;
   companies: number;
+  /** Total rows now in Supabase after the sync, to confirm nothing was dropped. */
+  dbCustomers: number;
+  dbJobs: number;
 }> {
   const connections = await getValidConnections();
   const supabase = createServiceClient();
@@ -464,15 +473,20 @@ export async function syncCustomersAndJobs(): Promise<{
       }
     }
 
+    // Without the Active filter QBO returns only active records, so jobs
+    // made inactive in QuickBooks would silently vanish from the import.
     const all = await qboQuery<QboCustomer>(
       accessToken,
       realmId,
-      "SELECT * FROM Customer",
+      "SELECT * FROM Customer WHERE Active IN (true, false)",
     );
 
     const now = new Date().toISOString();
     const topLevel = all.filter((c) => !c.Job);
     const jobRecords = all.filter((c) => c.Job && c.ParentRef?.value);
+    console.log(
+      `QB sync ${realmId} (${companyName ?? "unnamed"}): QuickBooks returned ${all.length} Customer records — ${topLevel.length} customers, ${jobRecords.length} jobs`,
+    );
 
     if (topLevel.length > 0) {
       const { error } = await supabase.from("customers").upsert(
@@ -494,13 +508,19 @@ export async function syncCustomersAndJobs(): Promise<{
       customerCount += topLevel.length;
     }
 
-    // Map QB parent ids -> our customer uuids for job linking (per company)
-    const { data: customerRows } = await supabase
-      .from("customers")
-      .select("id, qb_id")
-      .eq("org_id", org.id)
-      .eq("realm_id", realmId);
-    const byQbId = new Map((customerRows ?? []).map((c) => [c.qb_id, c.id]));
+    // Map QB parent ids -> our customer uuids for job linking (per company).
+    // Paged read: past 1000 customers an unpaged select truncates and jobs
+    // would lose their customer link.
+    const customerRows = await fetchAllRows((from, to) =>
+      supabase
+        .from("customers")
+        .select("id, qb_id")
+        .eq("org_id", org.id)
+        .eq("realm_id", realmId)
+        .order("id")
+        .range(from, to),
+    );
+    const byQbId = new Map(customerRows.map((c) => [c.qb_id, c.id]));
 
     if (jobRecords.length > 0) {
       const { error } = await supabase.from("jobs").upsert(
@@ -526,10 +546,28 @@ export async function syncCustomersAndJobs(): Promise<{
       .eq("realm_id", realmId);
   }
 
+  // Row counts now in Supabase, so the sync result can confirm the imported
+  // records all landed (counts are cheap head requests, immune to row caps).
+  const [{ count: dbCustomers }, { count: dbJobs }] = await Promise.all([
+    supabase
+      .from("customers")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", org.id),
+    supabase
+      .from("jobs")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", org.id),
+  ]);
+  console.log(
+    `QB sync complete: pulled ${customerCount} customers + ${jobCount} jobs from QuickBooks; Supabase now holds ${dbCustomers ?? 0} customers + ${dbJobs ?? 0} jobs`,
+  );
+
   return {
     customers: customerCount,
     jobs: jobCount,
     companies: connections.length,
+    dbCustomers: dbCustomers ?? 0,
+    dbJobs: dbJobs ?? 0,
   };
 }
 
@@ -603,13 +641,19 @@ export async function syncJobCosts(): Promise<{
   for (const { accessToken, realmId } of connections) {
     const now = new Date().toISOString();
 
-    const { data: jobRows } = await supabase
-      .from("jobs")
-      .select("id, qb_id")
-      .eq("org_id", org.id)
-      .eq("realm_id", realmId);
+    // Paged read: past 1000 jobs an unpaged select truncates the map and
+    // cost/invoice lines for the missing jobs would be dropped.
+    const jobRows = await fetchAllRows((from, to) =>
+      supabase
+        .from("jobs")
+        .select("id, qb_id")
+        .eq("org_id", org.id)
+        .eq("realm_id", realmId)
+        .order("id")
+        .range(from, to),
+    );
     const jobIdByQbId = new Map(
-      (jobRows ?? []).map((j) => [j.qb_id as string, j.id as string]),
+      jobRows.map((j) => [j.qb_id as string, j.id as string]),
     );
     if (jobIdByQbId.size === 0) continue; // no jobs synced for this company yet
 
