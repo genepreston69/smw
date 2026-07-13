@@ -1,7 +1,7 @@
 "use client";
 
 import { Fragment, useState, useTransition } from "react";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Download, Loader2 } from "lucide-react";
 import { hours as fmtHours, money, shortDate } from "@/lib/format";
 import type { CustomerSummaryRow } from "@/lib/customerSummary";
 import { getJobCosts, type JobCostLine } from "@/app/(app)/jobs/actions";
@@ -192,9 +192,19 @@ function JobList({
 }) {
   return (
     <div>
-      <h3 className="mb-1 text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
-        Jobs ({row.jobList.length})
-      </h3>
+      <div className="mb-1 flex items-center justify-between gap-4">
+        <h3 className="text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
+          Jobs ({row.jobList.length})
+        </h3>
+        <a
+          href={`/api/export/customer-jobs-workbook?customer=${encodeURIComponent(row.key)}`}
+          className="inline-flex items-center gap-1.5 text-[0.72rem] font-medium text-brand-700 hover:underline"
+          title="Excel workbook: one worksheet per job, grouped by vendor with each transaction"
+        >
+          <Download size={12} strokeWidth={2} />
+          Download workbook (sheet per job)
+        </a>
+      </div>
       <table className="w-full text-[0.8rem]">
         <thead className="text-left text-[0.65rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
           <tr>
