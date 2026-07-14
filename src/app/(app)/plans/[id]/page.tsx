@@ -1,5 +1,6 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
+import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { PlanWorkspace } from "@/components/plan/PlanWorkspace";
 import type {
   Approval,
@@ -33,8 +34,8 @@ export default async function PlanPage({
     { data: items },
     { data: approvals },
     { data: thresholds },
-    { data: customers },
-    { data: jobs },
+    customers,
+    jobs,
     { data: profiles },
   ] = await Promise.all([
     supabase
@@ -56,16 +57,26 @@ export default async function PlanPage({
       .from("approval_thresholds")
       .select("id, min_amount, max_amount, required_approvals, label")
       .order("min_amount"),
-    supabase
-      .from("customers")
-      .select("id, display_name")
-      .eq("active", true)
-      .order("display_name"),
-    supabase
-      .from("jobs")
-      .select("id, name, customer_id")
-      .eq("active", true)
-      .order("name"),
+    // Paged reads so the pickers list every record past Supabase's
+    // 1000-row cap.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("customers")
+        .select("id, display_name")
+        .eq("active", true)
+        .order("display_name")
+        .order("id")
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("jobs")
+        .select("id, name, customer_id")
+        .eq("active", true)
+        .order("name")
+        .order("id")
+        .range(from, to),
+    ),
     supabase.from("profiles").select("id, email, full_name, role"),
   ]);
 
@@ -76,11 +87,17 @@ export default async function PlanPage({
     byCategory: { name: string; amount: number }[];
   } | null = null;
   if (plan.job_id) {
-    const { data: costLines } = await supabase
-      .from("job_costs")
-      .select("category, amount, hours")
-      .eq("job_id", plan.job_id);
-    if (costLines && costLines.length > 0) {
+    // Paged read: big jobs can exceed 1000 cost lines, and a truncated
+    // read would understate the actuals.
+    const costLines = await fetchAllRows((from, to) =>
+      supabase
+        .from("job_costs")
+        .select("category, amount, hours")
+        .eq("job_id", plan.job_id)
+        .order("id")
+        .range(from, to),
+    );
+    if (costLines.length > 0) {
       const byCat = new Map<string, number>();
       let total = 0;
       let hoursTotal = 0;
@@ -107,8 +124,8 @@ export default async function PlanPage({
       items={(items ?? []) as PlanLineItem[]}
       approvals={(approvals ?? []) as Approval[]}
       thresholds={(thresholds ?? []) as ApprovalThreshold[]}
-      customers={(customers ?? []) as Pick<Customer, "id" | "display_name">[]}
-      jobs={(jobs ?? []) as Pick<Job, "id" | "name" | "customer_id">[]}
+      customers={customers as Pick<Customer, "id" | "display_name">[]}
+      jobs={jobs as Pick<Job, "id" | "name" | "customer_id">[]}
       profiles={(profiles ?? []) as Profile[]}
       me={profile}
       actuals={actuals}

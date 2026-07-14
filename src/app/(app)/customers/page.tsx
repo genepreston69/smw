@@ -1,5 +1,6 @@
 import { Download, Users } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { shortDate } from "@/lib/format";
 import {
   Card,
@@ -16,17 +17,22 @@ import type { Customer } from "@/lib/types";
 export default async function CustomersPage() {
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
-  const [{ data }, { data: connRows }] = await Promise.all([
-    supabase
-      .from("customers")
-      .select(
-        "id, qb_id, realm_id, display_name, company_name, email, phone, active, last_synced_at",
-      )
-      .order("display_name"),
+  // Paged read so the list shows every customer past Supabase's 1000-row cap.
+  const [data, { data: connRows }] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("customers")
+        .select(
+          "id, qb_id, realm_id, display_name, company_name, email, phone, active, last_synced_at",
+        )
+        .order("display_name")
+        .order("id")
+        .range(from, to),
+    ),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
   ]);
 
-  const customers = (data ?? []) as (Customer & { realm_id: string | null })[];
+  const customers = data as (Customer & { realm_id: string | null })[];
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
   );

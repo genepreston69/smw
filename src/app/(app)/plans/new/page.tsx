@@ -1,4 +1,5 @@
 import { requireUser } from "@/lib/auth";
+import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { createPlan } from "@/app/(app)/plans/actions";
 import { Card, PageHeader, buttonCls } from "@/components/ui";
 import type { Customer, Job } from "@/lib/types";
@@ -9,17 +10,27 @@ const inputCls =
 export default async function NewPlanPage() {
   const { supabase } = await requireUser();
 
-  const [{ data: customers }, { data: jobs }] = await Promise.all([
-    supabase
-      .from("customers")
-      .select("id, display_name")
-      .eq("active", true)
-      .order("display_name"),
-    supabase
-      .from("jobs")
-      .select("id, name, customer_id")
-      .eq("active", true)
-      .order("name"),
+  // Paged reads so the dropdowns list every record past Supabase's
+  // 1000-row cap.
+  const [customers, jobs] = await Promise.all([
+    fetchAllRows((from, to) =>
+      supabase
+        .from("customers")
+        .select("id, display_name")
+        .eq("active", true)
+        .order("display_name")
+        .order("id")
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
+      supabase
+        .from("jobs")
+        .select("id, name, customer_id")
+        .eq("active", true)
+        .order("name")
+        .order("id")
+        .range(from, to),
+    ),
   ]);
 
   return (
@@ -49,7 +60,7 @@ export default async function NewPlanPage() {
             <select name="customer_id" defaultValue="" className={inputCls}>
               <option value="">— Select later —</option>
               {(
-                (customers ?? []) as Pick<Customer, "id" | "display_name">[]
+                customers as Pick<Customer, "id" | "display_name">[]
               ).map((c) => (
                 <option key={c.id} value={c.id}>
                   {c.display_name}
@@ -63,7 +74,7 @@ export default async function NewPlanPage() {
             </label>
             <select name="job_id" defaultValue="" className={inputCls}>
               <option value="">— None —</option>
-              {((jobs ?? []) as Pick<Job, "id" | "name">[]).map((j) => (
+              {(jobs as Pick<Job, "id" | "name">[]).map((j) => (
                 <option key={j.id} value={j.id}>
                   {j.name}
                 </option>

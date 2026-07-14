@@ -1,6 +1,8 @@
 import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { fetchAllRows } from "@/lib/supabase/fetchAll";
+import { getCustomerSummary } from "@/lib/customerSummary";
 import { shortDate } from "@/lib/format";
 import {
   JOB_VIEWS,
@@ -19,30 +21,43 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const [{ data: jobs }, { data: connRows }, { data: costRows }, { data: invRows }] =
-    await Promise.all([
+  // Paged reads so the workbook includes every job past Supabase's
+  // 1000-row cap; the dashboard (src/app/(app)/jobs/page.tsx) does the same.
+  const [jobs, { data: connRows }, costRows, invRows] = await Promise.all([
+    fetchAllRows((from, to) =>
       supabase
         .from("jobs")
         .select(
           "id, name, realm_id, active, last_synced_at, customer:customers(display_name, company_name)",
         )
-        .order("name"),
-      supabase.from("qb_connection_status").select("realm_id, company_name"),
+        .order("name")
+        .order("id")
+        .range(from, to),
+    ),
+    supabase.from("qb_connection_status").select("realm_id, company_name"),
+    fetchAllRows((from, to) =>
       supabase
         .from("job_cost_totals")
         .select(
           "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount, latest_txn_date",
-        ),
+        )
+        .order("job_id")
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
       supabase
         .from("job_invoice_totals")
-        .select("job_id, total_invoiced, latest_invoice_date"),
-    ]);
+        .select("job_id, total_invoiced, latest_invoice_date")
+        .order("job_id")
+        .range(from, to),
+    ),
+  ]);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),
   );
   const costByJob = new Map(
-    (costRows ?? []).map((r) => [
+    costRows.map((r) => [
       r.job_id as string,
       {
         amount: Number(r.total_amount ?? 0),
@@ -55,7 +70,7 @@ export async function GET() {
     ]),
   );
   const invoiceByJob = new Map(
-    (invRows ?? []).map((r) => [
+    invRows.map((r) => [
       r.job_id as string,
       {
         invoiced: Number(r.total_invoiced ?? 0),
@@ -88,7 +103,7 @@ export async function GET() {
     nonbillable: [],
     notransactions: [],
   };
-  for (const j of (jobs ?? []) as unknown as Row[]) {
+  for (const j of jobs as unknown as Row[]) {
     grouped[
       classifyJobView({
         name: j.name,
@@ -101,6 +116,52 @@ export async function GET() {
 
   const workbook = new ExcelJS.Workbook();
   const moneyFmt = "#,##0.00";
+
+  // First sheet: per-customer rollup, same aggregation as /customers/summary.
+  const summary = await getCustomerSummary(supabase);
+  const summarySheet = workbook.addWorksheet("Customer Summary");
+  summarySheet.columns = [
+    { header: "Customer", key: "customer", width: 32 },
+    { header: "QB Company", key: "company", width: 22 },
+    { header: "Intercompany", key: "intercompany", width: 13 },
+    { header: "Jobs", key: "jobs", width: 8 },
+    { header: "Materials", key: "materials", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Direct Labor", key: "labor", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Contract Services", key: "other", width: 18, style: { numFmt: moneyFmt } },
+    { header: "Actual Cost", key: "cost", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Actual Hours", key: "hours", width: 13, style: { numFmt: "#,##0.0" } },
+    { header: "Invoiced Revenue", key: "invoiced", width: 16, style: { numFmt: moneyFmt } },
+    { header: "Net", key: "net", width: 14, style: { numFmt: moneyFmt } },
+  ];
+  summarySheet.getRow(1).font = { bold: true };
+  summarySheet.views = [{ state: "frozen", ySplit: 1 }];
+  for (const r of summary.rows) {
+    summarySheet.addRow({
+      customer: r.name,
+      company: r.companyName ?? "",
+      intercompany: r.intercompany ? "Yes" : "No",
+      jobs: r.jobs,
+      materials: r.materials,
+      labor: r.labor,
+      other: r.other,
+      cost: r.cost,
+      hours: r.hours > 0 ? r.hours : null,
+      invoiced: r.invoiced,
+      net: r.net,
+    });
+  }
+  const totalRow = summarySheet.addRow({
+    customer: "Total",
+    jobs: summary.totals.jobs,
+    materials: summary.totals.materials,
+    labor: summary.totals.labor,
+    other: summary.totals.other,
+    cost: summary.totals.cost,
+    hours: summary.totals.hours > 0 ? summary.totals.hours : null,
+    invoiced: summary.totals.invoiced,
+    net: summary.totals.net,
+  });
+  totalRow.font = { bold: true };
 
   for (const view of JOB_VIEWS) {
     const sheet = workbook.addWorksheet(JOB_VIEW_LABELS[view]);
