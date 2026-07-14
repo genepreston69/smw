@@ -118,7 +118,6 @@ export default async function JobsPage({
     ),
   ]);
 
-  const allJobs = data as unknown as JobRow[];
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
   );
@@ -147,6 +146,15 @@ export default async function JobsPage({
       },
     ]),
   );
+
+  // Jobs with no dollars at all (zero or missing actual cost AND zero or
+  // missing invoiced) are noise on the dashboard, so they're hidden from
+  // every tab. The workbook export still includes them.
+  const allJobs = ((data ?? []) as unknown as JobRow[]).filter((j) => {
+    const cost = costByJob.get(j.id)?.amount ?? 0;
+    const invoiced = invoiceByJob.get(j.id)?.invoiced ?? 0;
+    return cost !== 0 || invoiced !== 0;
+  });
 
   // Latest activity across costs and invoices. Dates are YYYY-MM-DD strings,
   // so string compare works.
