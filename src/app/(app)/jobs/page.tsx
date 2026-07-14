@@ -39,12 +39,26 @@ const DESC_FIRST: ReadonlySet<SortKey> = new Set([
   "synced",
 ]);
 
+// Time filter for the cost/invoiced columns. Period totals come precomputed
+// from the rollup views (ytd_amount, mtd_amount, …), so switching periods
+// never changes which jobs are listed or how they're grouped into tabs —
+// only the amounts shown.
+type Period = "all" | "ytd" | "mtd";
+
+const PERIODS: { key: Period; label: string }[] = [
+  { key: "all", label: "All time" },
+  { key: "ytd", label: "Year to date" },
+  { key: "mtd", label: "Month to date" },
+];
+
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; sort?: string }>;
+  searchParams: Promise<{ tab?: string; sort?: string; period?: string }>;
 }) {
-  const { tab, sort } = await searchParams;
+  const { tab, sort, period: periodParam } = await searchParams;
+  const period: Period =
+    periodParam === "ytd" || periodParam === "mtd" ? periodParam : "all";
   const activeTab =
     tab === "transportation" ||
     tab === "intercompany" ||
@@ -56,12 +70,18 @@ export default async function JobsPage({
   const sortKey = sortMatch ? (sortMatch[1] as SortKey) : null;
   const sortDir = sortMatch ? (sortMatch[2] as "asc" | "desc") : null;
 
-  const jobsHref = (opts?: { tab?: string; sort?: string | null }) => {
+  const jobsHref = (opts?: {
+    tab?: string;
+    sort?: string | null;
+    period?: Period;
+  }) => {
     const params = new URLSearchParams();
     const t = opts && "tab" in opts ? opts.tab : activeTab;
     if (t && t !== "customer") params.set("tab", t);
     const s = opts && "sort" in opts ? opts.sort : sort;
     if (s && SORT_PATTERN.test(s)) params.set("sort", s);
+    const p = opts && "period" in opts ? opts.period : period;
+    if (p && p !== "all") params.set("period", p);
     const q = params.toString();
     return q ? `/jobs?${q}` : "/jobs";
   };
@@ -103,11 +123,15 @@ export default async function JobsPage({
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
   );
   const showCompany = companyByRealm.size > 1;
+  // Period sums are null when a job has no activity in the period, so the
+  // row shows "—" (and sorts last) just like a job with no rows at all.
   const costByJob = new Map(
     costRows.map((r) => [
       r.job_id as string,
       {
         amount: Number(r.total_amount ?? 0),
+        ytd: r.ytd_amount == null ? null : Number(r.ytd_amount),
+        mtd: r.mtd_amount == null ? null : Number(r.mtd_amount),
         latestTxnDate: (r.latest_txn_date as string | null) ?? null,
       },
     ]),
@@ -117,6 +141,8 @@ export default async function JobsPage({
       r.job_id as string,
       {
         invoiced: Number(r.total_invoiced ?? 0),
+        ytd: r.ytd_invoiced == null ? null : Number(r.ytd_invoiced),
+        mtd: r.mtd_invoiced == null ? null : Number(r.mtd_invoiced),
         latestInvoiceDate: (r.latest_invoice_date as string | null) ?? null,
       },
     ]),
@@ -165,8 +191,16 @@ export default async function JobsPage({
       customerName: j.customer?.display_name ?? null,
       active: j.active,
       lastSyncedAt: j.last_synced_at,
-      totalCost: cost ? cost.amount : null,
-      invoiced: invoice ? invoice.invoiced : null,
+      totalCost: !cost
+        ? null
+        : period === "all"
+          ? cost.amount
+          : cost[period],
+      invoiced: !invoice
+        ? null
+        : period === "all"
+          ? invoice.invoiced
+          : invoice[period],
       latestTxnDate: latestTxnDate(j.id),
     };
   });
@@ -248,6 +282,18 @@ export default async function JobsPage({
 
   return (
     <div>
+      <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
+        {PERIODS.map(({ key, label }) => (
+          <Link
+            key={key}
+            href={jobsHref({ period: key })}
+            className={tabCls(period === key)}
+          >
+            {label}
+          </Link>
+        ))}
+      </div>
+
       <PageHeader
         title="Jobs"
         subtitle={
