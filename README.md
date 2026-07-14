@@ -41,7 +41,7 @@ this app replaces, reverse-engineered column by column).
    vars into Vercel automatically (`NEXT_PUBLIC_SUPABASE_URL`,
    `NEXT_PUBLIC_SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY`, …).
 2. Run the migrations in order: open the Supabase dashboard → **SQL Editor** →
-   paste and run each file in `supabase/migrations/` in order (`0001_…` through `0004_…`).
+   paste and run each file in `supabase/migrations/` in order (`0001_…` through `0007_…`).
    (Or with the CLI: `supabase db push`.)
 3. In Supabase **Authentication → Providers → Email**, decide whether to
    require email confirmation (off = users can sign in immediately).
