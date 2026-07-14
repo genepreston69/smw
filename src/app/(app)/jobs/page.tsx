@@ -105,14 +105,16 @@ export default async function JobsPage({
     fetchAllRows((from, to) =>
       supabase
         .from("job_cost_totals")
-        .select("job_id, total_amount, latest_txn_date")
+        .select("job_id, total_amount, ytd_amount, mtd_amount, latest_txn_date")
         .order("job_id")
         .range(from, to),
     ),
     fetchAllRows((from, to) =>
       supabase
         .from("job_invoice_totals")
-        .select("job_id, total_invoiced, latest_invoice_date")
+        .select(
+          "job_id, total_invoiced, ytd_invoiced, mtd_invoiced, latest_invoice_date",
+        )
         .order("job_id")
         .range(from, to),
     ),
