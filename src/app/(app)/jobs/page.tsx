@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { ArrowDown, ArrowUp, ArrowUpDown, Download, Wrench } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { classifyJobView, type JobView } from "@/lib/jobViews";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import { JobRows, type JobRowData } from "./JobRows";
@@ -87,26 +88,37 @@ export default async function JobsPage({
 
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
-  const [{ data }, { data: connRows }, { data: costRows }, { data: invRows }] =
-    await Promise.all([
+  // Paged reads (fetchAllRows) so no list is cut off at Supabase's
+  // 1000-row cap; .order("id") tie-breaks duplicate names for stable pages.
+  const [data, { data: connRows }, costRows, invRows] = await Promise.all([
+    fetchAllRows((from, to) =>
       supabase
         .from("jobs")
         .select(
           "id, name, realm_id, fully_qualified_name, active, last_synced_at, customer:customers(display_name, company_name)",
         )
-        .order("name"),
-      supabase.from("qb_connection_status").select("realm_id, company_name"),
+        .order("name")
+        .order("id")
+        .range(from, to),
+    ),
+    supabase.from("qb_connection_status").select("realm_id, company_name"),
+    fetchAllRows((from, to) =>
       supabase
         .from("job_cost_totals")
-        .select("job_id, total_amount, ytd_amount, mtd_amount, latest_txn_date"),
+        .select("job_id, total_amount, latest_txn_date")
+        .order("job_id")
+        .range(from, to),
+    ),
+    fetchAllRows((from, to) =>
       supabase
         .from("job_invoice_totals")
-        .select(
-          "job_id, total_invoiced, ytd_invoiced, mtd_invoiced, latest_invoice_date",
-        ),
-    ]);
+        .select("job_id, total_invoiced, latest_invoice_date")
+        .order("job_id")
+        .range(from, to),
+    ),
+  ]);
 
-  const allJobs = (data ?? []) as unknown as JobRow[];
+  const allJobs = data as unknown as JobRow[];
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
   );
@@ -114,7 +126,7 @@ export default async function JobsPage({
   // Period sums are null when a job has no activity in the period, so the
   // row shows "—" (and sorts last) just like a job with no rows at all.
   const costByJob = new Map(
-    (costRows ?? []).map((r) => [
+    costRows.map((r) => [
       r.job_id as string,
       {
         amount: Number(r.total_amount ?? 0),
@@ -125,7 +137,7 @@ export default async function JobsPage({
     ]),
   );
   const invoiceByJob = new Map(
-    (invRows ?? []).map((r) => [
+    invRows.map((r) => [
       r.job_id as string,
       {
         invoiced: Number(r.total_invoiced ?? 0),
@@ -336,7 +348,8 @@ export default async function JobsPage({
         </Link>
       </div>
 
-      <Card pad={false}>
+      {/* clip off so the sticky header can escape the card while scrolling */}
+      <Card pad={false} clip={false}>
         {rows.length === 0 ? (
           <EmptyState
             icon={Wrench}
@@ -364,6 +377,7 @@ export default async function JobsPage({
           </EmptyState>
         ) : (
           <Table
+            stickyHeader
             head={
               <tr>
                 <Th>{sortHeader("name", "Job")}</Th>

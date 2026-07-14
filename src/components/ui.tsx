@@ -31,14 +31,21 @@ export function Card({
   children,
   className = "",
   pad = true,
+  clip = true,
 }: {
   children: React.ReactNode;
   className?: string;
   pad?: boolean;
+  /**
+   * Unpadded cards clip children to the rounded border. Turn off for
+   * sticky-header tables — an overflow-hidden ancestor keeps
+   * position: sticky from ever sticking.
+   */
+  clip?: boolean;
 }) {
   return (
     <section
-      className={`rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)] ${pad ? "p-6" : "overflow-hidden"} ${className}`}
+      className={`rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)] ${pad ? "p-6" : clip ? "overflow-hidden" : ""} ${className}`}
     >
       {children}
     </section>
@@ -125,21 +132,37 @@ export function Table({
   head,
   children,
   minWidth,
+  stickyHeader,
 }: {
   head: React.ReactNode;
   children: React.ReactNode;
   minWidth?: string;
+  /**
+   * Freeze the header row to the top of the viewport while the page
+   * scrolls (Excel freeze panes). Requires an unclipped ancestor chain
+   * (Card clip={false}), so the sticky variant drops the overflow-x
+   * wrapper — that wrapper would become the scroll container and the
+   * header would never stick. The stuck header needs an opaque
+   * background, and its border-bottom is drawn as a shadow because
+   * collapsed table borders don't travel with a sticky header.
+   */
+  stickyHeader?: boolean;
 }) {
-  return (
-    <div className="overflow-x-auto">
-      <table className={`w-full text-sm ${minWidth ?? ""}`}>
-        <thead className="border-b border-line bg-surface/70 text-left text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
-          {head}
-        </thead>
-        <tbody className="divide-y divide-line/70">{children}</tbody>
-      </table>
-    </div>
+  const table = (
+    <table className={`w-full text-sm ${minWidth ?? ""}`}>
+      <thead
+        className={`text-left text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400 ${
+          stickyHeader
+            ? "sticky top-0 z-10 bg-surface shadow-[0_1px_0_0_var(--color-line)] [&_th:first-child]:rounded-tl-xl [&_th:last-child]:rounded-tr-xl"
+            : "border-b border-line bg-surface/70"
+        }`}
+      >
+        {head}
+      </thead>
+      <tbody className="divide-y divide-line/70">{children}</tbody>
+    </table>
   );
+  return stickyHeader ? table : <div className="overflow-x-auto">{table}</div>;
 }
 
 export function Th({
