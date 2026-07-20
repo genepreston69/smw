@@ -327,6 +327,7 @@ interface QboExpenseLine {
 interface QboTxn {
   Id: string;
   TxnDate?: string;
+  DocNumber?: string;
   VendorRef?: { name?: string };
   EntityRef?: { name?: string };
   Line?: QboExpenseLine[];
@@ -369,6 +370,7 @@ interface QboJournalLine {
 interface QboJournalEntry {
   Id: string;
   TxnDate?: string;
+  DocNumber?: string;
   Line?: QboJournalLine[];
 }
 
@@ -600,6 +602,7 @@ function extractJobCostRows(
         qb_txn_type: txnType,
         qb_txn_id: txn.Id,
         qb_line_id: line.Id ?? "0",
+        qb_doc_number: txn.DocNumber ?? null,
         txn_date: txn.TxnDate ?? null,
         vendor_name: vendor,
         description: line.Description ?? null,
@@ -731,6 +734,7 @@ export async function syncJobCosts(): Promise<{
           qb_txn_type: "JournalEntry",
           qb_txn_id: je.Id,
           qb_line_id: line.Id ?? "0",
+          qb_doc_number: je.DocNumber ?? null,
           txn_date: je.TxnDate ?? null,
           vendor_name: null,
           description: line.Description ?? null,
