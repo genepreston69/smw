@@ -9,6 +9,7 @@ import {
   Users,
   PieChart,
   Wrench,
+  HardHat,
   Settings,
   type LucideIcon,
 } from "lucide-react";
@@ -20,6 +21,7 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/customers/summary", label: "Customer Summary", icon: PieChart },
   { href: "/jobs", label: "Jobs", icon: Wrench },
+  { href: "/capitalized-labor", label: "Capitalized Labor", icon: HardHat },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
