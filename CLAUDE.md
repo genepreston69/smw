@@ -61,7 +61,7 @@ Postgres is the source of truth for everything that matters; the UI is a thin la
 
 `src/lib/jobViews.ts` buckets every job into exactly one of five views (Customer Jobs, Transportation, Intercompany, Non-Billable, No Transactions). The dashboard tabs (`src/app/(app)/jobs/`) and the Excel workbook export (`src/app/api/export/jobs-workbook/`) must bucket identically, so the rules live only here:
 
-- Job-number suffix `LH`/`HS`/`FL`/`BC` → Transportation; prefix `EQP` → Non-Billable.
+- Job-number suffix `LH`/`HS`/`FL`/`BC` → Transportation; prefix `EQP` → Non-Billable; jobs in the Precision Paint QB company under the `PPS` customer → Non-Billable (internal self-work).
 - Sister-company customers (fuzzy name matching in `src/lib/enterprise.ts`) → Intercompany.
 - No cost/invoice activity since `NO_TXN_CUTOFF` → No Transactions (US Army Corps of Engineers jobs are exempt and stay under Customer Jobs).
 
