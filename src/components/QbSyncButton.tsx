@@ -18,7 +18,7 @@ export function QbSyncButton() {
       const json = await res.json();
       if (!res.ok) throw new Error(json.error ?? "Sync failed");
       setMessage(
-        `QuickBooks returned ${json.customers} customers and ${json.jobs} jobs across ${json.companies} ${json.companies === 1 ? "company" : "companies"}; Supabase now holds ${json.dbCustomers ?? json.customers} customers and ${json.dbJobs ?? json.jobs} jobs. Imported ${json.costLines ?? 0} cost lines and ${json.invoices ?? 0} invoices.`,
+        `QuickBooks returned ${json.customers} customers and ${json.jobs} jobs across ${json.companies} ${json.companies === 1 ? "company" : "companies"}; Supabase now holds ${json.dbCustomers ?? json.customers} customers and ${json.dbJobs ?? json.jobs} jobs. Imported ${json.costLines ?? 0} cost lines, ${json.invoices ?? 0} invoices, and ${json.glLines ?? 0} ledger lines across ${json.glAccounts ?? 0} accounts.`,
       );
       router.refresh();
     } catch (e) {

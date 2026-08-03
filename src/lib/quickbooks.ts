@@ -384,6 +384,11 @@ const DEFAULT_LABOR_COST_RATE = 37.15;
 // No Transactions view can classify against real data.
 const JOB_COSTS_START_DATE = "2023-01-01";
 
+// General-ledger lines (gl_lines) are imported from this date forward.
+// Balance-sheet accounts on the Financials page therefore show activity
+// since this date, not ending balances.
+const FINANCIALS_START_DATE = "2023-01-01";
+
 // Direct-cost buckets for the per-job transaction history.
 type CostType = "materials" | "labor" | "other";
 
@@ -821,4 +826,304 @@ export async function syncJobCosts(): Promise<{
   }
 
   return { costLines, invoices: invoiceCount, companies: connections.length };
+}
+
+// ---------------------------------------------------------------------------
+// General ledger: chart of accounts + every posted ledger line
+//
+// Lines come from the GeneralLedger report rather than per-entity queries so
+// QuickBooks does the double-entry expansion for every transaction type —
+// reconstructing postings from Bill/Invoice/Payment/Deposit/… entities
+// ourselves would be error-prone and incomplete. Amounts are the report's
+// "natural" signed amounts: positive increases the account in its normal
+// direction, so net income = sum(Revenue) - sum(Expense).
+// ---------------------------------------------------------------------------
+
+interface QboAccount {
+  Id: string;
+  Name: string;
+  FullyQualifiedName?: string;
+  AcctNum?: string;
+  Classification?: string;
+  AccountType?: string;
+  AccountSubType?: string;
+  Active?: boolean;
+  ParentRef?: { value?: string };
+  CurrentBalance?: number;
+}
+
+interface QboReportColData {
+  value?: string;
+  id?: string;
+}
+
+interface QboReportRow {
+  type?: string; // "Section" | "Data"
+  ColData?: QboReportColData[];
+  Header?: { ColData?: QboReportColData[] };
+  Rows?: { Row?: QboReportRow[] };
+}
+
+interface QboReport {
+  Columns?: {
+    Column?: {
+      ColTitle?: string;
+      ColType?: string;
+      MetaData?: { Name?: string; Value?: string }[];
+    }[];
+  };
+  Rows?: { Row?: QboReportRow[] };
+}
+
+interface GlLine {
+  accountQbId: string | null;
+  accountName: string;
+  txnDate: string;
+  txnType: string | null;
+  qbTxnId: string | null;
+  docNumber: string | null;
+  entityName: string | null;
+  customerName: string | null;
+  vendorName: string | null;
+  memo: string | null;
+  splitAccount: string | null;
+  className: string | null;
+  departmentName: string | null;
+  amount: number;
+}
+
+const GL_COLUMNS =
+  "tx_date,txn_type,doc_num,name,cust_name,vend_name,memo,split_acc,klass_name,dept_name,subt_nat_amount";
+
+// Fallback for companies where an optional column (class/department/…) makes
+// the report request fail.
+const GL_COLUMNS_MINIMAL =
+  "tx_date,txn_type,doc_num,name,memo,split_acc,subt_nat_amount";
+
+async function fetchGeneralLedger(
+  accessToken: string,
+  realmId: string,
+  startDate: string,
+  endDate: string,
+): Promise<QboReport> {
+  const request = (columns: string) => {
+    const params = new URLSearchParams({
+      start_date: startDate,
+      end_date: endDate,
+      accounting_method: "Accrual",
+      columns,
+      minorversion: "75",
+    });
+    return fetch(
+      `${apiBase()}/v3/company/${realmId}/reports/GeneralLedger?${params}`,
+      {
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: "application/json",
+        },
+      },
+    );
+  };
+
+  let res = await request(GL_COLUMNS);
+  if (res.status === 400) res = await request(GL_COLUMNS_MINIMAL);
+  if (!res.ok) {
+    const tid = res.headers.get("intuit_tid");
+    const detail = `${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`;
+    console.error(`QuickBooks GeneralLedger report failed: ${detail}`);
+    throw new Error(`QuickBooks GeneralLedger report failed: ${detail}`);
+  }
+  return res.json();
+}
+
+// The report nests a Section per account (sub-accounts nest deeper), with
+// data rows aligned to the requested columns. Beginning-balance and summary
+// rows carry no transaction date and are skipped.
+function parseGlReport(report: QboReport): GlLine[] {
+  const colKeys = (report.Columns?.Column ?? []).map(
+    (c) =>
+      c.MetaData?.find((m) => m.Name === "ColKey")?.Value ??
+      c.ColType ??
+      c.ColTitle?.toLowerCase() ??
+      "",
+  );
+  const col = (row: QboReportRow, key: string): QboReportColData | undefined => {
+    const i = colKeys.indexOf(key);
+    return i === -1 ? undefined : row.ColData?.[i];
+  };
+  const text = (row: QboReportRow, key: string): string | null => {
+    const v = col(row, key)?.value?.trim();
+    return v ? v : null;
+  };
+
+  const lines: GlLine[] = [];
+  const walk = (
+    rows: QboReportRow[],
+    account: { qbId: string | null; name: string } | null,
+  ) => {
+    for (const row of rows) {
+      if (row.Rows?.Row) {
+        const header = row.Header?.ColData?.[0];
+        walk(
+          row.Rows.Row,
+          header?.value
+            ? { qbId: header.id ?? null, name: header.value }
+            : account,
+        );
+        continue;
+      }
+      if (!row.ColData || (row.type && row.type !== "Data") || !account) {
+        continue;
+      }
+      const txnDate = text(row, "tx_date");
+      if (!txnDate || !/^\d{4}-\d{2}-\d{2}$/.test(txnDate)) continue;
+      lines.push({
+        accountQbId: account.qbId,
+        accountName: account.name,
+        txnDate,
+        txnType: text(row, "txn_type"),
+        qbTxnId: col(row, "txn_type")?.id ?? col(row, "doc_num")?.id ?? null,
+        docNumber: text(row, "doc_num"),
+        entityName: text(row, "name"),
+        customerName: text(row, "cust_name"),
+        vendorName: text(row, "vend_name"),
+        memo: text(row, "memo"),
+        splitAccount: text(row, "split_acc"),
+        className: text(row, "klass_name"),
+        departmentName: text(row, "dept_name"),
+        amount: Number.parseFloat(col(row, "subt_nat_amount")?.value ?? "") || 0,
+      });
+    }
+  };
+  walk(report.Rows?.Row ?? [], null);
+  return lines;
+}
+
+// Quarter-sized report windows from the start date through today, so no
+// single report response grows unbounded.
+function quarterRanges(startDate: string): { start: string; end: string }[] {
+  const today = new Date().toISOString().slice(0, 10);
+  const startYear = Number(startDate.slice(0, 4));
+  const endYear = Number(today.slice(0, 4));
+  const ranges = [];
+  for (let year = startYear; year <= endYear; year++) {
+    for (let q = 0; q < 4; q++) {
+      const start = `${year}-${String(q * 3 + 1).padStart(2, "0")}-01`;
+      const endMonthLastDay = new Date(Date.UTC(year, q * 3 + 3, 0));
+      const end = endMonthLastDay.toISOString().slice(0, 10);
+      if (end < startDate || start > today) continue;
+      ranges.push({ start: start < startDate ? startDate : start, end });
+    }
+  }
+  return ranges;
+}
+
+/**
+ * Import the chart of accounts and all posted general-ledger lines since
+ * FINANCIALS_START_DATE for all companies.
+ */
+export async function syncGeneralLedger(): Promise<{
+  accounts: number;
+  glLines: number;
+  companies: number;
+}> {
+  const connections = await getValidConnections();
+  const supabase = createServiceClient();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("id")
+    .order("created_at")
+    .limit(1)
+    .single();
+  if (!org) throw new Error("No organization found");
+
+  let accountCount = 0;
+  let lineCount = 0;
+
+  for (const { accessToken, realmId, companyName } of connections) {
+    const now = new Date().toISOString();
+
+    const accounts = await qboQuery<QboAccount>(
+      accessToken,
+      realmId,
+      "SELECT * FROM Account WHERE Active IN (true, false)",
+    );
+    if (accounts.length > 0) {
+      const { error } = await supabase.from("gl_accounts").upsert(
+        accounts.map((a) => ({
+          org_id: org.id,
+          realm_id: realmId,
+          qb_id: a.Id,
+          name: a.Name,
+          fully_qualified_name: a.FullyQualifiedName ?? null,
+          account_number: a.AcctNum ?? null,
+          classification: a.Classification ?? null,
+          account_type: a.AccountType ?? null,
+          account_sub_type: a.AccountSubType ?? null,
+          parent_qb_id: a.ParentRef?.value ?? null,
+          active: a.Active ?? true,
+          current_balance: a.CurrentBalance ?? null,
+          last_synced_at: now,
+        })),
+        { onConflict: "org_id,realm_id,qb_id" },
+      );
+      if (error) throw new Error(`GL account upsert failed: ${error.message}`);
+      accountCount += accounts.length;
+    }
+
+    const glLines: GlLine[] = [];
+    for (const range of quarterRanges(FINANCIALS_START_DATE)) {
+      const report = await fetchGeneralLedger(
+        accessToken,
+        realmId,
+        range.start,
+        range.end,
+      );
+      glLines.push(...parseGlReport(report));
+    }
+    console.log(
+      `QB GL sync ${realmId} (${companyName ?? "unnamed"}): ${accounts.length} accounts, ${glLines.length} ledger lines since ${FINANCIALS_START_DATE}`,
+    );
+
+    // Full refresh per company so edits/deletions in QuickBooks are reflected.
+    const { error: delError } = await supabase
+      .from("gl_lines")
+      .delete()
+      .eq("org_id", org.id)
+      .eq("realm_id", realmId);
+    if (delError) throw new Error(`GL line refresh failed: ${delError.message}`);
+
+    const rows = glLines.map((l) => ({
+      org_id: org.id,
+      realm_id: realmId,
+      account_qb_id: l.accountQbId,
+      account_name: l.accountName,
+      txn_date: l.txnDate,
+      txn_type: l.txnType,
+      qb_txn_id: l.qbTxnId,
+      doc_number: l.docNumber,
+      entity_name: l.entityName,
+      customer_name: l.customerName,
+      vendor_name: l.vendorName,
+      memo: l.memo,
+      split_account: l.splitAccount,
+      class_name: l.className,
+      department_name: l.departmentName,
+      amount: l.amount,
+      last_synced_at: now,
+    }));
+    for (let i = 0; i < rows.length; i += 500) {
+      const { error } = await supabase
+        .from("gl_lines")
+        .insert(rows.slice(i, i + 500));
+      if (error) throw new Error(`GL line insert failed: ${error.message}`);
+    }
+    lineCount += rows.length;
+  }
+
+  return {
+    accounts: accountCount,
+    glLines: lineCount,
+    companies: connections.length,
+  };
 }
