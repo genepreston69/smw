@@ -1093,14 +1093,15 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
       `QB GL sync ${realmId} (${companyName ?? "unnamed"}): ${accounts.length} accounts, ${glLines.length} ledger lines since ${FINANCIALS_START_DATE}`,
     );
 
-    // Full refresh per company so edits/deletions in QuickBooks are reflected.
-    const { error: delError } = await supabase
-      .from("gl_lines")
-      .delete()
-      .eq("org_id", org.id)
-      .eq("realm_id", realmId);
-    if (delError) throw new Error(`GL line refresh failed: ${delError.message}`);
-
+    // Full refresh per company so edits/deletions in QuickBooks are
+    // reflected. gl_lines has no unique key (report rows carry no stable
+    // per-line id), so a direct delete-then-insert doubles rows when two
+    // syncs overlap (double-click, second tab, retry after a 504 whose
+    // serverless invocation kept running). Instead, stage this run's rows
+    // under a sync_id, then swap_gl_lines replaces the company's rows in one
+    // advisory-locked transaction — the last completed swap wins wholesale.
+    // Staging left behind by a crashed run is swept by the next swap.
+    const syncId = crypto.randomUUID();
     const rows = glLines.map((l) => ({
       org_id: org.id,
       realm_id: realmId,
@@ -1119,14 +1120,21 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
       department_name: l.departmentName,
       amount: l.amount,
       last_synced_at: now,
+      sync_id: syncId,
     }));
     for (let i = 0; i < rows.length; i += 500) {
       const { error } = await supabase
-        .from("gl_lines")
+        .from("gl_lines_staging")
         .insert(rows.slice(i, i + 500));
-      if (error) throw new Error(`GL line insert failed: ${error.message}`);
+      if (error) throw new Error(`GL line staging failed: ${error.message}`);
     }
-    lineCount += rows.length;
+    const { data: swapped, error: swapError } = await supabase.rpc(
+      "swap_gl_lines",
+      { p_org_id: org.id, p_realm_id: realmId, p_sync_id: syncId },
+    );
+    if (swapError)
+      throw new Error(`GL line refresh failed: ${swapError.message}`);
+    lineCount += typeof swapped === "number" ? swapped : rows.length;
   }
 
   return {
