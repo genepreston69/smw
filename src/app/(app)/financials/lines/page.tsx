@@ -4,21 +4,14 @@ import { requireUser } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { money, shortDate } from "@/lib/format";
 import {
-  COL_DIMS,
-  MONTH_PARAM,
   ROW_DIMS,
   SCOPES,
   SCOPE_CLASSIFICATIONS,
-  currentMonth,
-  defaultFrom,
   financialsHref,
   lastDayOfMonth,
   linesHref,
   monthLabel,
-  type ColDim,
-  type FinancialsState,
-  type RowDim,
-  type Scope,
+  resolveFinancialsState,
 } from "@/lib/financials";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 
@@ -69,17 +62,6 @@ export default async function FinancialLinesPage({
   }>;
 }) {
   const sp = await searchParams;
-  const rowDim: RowDim = ROW_DIMS.some((d) => d.key === sp.rows)
-    ? (sp.rows as RowDim)
-    : "account";
-  const colDim: ColDim = COL_DIMS.some((d) => d.key === sp.cols)
-    ? (sp.cols as ColDim)
-    : "month";
-  const scope: Scope = SCOPES.some((s) => s.key === sp.scope)
-    ? (sp.scope as Scope)
-    : "pl";
-  const from = MONTH_PARAM.test(sp.from ?? "") ? sp.from! : defaultFrom();
-  const to = MONTH_PARAM.test(sp.to ?? "") ? sp.to! : currentMonth();
   const rowKey = sp.rowkey ?? null;
   const colKey = sp.colkey ?? null;
   const page = Math.max(1, Number.parseInt(sp.page ?? "1", 10) || 1);
@@ -96,8 +78,8 @@ export default async function FinancialLinesPage({
   const companyByRealm = new Map(
     companies.map((c) => [c.realm_id, c.company_name ?? `Company ${c.realm_id}`]),
   );
-  const company = companyByRealm.has(sp.company ?? "") ? sp.company! : "all";
-  const state: FinancialsState = { company, from, to, rows: rowDim, cols: colDim, scope };
+  const state = resolveFinancialsState(sp, new Set(companyByRealm.keys()));
+  const { company, from, to, rows: rowDim, cols: colDim, scope } = state;
 
   const filterArgs = {
     p_start: `${from}-01`,
