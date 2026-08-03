@@ -102,7 +102,13 @@ export default async function SettingsPage({
                   ? "Connect another company"
                   : "Connect QuickBooks"}
               </a>
-              {connections.length > 0 && <QbSyncButton />}
+              {connections.length > 0 && (
+                <QbSyncButton
+                  realmIds={connections
+                    .filter((c) => c.status === "connected")
+                    .map((c) => c.realm_id)}
+                />
+              )}
             </div>
           ) : (
             <p className="mt-3 text-xs text-ink-400">

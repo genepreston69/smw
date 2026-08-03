@@ -1,13 +1,10 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import {
-  syncCustomersAndJobs,
-  syncGeneralLedger,
-  syncJobCosts,
-} from "@/lib/quickbooks";
+import { syncCustomersAndJobs, syncJobCosts } from "@/lib/quickbooks";
 
-// The general-ledger import fetches quarterly reports per company on top of
-// the entity queries, so the sync needs more than the default function window.
+// Entity queries across several companies take a while; the general-ledger
+// import runs separately (one request per company via /api/qb/sync-ledger)
+// because everything in one invocation exceeds even this window.
 export const maxDuration = 300;
 
 export async function POST() {
@@ -34,14 +31,11 @@ export async function POST() {
   try {
     const result = await syncCustomersAndJobs();
     const costs = await syncJobCosts();
-    const ledger = await syncGeneralLedger();
     return NextResponse.json({
       ok: true,
       ...result,
       costLines: costs.costLines,
       invoices: costs.invoices,
-      glAccounts: ledger.accounts,
-      glLines: ledger.glLines,
     });
   } catch (e) {
     return NextResponse.json(
