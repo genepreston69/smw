@@ -1096,11 +1096,13 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
     // Full refresh per company so edits/deletions in QuickBooks are
     // reflected. gl_lines has no unique key (report rows carry no stable
     // per-line id), so a direct delete-then-insert doubles rows when two
-    // syncs overlap (double-click, second tab, retry after a 504 whose
-    // serverless invocation kept running). Instead, stage this run's rows
-    // under a sync_id, then swap_gl_lines replaces the company's rows in one
-    // advisory-locked transaction — the last completed swap wins wholesale.
-    // Staging left behind by a crashed run is swept by the next swap.
+    // syncs overlap — and doing the whole replacement in one transaction
+    // outruns statement_timeout at real ledger sizes. Generation scheme
+    // instead (migration 0013): rows insert tagged with this run's sync_id,
+    // invisible to readers (gl_line_facts filters to the current generation)
+    // until finish_gl_sync flips the company's generation pointer in a
+    // one-row upsert. No long statement anywhere, and the last completed
+    // sync wins wholesale however requests overlap or retry.
     const syncId = crypto.randomUUID();
     const rows = glLines.map((l) => ({
       org_id: org.id,
@@ -1124,17 +1126,36 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
     }));
     for (let i = 0; i < rows.length; i += 500) {
       const { error } = await supabase
-        .from("gl_lines_staging")
+        .from("gl_lines")
         .insert(rows.slice(i, i + 500));
-      if (error) throw new Error(`GL line staging failed: ${error.message}`);
+      if (error) throw new Error(`GL line insert failed: ${error.message}`);
     }
-    const { data: swapped, error: swapError } = await supabase.rpc(
-      "swap_gl_lines",
-      { p_org_id: org.id, p_realm_id: realmId, p_sync_id: syncId },
-    );
-    if (swapError)
-      throw new Error(`GL line refresh failed: ${swapError.message}`);
-    lineCount += typeof swapped === "number" ? swapped : rows.length;
+    const { error: flipError } = await supabase.rpc("finish_gl_sync", {
+      p_org_id: org.id,
+      p_realm_id: realmId,
+      p_sync_id: syncId,
+    });
+    if (flipError)
+      throw new Error(`GL sync publish failed: ${flipError.message}`);
+    lineCount += rows.length;
+
+    // Superseded generations (including rows from abandoned runs) are
+    // already invisible; delete them in small batches. Failures are
+    // non-fatal — the next sync prunes whatever is left.
+    const PRUNE_BATCH = 10_000;
+    for (let i = 0; i < 500; i++) {
+      const { data: pruned, error: pruneError } = await supabase.rpc(
+        "prune_gl_lines",
+        { p_org_id: org.id, p_realm_id: realmId, p_limit: PRUNE_BATCH },
+      );
+      if (pruneError) {
+        console.error(
+          `GL prune for ${realmId} stopped (${pruneError.message}); next sync will finish cleanup`,
+        );
+        break;
+      }
+      if ((pruned ?? 0) < PRUNE_BATCH) break;
+    }
   }
 
   return {
