@@ -1020,14 +1020,22 @@ function quarterRanges(startDate: string): { start: string; end: string }[] {
 
 /**
  * Import the chart of accounts and all posted general-ledger lines since
- * FINANCIALS_START_DATE for all companies.
+ * FINANCIALS_START_DATE. Pass a realmId to import a single company — the
+ * full import for every company in one serverless invocation exceeds
+ * Vercel's function window, so the sync button runs one request per realm.
  */
-export async function syncGeneralLedger(): Promise<{
+export async function syncGeneralLedger(realmId?: string): Promise<{
   accounts: number;
   glLines: number;
   companies: number;
 }> {
-  const connections = await getValidConnections();
+  let connections = await getValidConnections();
+  if (realmId) {
+    connections = connections.filter((c) => c.realmId === realmId);
+    if (connections.length === 0) {
+      throw new Error(`No connected QuickBooks company for realm ${realmId}`);
+    }
+  }
   const supabase = createServiceClient();
   const { data: org } = await supabase
     .from("organizations")
