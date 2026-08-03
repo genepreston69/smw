@@ -15,7 +15,14 @@ export interface CapLaborRowData {
   companyName: string | null;
   customerName: string | null;
   bucket: CapLaborBucket;
-  /** null when the job has no journal labor activity in the selected period. */
+  /**
+   * Period sums of the job's journal labor lines: debits posted to labor
+   * accounts, credits against them (already capitalized/reversed, stored
+   * positive), and their net. All null when the job has no journal labor
+   * activity in the selected period.
+   */
+  grossAmount: number | null;
+  capitalizedAmount: number | null;
   amount: number | null;
   entryCount: number;
   latestDate: string | null;
@@ -42,9 +49,9 @@ export function CapLaborRows({
   const [lines, setLines] = useState<Record<string, LoadState>>({});
   const [, startTransition] = useTransition();
 
-  // Job + Customer + Type + Entries + Latest entry + Capitalized labor,
-  // plus the optional company column.
-  const colSpan = 6 + (showCompany ? 1 : 0);
+  // Job + Customer + Type + Entries + Latest entry + Labor posted +
+  // Already capitalized + Awaiting review, plus the optional company column.
+  const colSpan = 8 + (showCompany ? 1 : 0);
 
   const toggle = (jobId: string) => {
     setOpen((prev) => {
@@ -106,6 +113,14 @@ export function CapLaborRows({
               <td className="px-4 py-3 text-right text-ink-400">
                 {shortDate(j.latestDate)}
               </td>
+              <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                {j.grossAmount != null ? money(j.grossAmount) : "—"}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                {j.capitalizedAmount != null && j.capitalizedAmount !== 0
+                  ? money(j.capitalizedAmount)
+                  : "—"}
+              </td>
               <td className="px-4 py-3 text-right font-medium tabular-nums text-ink-900">
                 {j.amount != null ? money(j.amount) : "—"}
               </td>
@@ -149,7 +164,12 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
     );
   }
 
-  const total = state.lines.reduce((s, l) => s + l.amount, 0);
+  // Credits (negative lines) are labor already moved off the job's labor
+  // accounts — the trace a capitalization entry leaves when its credit line
+  // is tagged to the job.
+  const debits = state.lines.reduce((s, l) => s + Math.max(l.amount, 0), 0);
+  const credits = state.lines.reduce((s, l) => s + Math.min(l.amount, 0), 0);
+  const total = debits + credits;
   return (
     <div>
       <table className="w-full text-[0.8rem]">
@@ -166,17 +186,31 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
               <td className="py-1.5 pr-3 text-ink-600">
                 {l.description ?? "—"}
               </td>
-              <td className="w-24 py-1.5 text-right tabular-nums text-ink-900">
+              <td
+                className={`w-24 py-1.5 text-right tabular-nums ${
+                  l.amount < 0 ? "text-ok-600" : "text-ink-900"
+                }`}
+              >
                 {money(l.amount)}
               </td>
             </tr>
           ))}
         </tbody>
       </table>
-      <p className="mt-2 flex justify-between border-t border-line pt-2 text-sm font-semibold text-ink-900">
-        <span>Total journal-entry labor</span>
-        <span className="tabular-nums">{money(total)}</span>
-      </p>
+      <div className="mt-2 space-y-1 border-t border-line pt-2 text-sm">
+        <p className="flex justify-between text-ink-600">
+          <span>Labor posted (debits)</span>
+          <span className="tabular-nums">{money(debits)}</span>
+        </p>
+        <p className="flex justify-between text-ink-600">
+          <span>Already capitalized / reversed (credits)</span>
+          <span className="tabular-nums">{money(credits)}</span>
+        </p>
+        <p className="flex justify-between font-semibold text-ink-900">
+          <span>Awaiting review (net)</span>
+          <span className="tabular-nums">{money(total)}</span>
+        </p>
+      </div>
     </div>
   );
 }

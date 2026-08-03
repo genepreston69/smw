@@ -80,6 +80,7 @@ export async function GET() {
       "Journal Entry",
       "Account",
       "Description",
+      "Posting",
       "Amount",
     ],
     lines.flatMap((l) => {
@@ -96,6 +97,9 @@ export async function GET() {
           (l.qb_doc_number as string | null) ?? `#${l.qb_txn_id}`,
           l.category as string | null,
           l.description as string | null,
+          // Credits are labor already moved off the job's labor accounts
+          // (capitalized or corrected); debits are allocations awaiting review.
+          Number(l.amount ?? 0) < 0 ? "Credit" : "Debit",
           Number(l.amount ?? 0).toFixed(2),
         ],
       ];

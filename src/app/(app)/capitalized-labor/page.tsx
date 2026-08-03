@@ -1,5 +1,13 @@
 import Link from "next/link";
-import { Building2, Download, HardHat, ScrollText, Wrench } from "lucide-react";
+import {
+  Building2,
+  CheckCircle2,
+  Download,
+  HardHat,
+  Layers,
+  ScrollText,
+  Wrench,
+} from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { money } from "@/lib/format";
@@ -10,6 +18,7 @@ import {
 } from "@/lib/capitalizedLabor";
 import {
   Card,
+  CardTitle,
   EmptyState,
   PageHeader,
   StatTile,
@@ -97,9 +106,14 @@ export default async function CapitalizedLaborPage({
   const mtdStart = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-01`;
   const periodStart = period === "ytd" ? ytdStart : period === "mtd" ? mtdStart : null;
 
+  // Debits (positive amounts) are payroll allocations posted to the job;
+  // credits (negative amounts) are labor moved back off the labor accounts —
+  // the signature a capitalization entry leaves when its credit line is
+  // tagged to the job. Tracking them separately is what lets the page show
+  // what may have already been capitalized vs. what still awaits review.
   interface JobAgg {
-    total: number;
-    periodTotal: number;
+    periodDebits: number;
+    periodCredits: number; // stored positive
     inPeriod: boolean;
     entryIds: Set<string>;
     latestDate: string | null;
@@ -110,8 +124,8 @@ export default async function CapitalizedLaborPage({
     let agg = aggByJob.get(jobId);
     if (!agg) {
       agg = {
-        total: 0,
-        periodTotal: 0,
+        periodDebits: 0,
+        periodCredits: 0,
         inPeriod: false,
         entryIds: new Set(),
         latestDate: null,
@@ -120,9 +134,9 @@ export default async function CapitalizedLaborPage({
     }
     const amount = Number(l.amount ?? 0);
     const date = (l.txn_date as string | null) ?? null;
-    agg.total += amount;
     if (!periodStart || (date && date >= periodStart)) {
-      agg.periodTotal += amount;
+      if (amount >= 0) agg.periodDebits += amount;
+      else agg.periodCredits += -amount;
       agg.inPeriod = true;
     }
     agg.entryIds.add(l.qb_txn_id as string);
@@ -133,7 +147,11 @@ export default async function CapitalizedLaborPage({
 
   // Candidate jobs: journal-entry labor posted to a non-billable or
   // intercompany job.
-  const candidates: (CapLaborRowData & { periodTotal: number })[] = [];
+  const candidates: (CapLaborRowData & {
+    periodDebits: number;
+    periodCredits: number;
+    periodNet: number;
+  })[] = [];
   for (const j of (jobData ?? []) as unknown as JobRow[]) {
     const agg = aggByJob.get(j.id);
     if (!agg) continue;
@@ -143,14 +161,19 @@ export default async function CapitalizedLaborPage({
       customerCompanyName: j.customer?.company_name,
     });
     if (!bucket) continue;
+    const net = agg.periodDebits - agg.periodCredits;
     candidates.push({
       id: j.id,
       name: j.name,
       companyName: (j.realm_id && companyByRealm.get(j.realm_id)) || null,
       customerName: j.customer?.display_name ?? null,
       bucket,
-      amount: agg.inPeriod ? agg.periodTotal : null,
-      periodTotal: agg.inPeriod ? agg.periodTotal : 0,
+      grossAmount: agg.inPeriod ? agg.periodDebits : null,
+      capitalizedAmount: agg.inPeriod ? agg.periodCredits : null,
+      amount: agg.inPeriod ? net : null,
+      periodDebits: agg.inPeriod ? agg.periodDebits : 0,
+      periodCredits: agg.inPeriod ? agg.periodCredits : 0,
+      periodNet: agg.inPeriod ? net : 0,
       entryCount: agg.entryIds.size,
       latestDate: agg.latestDate,
     });
@@ -169,8 +192,10 @@ export default async function CapitalizedLaborPage({
   const intercompany = candidates.filter((c) => c.bucket === "intercompany");
   const rows = activeTab === "all" ? candidates : activeTab === "nonbillable" ? nonBillable : intercompany;
 
-  const sum = (list: { periodTotal: number }[]) =>
-    list.reduce((s, c) => s + c.periodTotal, 0);
+  const sumNet = (list: { periodNet: number }[]) =>
+    list.reduce((s, c) => s + c.periodNet, 0);
+  const grossTotal = candidates.reduce((s, c) => s + c.periodDebits, 0);
+  const capitalizedTotal = candidates.reduce((s, c) => s + c.periodCredits, 0);
   const entryCount = (list: { entryCount: number }[]) =>
     list.reduce((s, c) => s + c.entryCount, 0);
   const periodLabel = PERIODS.find((p) => p.key === period)!.label.toLowerCase();
@@ -194,7 +219,7 @@ export default async function CapitalizedLaborPage({
 
       <PageHeader
         title="Capitalized Labor"
-        subtitle="Labor posted by journal entry to non-billable (EQP) or intercompany jobs — payroll allocations that may belong in a capital account rather than job cost. Amounts come from journal-entry lines against labor, payroll, or wages accounts imported from QuickBooks. Click a job to see the entries."
+        subtitle="Labor posted by journal entry to non-billable (EQP) or intercompany jobs — payroll allocations that may belong in a capital account rather than job cost. Credits already posted against those labor accounts count as capitalized; the net is what still awaits review. Click a job to see the entries, and see the methodology summary at the bottom of the page."
         action={
           <a
             href="/api/export/capitalized-labor"
@@ -206,23 +231,35 @@ export default async function CapitalizedLaborPage({
         }
       />
 
-      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatTile
-          label={`Capitalized labor (${periodLabel})`}
-          value={money(sum(candidates))}
-          hint={`${candidates.length} job${candidates.length === 1 ? "" : "s"}`}
+          label={`Labor posted (${periodLabel})`}
+          value={money(grossTotal)}
+          hint="journal-entry debits to labor accounts"
+          icon={Layers}
+        />
+        <StatTile
+          label={`Already capitalized (${periodLabel})`}
+          value={money(capitalizedTotal)}
+          hint="credits — labor moved off these jobs"
+          icon={CheckCircle2}
+        />
+        <StatTile
+          label={`Awaiting review (${periodLabel})`}
+          value={money(sumNet(candidates))}
+          hint={`net across ${candidates.length} job${candidates.length === 1 ? "" : "s"}`}
           icon={HardHat}
         />
         <StatTile
           label="Non-billable (EQP)"
-          value={money(sum(nonBillable))}
-          hint={`${nonBillable.length} job${nonBillable.length === 1 ? "" : "s"}`}
+          value={money(sumNet(nonBillable))}
+          hint={`net, ${nonBillable.length} job${nonBillable.length === 1 ? "" : "s"}`}
           icon={Wrench}
         />
         <StatTile
           label="Intercompany"
-          value={money(sum(intercompany))}
-          hint={`${intercompany.length} job${intercompany.length === 1 ? "" : "s"}`}
+          value={money(sumNet(intercompany))}
+          hint={`net, ${intercompany.length} job${intercompany.length === 1 ? "" : "s"}`}
           icon={Building2}
         />
         <StatTile
@@ -270,13 +307,74 @@ export default async function CapitalizedLaborPage({
                 <Th>Type</Th>
                 <Th right>Entries</Th>
                 <Th right>Latest entry</Th>
-                <Th right>Capitalized labor</Th>
+                <Th right>Labor posted</Th>
+                <Th right>Already capitalized</Th>
+                <Th right>Awaiting review</Th>
               </tr>
             }
           >
             <CapLaborRows jobs={rows} showCompany={showCompany} />
           </Table>
         )}
+      </Card>
+
+      <Card className="mt-6">
+        <CardTitle>Methodology</CardTitle>
+        <div className="grid gap-x-8 gap-y-5 text-sm text-ink-600 lg:grid-cols-2">
+          <div>
+            <h3 className="mb-1 font-semibold text-ink-900">
+              1. What counts as labor
+            </h3>
+            <p>
+              Journal-entry lines imported from QuickBooks that post to an
+              account whose name contains <em>labor</em>, <em>payroll</em>, or{" "}
+              <em>wages</em> — the payroll allocations (e.g. Paychex gross
+              wages) posted per job. Bills, purchases, and time entries are
+              regular job cost and are excluded. Debits count as labor posted;
+              credits count against it.
+            </p>
+          </div>
+          <div>
+            <h3 className="mb-1 font-semibold text-ink-900">
+              2. Which jobs qualify
+            </h3>
+            <p>
+              Jobs named <em>EQP…</em> (internal equipment work) bucket as
+              Non-Billable; jobs whose customer is a sister company bucket as
+              Intercompany. Transportation jobs (names ending LH, HS, FL, BC)
+              are operating work and never qualify. Unlike the Jobs dashboard,
+              there is no recent-activity cutoff — old entries still need
+              review.
+            </p>
+          </div>
+          <div>
+            <h3 className="mb-1 font-semibold text-ink-900">
+              3. How &ldquo;already capitalized&rdquo; is detected
+            </h3>
+            <p>
+              A capitalization entry credits the labor account and debits a
+              capital (fixed-asset) account. When that credit is tagged to the
+              job in QuickBooks, it lands here as a negative line, so{" "}
+              <strong>Already capitalized</strong> totals those credits and{" "}
+              <strong>Awaiting review</strong> is labor posted minus credits —
+              what may still belong in a capital account. A credit posted
+              without the job tag won&rsquo;t appear on this page; the asset
+              side of such entries is visible on the Financials page.
+            </p>
+          </div>
+          <div>
+            <h3 className="mb-1 font-semibold text-ink-900">
+              4. Traceability
+            </h3>
+            <p>
+              Every line carries its journal number so it traces back to the
+              exact entry in QuickBooks. This page is read-only: record the
+              capitalization entry in QuickBooks (tagging the job on the
+              credit line), run a sync, and the amounts here update
+              automatically — each sync fully refreshes the imported rows.
+            </p>
+          </div>
+        </div>
       </Card>
     </div>
   );
