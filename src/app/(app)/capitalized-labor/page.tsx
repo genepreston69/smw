@@ -159,6 +159,7 @@ export default async function CapitalizedLaborPage({
       name: j.name,
       customerDisplayName: j.customer?.display_name,
       customerCompanyName: j.customer?.company_name,
+      qbCompanyName: j.realm_id ? companyByRealm.get(j.realm_id) : null,
     });
     if (!bucket) continue;
     const net = agg.periodDebits - agg.periodCredits;
@@ -342,7 +343,9 @@ export default async function CapitalizedLaborPage({
               Jobs named <em>EQP…</em> (internal equipment work) bucket as
               Non-Billable; jobs whose customer is a sister company bucket as
               Intercompany. Transportation jobs (names ending LH, HS, FL, BC)
-              are operating work and never qualify. Unlike the Jobs dashboard,
+              are operating work and never qualify. Precision Paint jobs for
+              Superior Marine Ways are excluded — those allocations are
+              capitalized wages, already handled. Unlike the Jobs dashboard,
               there is no recent-activity cutoff — old entries still need
               review.
             </p>

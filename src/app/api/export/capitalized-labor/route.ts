@@ -66,6 +66,9 @@ export async function GET() {
       name: j.name,
       customerDisplayName: j.customer?.display_name,
       customerCompanyName: j.customer?.company_name,
+      qbCompanyName: j.realm_id
+        ? ((companyByRealm.get(j.realm_id) as string | null) ?? null)
+        : null,
     });
     if (bucket) candidateByJob.set(j.id, { job: j, bucket });
   }

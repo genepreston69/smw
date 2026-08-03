@@ -17,6 +17,21 @@ export const CAP_LABOR_BUCKET_LABELS: Record<CapLaborBucket, string> = {
   intercompany: "Intercompany",
 };
 
+// Precision Paint's jobs for Superior Marine Ways are capitalized wages —
+// already handled through the capitalization process, so they never need
+// review here. Matching is fuzzy like isEnterpriseName: QuickBooks names
+// vary ("Precision Paint Systems, LLC", "Superior Marine Ways, Inc.").
+export function isPpsWorkForSuperiorMarine(
+  qbCompanyName: string | null | undefined,
+  customerName: string | null | undefined,
+): boolean {
+  if (!qbCompanyName || !customerName) return false;
+  return (
+    qbCompanyName.toLowerCase().includes("precision paint") &&
+    customerName.toLowerCase().includes("superior marine")
+  );
+}
+
 // A job qualifies when it's internal equipment work (EQP…) or work performed
 // for a sister company. Transportation jobs are operating work and never
 // qualify — same precedence as the Jobs dashboard. Unlike the Jobs tabs,
@@ -25,8 +40,16 @@ export function capLaborBucket(j: {
   name: string;
   customerDisplayName?: string | null;
   customerCompanyName?: string | null;
+  /** Name of the QuickBooks company (realm) the job was imported from. */
+  qbCompanyName?: string | null;
 }): CapLaborBucket | null {
   if (isTransportationJobName(j.name)) return null;
+  if (
+    isPpsWorkForSuperiorMarine(j.qbCompanyName, j.customerDisplayName) ||
+    isPpsWorkForSuperiorMarine(j.qbCompanyName, j.customerCompanyName)
+  ) {
+    return null;
+  }
   if (isNonBillableJobName(j.name)) return "nonbillable";
   if (
     isEnterpriseName(j.customerDisplayName) ||
