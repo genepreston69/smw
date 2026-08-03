@@ -4,6 +4,7 @@ import { useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import {
   Check,
+  Download,
   MessageSquareWarning,
   Plus,
   Send,
@@ -351,6 +352,14 @@ export function PlanWorkspace(props: Props) {
         </div>
 
         <div className="flex items-center gap-2">
+          <a
+            href={`/api/export/plan?id=${plan.id}`}
+            title="Download line items and totals as CSV"
+            className={buttonCls("secondary")}
+          >
+            <Download size={15} strokeWidth={2} />
+            Export CSV
+          </a>
           {canDelete && (
             <button
               onClick={removePlan}
