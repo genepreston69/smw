@@ -3,54 +3,36 @@ import { Landmark } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { moneyWhole } from "@/lib/format";
+import {
+  COL_DIMS,
+  MONTH_PARAM,
+  ROW_DIMS,
+  SCOPES,
+  SCOPE_CLASSIFICATIONS,
+  currentMonth,
+  defaultFrom,
+  financialsHref,
+  lastDayOfMonth,
+  linesHref,
+  monthLabel,
+  type ColDim,
+  type FinancialsState,
+  type RowDim,
+  type Scope,
+} from "@/lib/financials";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 
 // Slice-and-dice over raw general-ledger lines imported from QuickBooks
 // (gl_lines / gl_accounts, migration 0009). All aggregation happens in the
-// gl_pivot SQL function; this page only lays the cells out.
+// gl_pivot SQL function; this page only lays the cells out. Every amount
+// cell links to /financials/lines, which lists the raw ledger lines behind
+// that exact cell (gl_lines_detail mirrors gl_pivot's dimension logic).
 //
 // Sign conventions (the ledger stores "natural" amounts — positive increases
 // an account in its normal direction):
 //   - Account rows show natural amounts, grouped into statement sections.
 //   - Other row dimensions under Net income scope show Revenue - Expense,
 //     i.e. each slice's contribution to profit.
-
-type RowDim = "account" | "class" | "customer" | "vendor" | "txn_type" | "month";
-type ColDim = "month" | "quarter" | "year" | "class" | "company" | "total";
-type Scope = "pl" | "income" | "expense" | "all";
-
-const ROW_DIMS: { key: RowDim; label: string }[] = [
-  { key: "account", label: "Account" },
-  { key: "class", label: "Class" },
-  { key: "customer", label: "Customer" },
-  { key: "vendor", label: "Vendor" },
-  { key: "txn_type", label: "Transaction type" },
-  { key: "month", label: "Month" },
-];
-
-const COL_DIMS: { key: ColDim; label: string }[] = [
-  { key: "month", label: "Month" },
-  { key: "quarter", label: "Quarter" },
-  { key: "year", label: "Year" },
-  { key: "class", label: "Class" },
-  { key: "company", label: "Company" },
-  { key: "total", label: "Total only" },
-];
-
-const SCOPES: { key: Scope; label: string }[] = [
-  { key: "pl", label: "Net income" },
-  { key: "income", label: "Income only" },
-  { key: "expense", label: "Expenses only" },
-  { key: "all", label: "All accounts" },
-];
-
-// Which account classifications each scope pulls from the ledger.
-const SCOPE_CLASSIFICATIONS: Record<Scope, string[] | null> = {
-  pl: ["Revenue", "Expense"],
-  income: ["Revenue"],
-  expense: ["Expense"],
-  all: null,
-};
 
 // Statement section order and display names for the account row dimension.
 const SECTIONS: { classification: string; label: string }[] = [
@@ -69,18 +51,6 @@ interface PivotRow {
   col_key: string;
   amount: number | string;
   line_count: number;
-}
-
-const MONTH_PARAM = /^\d{4}-\d{2}$/;
-
-function monthLabel(key: string): string {
-  const [y, m] = key.split("-").map(Number);
-  return `${["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"][m - 1]} ${y}`;
-}
-
-function lastDayOfMonth(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  return new Date(Date.UTC(y, m, 0)).toISOString().slice(0, 10);
 }
 
 export default async function FinancialsPage({
@@ -106,11 +76,8 @@ export default async function FinancialsPage({
     ? (sp.scope as Scope)
     : "pl";
 
-  const today = new Date();
-  const thisMonth = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}`;
-  const from = MONTH_PARAM.test(sp.from ?? "")
-    ? sp.from!
-    : `${today.getUTCFullYear()}-01`;
+  const thisMonth = currentMonth();
+  const from = MONTH_PARAM.test(sp.from ?? "") ? sp.from! : defaultFrom();
   const to = MONTH_PARAM.test(sp.to ?? "") ? sp.to! : thisMonth;
 
   const { supabase } = await requireUser();
@@ -127,25 +94,9 @@ export default async function FinancialsPage({
   );
   const company = companyByRealm.has(sp.company ?? "") ? sp.company! : "all";
 
-  const href = (overrides: {
-    company?: string;
-    from?: string;
-    to?: string;
-    rows?: RowDim;
-    cols?: ColDim;
-    scope?: Scope;
-  }) => {
-    const params = new URLSearchParams();
-    const merged = { company, from, to, rows: rowDim, cols: colDim, scope, ...overrides };
-    if (merged.company !== "all") params.set("company", merged.company);
-    if (merged.from !== `${today.getUTCFullYear()}-01`) params.set("from", merged.from);
-    if (merged.to !== thisMonth) params.set("to", merged.to);
-    if (merged.rows !== "account") params.set("rows", merged.rows);
-    if (merged.cols !== "month") params.set("cols", merged.cols);
-    if (merged.scope !== "pl") params.set("scope", merged.scope);
-    const q = params.toString();
-    return q ? `/financials?${q}` : "/financials";
-  };
+  const state: FinancialsState = { company, from, to, rows: rowDim, cols: colDim, scope };
+  const href = (overrides: Partial<FinancialsState>) =>
+    financialsHref({ ...state, ...overrides });
 
   // Aggregated cells; paged like every other complete list so PostgREST's
   // 1000-row cap can't silently truncate a wide pivot. The four-column
@@ -266,13 +217,25 @@ export default async function FinancialsPage({
         })()
       : null;
 
-  const amountCell = (v: number | undefined, bold = false) => (
+  const amountCell = (v: number | undefined, bold = false, drill?: string) => (
     <td
       className={`whitespace-nowrap px-4 py-2 text-right tabular-nums ${
         bold ? "font-semibold text-ink-900" : "text-ink-900"
       } ${v !== undefined && v < 0 ? "text-bad-600" : ""}`}
     >
-      {v === undefined || v === 0 ? <span className="text-ink-400">—</span> : moneyWhole(v)}
+      {v === undefined || v === 0 ? (
+        <span className="text-ink-400">—</span>
+      ) : drill ? (
+        <Link
+          href={drill}
+          className="rounded-sm underline-offset-2 hover:bg-brand-50 hover:underline"
+          title="View ledger lines"
+        >
+          {moneyWhole(v)}
+        </Link>
+      ) : (
+        moneyWhole(v)
+      )}
     </td>
   );
 
@@ -300,7 +263,7 @@ export default async function FinancialsPage({
         subtitle={
           scope === "all"
             ? "Raw general-ledger activity imported from QuickBooks since Jan 1, 2023. Balance-sheet sections show activity for the selected period, not ending balances."
-            : "Raw general-ledger activity imported from QuickBooks since Jan 1, 2023. Build your own statements by choosing what to put on rows and columns."
+            : "Raw general-ledger activity imported from QuickBooks since Jan 1, 2023. Build your own statements by choosing what to put on rows and columns; click any amount to see the ledger lines behind it."
         }
       />
 
@@ -408,6 +371,7 @@ export default async function FinancialsPage({
                 showRowTotal={colDim !== "total"}
                 subtotal={rowDim === "account" ? sums(section.rows) : null}
                 amountCell={amountCell}
+                drillHref={(rowKey, colKey) => linesHref(state, rowKey, colKey)}
               />
             ))}
             {netIncome ? (
@@ -421,8 +385,11 @@ export default async function FinancialsPage({
                 <td className="px-4 py-2 font-semibold text-ink-900">
                   {rowDim !== "account" && scope === "pl" ? "Net income" : "Total"}
                 </td>
-                {colKeys.map((k) => amountCell(grand.bycol.get(k), true))}
-                {colDim !== "total" && amountCell(grand.total, true)}
+                {colKeys.map((k) =>
+                  amountCell(grand.bycol.get(k), true, linesHref(state, null, k)),
+                )}
+                {colDim !== "total" &&
+                  amountCell(grand.total, true, linesHref(state, null, null))}
               </tr>
             )}
           </Table>
@@ -434,7 +401,8 @@ export default async function FinancialsPage({
         {rowDim !== "account" && scope === "pl"
           ? " With Net income scope, each row shows income minus expenses for that slice."
           : ""}{" "}
-        Net income on the account view is Income minus Expenses.
+        Net income on the account view is Income minus Expenses. Click any
+        amount to drill into the underlying ledger lines.
       </p>
     </div>
   );
@@ -448,6 +416,7 @@ function SectionRows({
   showRowTotal,
   subtotal,
   amountCell,
+  drillHref,
 }: {
   label: string;
   showHeader: boolean;
@@ -460,7 +429,8 @@ function SectionRows({
   colKeys: string[];
   showRowTotal: boolean;
   subtotal: { bycol: Map<string, number>; total: number } | null;
-  amountCell: (v: number | undefined, bold?: boolean) => React.ReactNode;
+  amountCell: (v: number | undefined, bold?: boolean, drill?: string) => React.ReactNode;
+  drillHref: (rowKey: string | null, colKey: string | null) => string;
 }) {
   const span = colKeys.length + 1 + (showRowTotal ? 1 : 0);
   return (
@@ -483,8 +453,8 @@ function SectionRows({
           >
             {r.key}
           </td>
-          {colKeys.map((k) => amountCell(r.cells.get(k)))}
-          {showRowTotal && amountCell(r.total)}
+          {colKeys.map((k) => amountCell(r.cells.get(k), false, drillHref(r.key, k)))}
+          {showRowTotal && amountCell(r.total, false, drillHref(r.key, null))}
         </tr>
       ))}
       {showHeader && subtotal && (
