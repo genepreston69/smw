@@ -39,6 +39,19 @@ export function isNonBillableJobName(name: string): boolean {
   return /^eqp/i.test(name.trim());
 }
 
+// Inside Precision Paint's own QuickBooks company, jobs filed under the
+// "PPS" customer are the company's internal (self) work — never billable.
+export function isPpsInternalJob(
+  qbCompanyName: string | null | undefined,
+  customerName: string | null | undefined,
+): boolean {
+  if (!qbCompanyName || !customerName) return false;
+  return (
+    qbCompanyName.toLowerCase().includes("precision paint") &&
+    customerName.trim().toUpperCase() === "PPS"
+  );
+}
+
 // Transportation work is identified by the job number suffix: LH, HS, FL, or BC.
 export function isTransportationJobName(name: string): boolean {
   return /(lh|hs|fl|bc)$/i.test(name.trim());
@@ -57,6 +70,8 @@ export function classifyJobView(j: {
   name: string;
   customerDisplayName?: string | null;
   customerCompanyName?: string | null;
+  /** Name of the QuickBooks company (realm) the job was imported from. */
+  qbCompanyName?: string | null;
   /** Most recent cost line or invoice date (YYYY-MM-DD), if any. */
   latestTxnDate: string | null;
 }): JobView {
@@ -70,7 +85,13 @@ export function classifyJobView(j: {
   const hasRecentActivity =
     !!j.latestTxnDate && j.latestTxnDate >= NO_TXN_CUTOFF;
   if (!hasRecentActivity && !armyCorps) return "notransactions";
-  if (isNonBillableJobName(j.name)) return "nonbillable";
+  if (
+    isNonBillableJobName(j.name) ||
+    isPpsInternalJob(j.qbCompanyName, j.customerDisplayName) ||
+    isPpsInternalJob(j.qbCompanyName, j.customerCompanyName)
+  ) {
+    return "nonbillable";
+  }
   if (
     isEnterpriseName(j.customerDisplayName) ||
     isEnterpriseName(j.customerCompanyName)

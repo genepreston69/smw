@@ -180,6 +180,7 @@ export default async function JobsPage({
         name: j.name,
         customerDisplayName: j.customer?.display_name,
         customerCompanyName: j.customer?.company_name,
+        qbCompanyName: (j.realm_id && companyByRealm.get(j.realm_id)) || null,
         latestTxnDate: latestTxnDate(j.id),
       })
     ].push(j);
@@ -310,7 +311,7 @@ export default async function JobsPage({
           activeTab === "notransactions"
             ? "Jobs with no cost or invoice activity since Jan 1, 2025 (US Army Corps of Engineers jobs stay under Customer jobs). They move to the other tabs once activity is tagged to them in QuickBooks."
             : activeTab === "nonbillable"
-              ? "Non-billable jobs — job numbers starting with EQP (internal equipment work)."
+              ? "Non-billable jobs — job numbers starting with EQP (internal equipment work), plus Precision Paint jobs under the PPS customer (internal work)."
               : activeTab === "intercompany"
                 ? "Work performed for companies within the enterprise (Precision Paint, Superior Marine, SMW, IRDC)."
                 : activeTab === "transportation"
@@ -378,7 +379,7 @@ export default async function JobsPage({
             {activeTab === "notransactions"
               ? "Jobs with no cost or invoice activity since Jan 1, 2025 will appear here."
               : activeTab === "nonbillable"
-                ? "Jobs whose number starts with EQP will appear here."
+                ? "Jobs whose number starts with EQP, or Precision Paint jobs under the PPS customer, will appear here."
                 : activeTab === "intercompany"
                   ? "Jobs whose customer is an enterprise company will appear here."
                   : activeTab === "transportation"
