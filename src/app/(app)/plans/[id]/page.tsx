@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
-import { PlanWorkspace } from "@/components/plan/PlanWorkspace";
+import { PlanWizard } from "@/components/plan/PlanWizard";
 import type {
   Approval,
   ApprovalThreshold,
@@ -118,7 +118,7 @@ export default async function PlanPage({
   }
 
   return (
-    <PlanWorkspace
+    <PlanWizard
       plan={plan as ProjectPlan}
       phases={(phases ?? []) as PlanPhase[]}
       items={(items ?? []) as PlanLineItem[]}
