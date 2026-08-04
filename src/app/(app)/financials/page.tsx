@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Download, Landmark } from "lucide-react";
-import { requireUser } from "@/lib/auth";
+import { requireAdmin } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { moneyWhole } from "@/lib/format";
 import {
@@ -41,7 +41,9 @@ export default async function FinancialsPage({
   }>;
 }) {
   const sp = await searchParams;
-  const { supabase } = await requireUser();
+  // Financials are admin-only (RLS on the gl_* tables enforces this; the
+  // redirect just keeps non-admins off an empty page).
+  const { supabase } = await requireAdmin();
   const { data: connRows } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")

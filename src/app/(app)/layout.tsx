@@ -26,7 +26,7 @@ export default async function AppLayout({
           </div>
         </div>
 
-        <SidebarNav />
+        <SidebarNav isAdmin={profile.role === "admin"} />
 
         <div className="mt-auto border-t border-white/10 px-4 py-4">
           <p className="truncate text-sm font-medium text-white/90">

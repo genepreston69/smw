@@ -15,7 +15,12 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-const NAV: { href: string; label: string; icon: LucideIcon }[] = [
+const ALL_NAV: {
+  href: string;
+  label: string;
+  icon: LucideIcon;
+  adminOnly?: boolean;
+}[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/plans", label: "Job Plans", icon: ClipboardList },
   { href: "/approvals", label: "Approvals", icon: Stamp },
@@ -23,12 +28,13 @@ const NAV: { href: string; label: string; icon: LucideIcon }[] = [
   { href: "/customers/summary", label: "Customer Summary", icon: PieChart },
   { href: "/jobs", label: "Jobs", icon: Wrench },
   { href: "/capitalized-labor", label: "Capitalized Labor", icon: HardHat },
-  { href: "/financials", label: "Financials", icon: Landmark },
+  { href: "/financials", label: "Financials", icon: Landmark, adminOnly: true },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-export function SidebarNav() {
+export function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
+  const NAV = ALL_NAV.filter((item) => isAdmin || !item.adminOnly);
 
   // Longest matching href wins so nested routes (/customers/summary) light
   // up their own item, not every prefix (/customers) as well.
