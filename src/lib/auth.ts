@@ -18,3 +18,11 @@ export async function requireUser() {
   if (!profile) redirect("/login");
   return { supabase, user, profile: profile as Profile };
 }
+
+// For admin-only pages (e.g. Financials). RLS already denies the underlying
+// data to non-admins; this keeps them from landing on an empty page.
+export async function requireAdmin() {
+  const ctx = await requireUser();
+  if (ctx.profile.role !== "admin") redirect("/");
+  return ctx;
+}

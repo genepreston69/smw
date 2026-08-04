@@ -27,6 +27,17 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
+  // Financials are admin-only (RLS on the gl_* tables enforces this; the
+  // 403 gives direct callers a clear error instead of an empty workbook).
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (profile?.role !== "admin") {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
   const { data: connRows } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")

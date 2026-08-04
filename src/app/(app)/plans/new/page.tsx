@@ -37,7 +37,7 @@ export default async function NewPlanPage() {
     <div className="mx-auto max-w-lg">
       <PageHeader
         title="New job plan"
-        subtitle="Customer and job can also be set later — a customer is required before the plan can be submitted."
+        subtitle="Name the plan to start the estimating wizard — it walks through project details, rates, scope, and review. Customer and job can also be set later; a customer is required before the plan can be submitted."
       />
 
       <Card>
@@ -82,7 +82,7 @@ export default async function NewPlanPage() {
             </select>
           </div>
           <button type="submit" className={`${buttonCls("primary")} w-full`}>
-            Create plan
+            Create plan &amp; start wizard
           </button>
         </form>
       </Card>
