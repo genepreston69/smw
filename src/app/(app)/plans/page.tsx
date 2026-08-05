@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { ClipboardList, Plus } from "lucide-react";
+import { BookOpen, ClipboardList, Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
 import { StatusBadge, TbdBadge } from "@/components/StatusBadge";
@@ -59,10 +59,20 @@ export default async function PlansPage() {
         title="Job Plans"
         subtitle="Cost estimates and their approval status."
         action={
-          <Link href="/plans/new" className={buttonCls("primary")}>
-            <Plus size={16} strokeWidth={2} />
-            New job plan
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/plans/manual"
+              title="Printable manual for the estimating wizard"
+              className={buttonCls("secondary")}
+            >
+              <BookOpen size={16} strokeWidth={2} />
+              How to use the wizard
+            </Link>
+            <Link href="/plans/new" className={buttonCls("primary")}>
+              <Plus size={16} strokeWidth={2} />
+              New job plan
+            </Link>
+          </div>
         }
       />
 
