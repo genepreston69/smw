@@ -1,5 +1,6 @@
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { isEnterpriseName } from "@/lib/enterprise";
+import { NO_TXN_CUTOFF } from "@/lib/jobViews";
 
 /* ---------------------------------------------------------------------------
    Customer summary: every job's actual costs and invoiced revenue rolled up
@@ -7,6 +8,10 @@ import { isEnterpriseName } from "@/lib/enterprise";
    identically, so the rollup lives here. Job-level data only — invoices
    billed to a top-level customer (not a job) never import, so they can't
    appear here either.
+
+   Customers with no cost/invoice activity since NO_TXN_CUTOFF are dropped
+   entirely — same cutoff the Jobs dashboard uses for its "No Transactions"
+   view.
 --------------------------------------------------------------------------- */
 
 export interface CustomerSummaryJob {
@@ -98,7 +103,7 @@ export async function getCustomerSummary(
       supabase
         .from("job_cost_totals")
         .select(
-          "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount",
+          "job_id, total_amount, total_hours, materials_amount, labor_amount, other_amount, latest_txn_date",
         )
         .order("job_id")
         .range(from, to),
@@ -106,7 +111,7 @@ export async function getCustomerSummary(
     fetchAllRows((from, to) =>
       supabase
         .from("job_invoice_totals")
-        .select("job_id, total_invoiced")
+        .select("job_id, total_invoiced, latest_invoice_date")
         .order("job_id")
         .range(from, to),
     ),
@@ -128,18 +133,26 @@ export async function getCustomerSummary(
         materials_amount: number | null;
         labor_amount: number | null;
         other_amount: number | null;
+        latest_txn_date: string | null;
       }[]
     ).map((r) => [r.job_id, r]),
   );
-  const invoicedByJob = new Map(
-    (invRows as { job_id: string; total_invoiced: number | null }[]).map(
-      (r) => [r.job_id, Number(r.total_invoiced ?? 0)],
-    ),
+  const invRowByJob = new Map(
+    (
+      invRows as {
+        job_id: string;
+        total_invoiced: number | null;
+        latest_invoice_date: string | null;
+      }[]
+    ).map((r) => [r.job_id, r]),
   );
 
   // One bucket per customer; jobs whose customer link is missing land in a
   // single "(No customer)" bucket so every job is accounted for.
   const buckets = new Map<string, CustomerSummaryRow>();
+  // Latest cost/invoice date seen per bucket (YYYY-MM-DD string compare),
+  // used below to drop customers with no activity since NO_TXN_CUTOFF.
+  const latestByBucket = new Map<string, string>();
   for (const j of jobRows as unknown as JobRow[]) {
     const key = j.customer_id ?? "none";
     let bucket = buckets.get(key);
@@ -174,8 +187,12 @@ export async function getCustomerSummary(
       bucket.hours += Number(cost.total_hours ?? 0);
       bucket.cost += Number(cost.total_amount ?? 0);
     }
-    const invoiced = invoicedByJob.get(j.id);
+    const invRow = invRowByJob.get(j.id);
+    const invoiced = invRow ? Number(invRow.total_invoiced ?? 0) : undefined;
     bucket.invoiced += invoiced ?? 0;
+    for (const d of [cost?.latest_txn_date, invRow?.latest_invoice_date]) {
+      if (d && d > (latestByBucket.get(key) ?? "")) latestByBucket.set(key, d);
+    }
     bucket.jobList.push({
       id: j.id,
       name: j.name,
@@ -188,6 +205,7 @@ export async function getCustomerSummary(
   }
 
   const rows = [...buckets.values()]
+    .filter((b) => (latestByBucket.get(b.key) ?? "") >= NO_TXN_CUTOFF)
     .map((b) => ({
       ...b,
       net: b.invoiced - b.cost,

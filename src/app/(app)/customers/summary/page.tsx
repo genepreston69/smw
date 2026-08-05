@@ -12,7 +12,7 @@ export default async function CustomerSummaryPage() {
     <div>
       <PageHeader
         title="Customer Summary"
-        subtitle="Every job's actual costs and invoiced revenue rolled up by customer, largest invoiced first — click any column header to re-sort. Click a customer to list their jobs, a job to break its costs down by vendor, and a vendor to see the individual transactions. Job-level QuickBooks data only — costs tagged to a job (since Jan 1, 2023) and invoices billed to a job. Contract services covers all non-labor, non-materials direct costs (account-based expense lines)."
+        subtitle="Every job's actual costs and invoiced revenue rolled up by customer, largest invoiced first — click any column header to re-sort. Click a customer to list their jobs, a job to break its costs down by vendor, and a vendor to see the individual transactions. Customers with no transaction activity since Jan 1, 2025 are hidden. Job-level QuickBooks data only — costs tagged to a job (since Jan 1, 2023) and invoices billed to a job. Contract services covers all non-labor, non-materials direct costs (account-based expense lines)."
         action={
           <a
             href="/api/export/customer-summary"
