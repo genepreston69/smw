@@ -8,6 +8,7 @@ import {
   ROW_DIMS,
   SCOPES,
   SCOPE_CLASSIFICATIONS,
+  buildEliminations,
   buildPivot,
   currentMonth,
   financialsExportHref,
@@ -65,24 +66,50 @@ export default async function FinancialsPage({
   // Aggregated cells; paged like every other complete list so PostgREST's
   // 1000-row cap can't silently truncate a wide pivot. The four-column
   // ordering matches the RPC's GROUP BY, so pages are deterministic.
-  const cells = (await fetchAllRows((fromRow, toRow) =>
-    supabase
-      .rpc("gl_pivot", {
-        p_start: `${from}-01`,
-        p_end: lastDayOfMonth(to),
-        p_row_dim: rowDim,
-        p_col_dim: colDim,
-        p_realm_id: company === "all" ? null : company,
-        p_classifications: SCOPE_CLASSIFICATIONS[scope],
-      })
-      .order("row_key")
-      .order("col_key")
-      .order("classification")
-      .order("account_type")
-      .range(fromRow, toRow),
-  )) as PivotCell[];
+  // Under the Net income scope a second slice — revenue by customer — feeds
+  // the Intercompany eliminations section below the Net income line.
+  const [cells, eliminationCells] = (await Promise.all([
+    fetchAllRows((fromRow, toRow) =>
+      supabase
+        .rpc("gl_pivot", {
+          p_start: `${from}-01`,
+          p_end: lastDayOfMonth(to),
+          p_row_dim: rowDim,
+          p_col_dim: colDim,
+          p_realm_id: company === "all" ? null : company,
+          p_classifications: SCOPE_CLASSIFICATIONS[scope],
+        })
+        .order("row_key")
+        .order("col_key")
+        .order("classification")
+        .order("account_type")
+        .range(fromRow, toRow),
+    ),
+    scope === "pl"
+      ? fetchAllRows((fromRow, toRow) =>
+          supabase
+            .rpc("gl_pivot", {
+              p_start: `${from}-01`,
+              p_end: lastDayOfMonth(to),
+              p_row_dim: "customer",
+              p_col_dim: colDim,
+              p_realm_id: company === "all" ? null : company,
+              p_classifications: SCOPE_CLASSIFICATIONS.income,
+            })
+            .order("row_key")
+            .order("col_key")
+            .order("classification")
+            .order("account_type")
+            .range(fromRow, toRow),
+        )
+      : Promise.resolve([]),
+  ])) as [PivotCell[], PivotCell[]];
 
   const pivot = buildPivot(cells, rowDim, scope);
+  const eliminations =
+    scope === "pl"
+      ? buildEliminations(eliminationCells, pivot.netIncome ?? pivot.grand)
+      : null;
   const showRowTotal = colDim !== "total";
 
   const amountCell = (v: number | undefined, bold = false, drill?: string) => (
@@ -269,6 +296,36 @@ export default async function FinancialsPage({
                   amountCell(pivot.grand.total, true, linesHref(state, null, null))}
               </tr>
             )}
+            {eliminations && (
+              <>
+                <tr className="bg-surface/50">
+                  <td
+                    colSpan={sectionSpan}
+                    className="px-4 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
+                  >
+                    Intercompany eliminations
+                  </td>
+                </tr>
+                {eliminations.lines.map((line) => (
+                  <tr key={line.label} className="hover:bg-surface/50">
+                    <td className="max-w-[26rem] truncate px-4 py-2 text-ink-900" title={line.label}>
+                      {line.label}
+                    </td>
+                    {pivot.colKeys.map((k) => amountCell(line.totals.bycol.get(k)))}
+                    {showRowTotal && amountCell(line.totals.total)}
+                  </tr>
+                ))}
+                <tr className="bg-surface">
+                  <td className="px-4 py-2 font-semibold text-ink-900">
+                    Net income after eliminations
+                  </td>
+                  {pivot.colKeys.map((k) =>
+                    amountCell(eliminations.adjusted.bycol.get(k), true),
+                  )}
+                  {showRowTotal && amountCell(eliminations.adjusted.total, true)}
+                </tr>
+              </>
+            )}
           </Table>
         )}
       </Card>
@@ -280,6 +337,9 @@ export default async function FinancialsPage({
           : ""}{" "}
         Net income on the account view is Income minus Expenses. Click any
         amount to drill into the underlying ledger lines.
+        {eliminations
+          ? " Intercompany eliminations back out revenue billed between sister companies (e.g. Superior Marine invoicing as billing agent for Precision Paint), which both companies recognize."
+          : ""}
       </p>
     </div>
   );

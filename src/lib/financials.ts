@@ -4,6 +4,8 @@
 // (migrations 0009 / 0010) — the database does the grouping and filtering,
 // these are just the vocabulary.
 
+import { isEnterpriseName } from "@/lib/enterprise";
+
 export type RowDim =
   | "account"
   | "class"
@@ -286,6 +288,58 @@ export function buildPivot(
     grand: sums(allRows),
     netIncome,
     totalLabel: !sectioned && scope === "pl" ? "Net income" : "Total",
+  };
+}
+
+/* ---------------------------------------------------------------------------
+   Intercompany eliminations. When one sister company bills another —
+   Superior Marine invoicing end customers as billing agent for Precision
+   Paint — the same revenue is recognized on both companies' books, so the
+   consolidated Net income line is overstated. The eliminations section shown
+   below Net income backs out revenue whose customer is a sister company,
+   using the same fuzzy name matching (isEnterpriseName) that buckets
+   Intercompany jobs on the dashboard. Feed it gl_pivot cells sliced with
+   row_dim = 'customer' and classifications = ['Revenue'].
+--------------------------------------------------------------------------- */
+
+export interface EliminationLine {
+  label: string;
+  /** Signed effect on net income: negative backs the revenue out. */
+  totals: PivotTotals;
+}
+
+export interface Eliminations {
+  lines: EliminationLine[];
+  /** Net income after applying every elimination line. */
+  adjusted: PivotTotals;
+}
+
+export function buildEliminations(
+  customerRevenueCells: PivotCell[],
+  netIncome: PivotTotals,
+): Eliminations | null {
+  const bycol = new Map<string, number>();
+  let total = 0;
+  for (const c of customerRevenueCells) {
+    if (!isEnterpriseName(c.row_key)) continue;
+    const v = -Number(c.amount);
+    bycol.set(c.col_key, (bycol.get(c.col_key) ?? 0) + v);
+    total += v;
+  }
+  if (bycol.size === 0) return null;
+
+  const adjustedBycol = new Map(netIncome.bycol);
+  for (const [k, v] of bycol) {
+    adjustedBycol.set(k, (adjustedBycol.get(k) ?? 0) + v);
+  }
+  return {
+    lines: [
+      {
+        label: "Intercompany revenue (billed between sister companies)",
+        totals: { bycol, total },
+      },
+    ],
+    adjusted: { bycol: adjustedBycol, total: netIncome.total + total },
   };
 }
 

@@ -6,6 +6,7 @@ import {
   ROW_DIMS,
   SCOPES,
   SCOPE_CLASSIFICATIONS,
+  buildEliminations,
   buildPivot,
   lastDayOfMonth,
   monthLabel,
@@ -56,23 +57,50 @@ export async function GET(request: Request) {
   );
   const { company, from, to, rows: rowDim, cols: colDim, scope } = state;
 
-  const cells = (await fetchAllRows((fromRow, toRow) =>
-    supabase
-      .rpc("gl_pivot", {
-        p_start: `${from}-01`,
-        p_end: lastDayOfMonth(to),
-        p_row_dim: rowDim,
-        p_col_dim: colDim,
-        p_realm_id: company === "all" ? null : company,
-        p_classifications: SCOPE_CLASSIFICATIONS[scope],
-      })
-      .order("row_key")
-      .order("col_key")
-      .order("classification")
-      .order("account_type")
-      .range(fromRow, toRow),
-  )) as PivotCell[];
+  // Same two slices as the Financials page: the pivot itself plus, under the
+  // Net income scope, revenue by customer for the Intercompany eliminations
+  // section below the Net income line.
+  const [cells, eliminationCells] = (await Promise.all([
+    fetchAllRows((fromRow, toRow) =>
+      supabase
+        .rpc("gl_pivot", {
+          p_start: `${from}-01`,
+          p_end: lastDayOfMonth(to),
+          p_row_dim: rowDim,
+          p_col_dim: colDim,
+          p_realm_id: company === "all" ? null : company,
+          p_classifications: SCOPE_CLASSIFICATIONS[scope],
+        })
+        .order("row_key")
+        .order("col_key")
+        .order("classification")
+        .order("account_type")
+        .range(fromRow, toRow),
+    ),
+    scope === "pl"
+      ? fetchAllRows((fromRow, toRow) =>
+          supabase
+            .rpc("gl_pivot", {
+              p_start: `${from}-01`,
+              p_end: lastDayOfMonth(to),
+              p_row_dim: "customer",
+              p_col_dim: colDim,
+              p_realm_id: company === "all" ? null : company,
+              p_classifications: SCOPE_CLASSIFICATIONS.income,
+            })
+            .order("row_key")
+            .order("col_key")
+            .order("classification")
+            .order("account_type")
+            .range(fromRow, toRow),
+        )
+      : Promise.resolve([]),
+  ])) as [PivotCell[], PivotCell[]];
   const pivot = buildPivot(cells, rowDim, scope);
+  const eliminations =
+    scope === "pl"
+      ? buildEliminations(eliminationCells, pivot.netIncome ?? pivot.grand)
+      : null;
   const showRowTotal = colDim !== "total";
 
   const rowLabel = ROW_DIMS.find((d) => d.key === rowDim)!.label;
@@ -145,6 +173,18 @@ export async function GET(request: Request) {
       : [pivot.totalLabel, ...totalsCells(pivot.grand)],
   );
   summary.font = { bold: true };
+
+  if (eliminations) {
+    sheet.addRow(["Intercompany eliminations"]).font = { bold: true };
+    for (const line of eliminations.lines) {
+      sheet.addRow([line.label, ...totalsCells(line.totals)]);
+    }
+    const adjusted = sheet.addRow([
+      "Net income after eliminations",
+      ...totalsCells(eliminations.adjusted),
+    ]);
+    adjusted.font = { bold: true };
+  }
 
   const buffer = await workbook.xlsx.writeBuffer();
   return new Response(Buffer.from(buffer), {
