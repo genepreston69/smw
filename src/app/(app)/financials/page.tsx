@@ -156,14 +156,17 @@ export default async function FinancialsPage({
         ? "bg-navy-900 text-white"
         : "text-ink-600 hover:bg-surface hover:text-ink-900"
     }`;
+  const filterRowCls =
+    "grid grid-cols-[6rem_1fr] items-center gap-x-3 px-4 py-2";
+  const filterLabel = (label: string) => (
+    <span className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
+      {label}
+    </span>
+  );
   const pillGroup = (label: string, children: React.ReactNode) => (
-    <div className="flex items-center gap-2">
-      <span className="w-16 shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
-        {label}
-      </span>
-      <div className="flex w-fit flex-wrap gap-1 rounded-lg border border-line bg-white p-1">
-        {children}
-      </div>
+    <div className={filterRowCls}>
+      {filterLabel(label)}
+      <div className="flex flex-wrap gap-1 py-0.5">{children}</div>
     </div>
   );
 
@@ -186,7 +189,7 @@ export default async function FinancialsPage({
         }
       />
 
-      <div className="mb-4 space-y-2">
+      <div className="mb-4 divide-y divide-line/70 rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)]">
         {companies.length > 1 &&
           pillGroup(
             "Company",
@@ -229,34 +232,34 @@ export default async function FinancialsPage({
             </Link>
           )),
         )}
-        <form method="get" action="/financials" className="flex items-center gap-2">
-          <span className="w-16 shrink-0 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
-            Period
-          </span>
+        <form method="get" action="/financials" className={filterRowCls}>
+          {filterLabel("Period")}
           {company !== "all" && <input type="hidden" name="company" value={company} />}
           {rowDim !== "account" && <input type="hidden" name="rows" value={rowDim} />}
           {colDim !== "month" && <input type="hidden" name="cols" value={colDim} />}
           {scope !== "pl" && <input type="hidden" name="scope" value={scope} />}
-          <input
-            type="month"
-            name="from"
-            defaultValue={from}
-            min="2023-01"
-            max={thisMonth}
-            className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink-900"
-          />
-          <span className="text-sm text-ink-400">to</span>
-          <input
-            type="month"
-            name="to"
-            defaultValue={to}
-            min="2023-01"
-            max={thisMonth}
-            className="rounded-lg border border-line bg-white px-3 py-1.5 text-sm text-ink-900"
-          />
-          <button type="submit" className={buttonCls("secondary", "sm")}>
-            Apply
-          </button>
+          <div className="flex flex-wrap items-center gap-2 py-0.5">
+            <input
+              type="month"
+              name="from"
+              defaultValue={from}
+              min="2023-01"
+              max={thisMonth}
+              className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
+            />
+            <span className="text-sm text-ink-400">to</span>
+            <input
+              type="month"
+              name="to"
+              defaultValue={to}
+              min="2023-01"
+              max={thisMonth}
+              className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
+            />
+            <button type="submit" className={buttonCls("secondary", "sm")}>
+              Apply
+            </button>
+          </div>
         </form>
       </div>
 
