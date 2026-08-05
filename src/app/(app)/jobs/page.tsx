@@ -24,16 +24,18 @@ type SortKey =
   | "customer"
   | "cost"
   | "invoiced"
+  | "gm"
   | "latest"
   | "active"
   | "synced";
 
 const SORT_PATTERN =
-  /^(name|company|customer|cost|invoiced|latest|active|synced)_(asc|desc)$/;
+  /^(name|company|customer|cost|invoiced|gm|latest|active|synced)_(asc|desc)$/;
 
 const DESC_FIRST: ReadonlySet<SortKey> = new Set([
   "cost",
   "invoiced",
+  "gm",
   "latest",
   "active",
   "synced",
@@ -195,6 +197,16 @@ export default async function JobsPage({
   const rows: JobRowData[] = jobs.map((j) => {
     const cost = costByJob.get(j.id);
     const invoice = invoiceByJob.get(j.id);
+    const totalCost = !cost
+      ? null
+      : period === "all"
+        ? cost.amount
+        : cost[period];
+    const invoiced = !invoice
+      ? null
+      : period === "all"
+        ? invoice.invoiced
+        : invoice[period];
     return {
       id: j.id,
       name: j.name,
@@ -202,16 +214,10 @@ export default async function JobsPage({
       customerName: j.customer?.display_name ?? null,
       active: j.active,
       lastSyncedAt: j.last_synced_at,
-      totalCost: !cost
-        ? null
-        : period === "all"
-          ? cost.amount
-          : cost[period],
-      invoiced: !invoice
-        ? null
-        : period === "all"
-          ? invoice.invoiced
-          : invoice[period],
+      totalCost,
+      invoiced,
+      currentGm:
+        totalCost != null && invoiced != null ? invoiced - totalCost : null,
       latestTxnDate: latestTxnDate(j.id),
     };
   });
@@ -230,6 +236,8 @@ export default async function JobsPage({
         return r.totalCost;
       case "invoiced":
         return r.invoiced;
+      case "gm":
+        return r.currentGm;
       case "latest":
         return r.latestTxnDate;
       case "active":
@@ -396,6 +404,7 @@ export default async function JobsPage({
                 <Th>{sortHeader("customer", "Customer")}</Th>
                 <Th right>{sortHeader("cost", "Actual cost")}</Th>
                 <Th right>{sortHeader("invoiced", "Invoiced")}</Th>
+                <Th right>{sortHeader("gm", "Current GM")}</Th>
                 <Th right>{sortHeader("latest", "Latest transaction")}</Th>
                 <Th>{sortHeader("active", "Active")}</Th>
                 <Th right>{sortHeader("synced", "Last synced")}</Th>
