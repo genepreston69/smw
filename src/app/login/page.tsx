@@ -4,6 +4,7 @@ import { useState, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Anchor } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { isAllowedSignupEmail } from "@/lib/signup";
 
 const inputCls =
   "mt-1 w-full rounded-lg border border-line bg-white px-3 py-2 text-sm text-ink-900 placeholder:text-ink-400 focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20";
@@ -39,6 +40,13 @@ function LoginForm() {
       router.replace(searchParams.get("next") ?? "/");
       router.refresh();
     } else {
+      if (!isAllowedSignupEmail(email)) {
+        setError(
+          "Sign-ups are limited to approved company email addresses. Use your work email or contact an administrator.",
+        );
+        setBusy(false);
+        return;
+      }
       const { data, error } = await supabase.auth.signUp({
         email,
         password,

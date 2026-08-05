@@ -1,6 +1,7 @@
 import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import {
   ROW_DIMS,
@@ -39,7 +40,13 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
   }
 
-  const { data: connRows } = await supabase
+  // Admin verified; the reads below go through the service-role client
+  // because the admin RLS qual on the gl_* tables pushes gl_pivot past the
+  // statement timeout. RLS still guards those tables against direct API
+  // access.
+  const db = createServiceClient();
+
+  const { data: connRows } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
