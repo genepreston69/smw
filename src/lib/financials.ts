@@ -358,12 +358,12 @@ export function buildEliminations(
   };
 
   collect(
-    "Intercompany revenue (billed between sister companies)",
+    "Intercompany revenue (Precision Paint)",
     (_s, customer) => isEnterpriseName(customer),
   );
   // Guarded with !isEnterpriseName so a line can never be eliminated twice.
   collect(
-    "Marathon revenue booked outside Superior Marine (billing agent)",
+    "Intercompany revenue (other sister company)",
     (s, customer) =>
       !isEnterpriseName(customer) &&
       customer.toLowerCase().includes(AGENCY_CUSTOMER_PHRASE) &&
