@@ -166,7 +166,9 @@ export default async function FinancialsPage({
   const pillGroup = (label: string, children: React.ReactNode) => (
     <div className={filterRowCls}>
       {filterLabel(label)}
-      <div className="flex flex-wrap gap-1 py-0.5">{children}</div>
+      <div className="flex flex-wrap items-center divide-x divide-line/70 py-0.5">
+        {children}
+      </div>
     </div>
   );
 
