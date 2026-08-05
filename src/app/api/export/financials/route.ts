@@ -77,7 +77,7 @@ export async function GET(request: Request) {
       : [];
   const [cells, eliminationSlices] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
-      supabase
+      db
         .rpc("gl_pivot", {
           p_start: `${from}-01`,
           p_end: lastDayOfMonth(to),
@@ -97,7 +97,7 @@ export async function GET(request: Request) {
         realmId,
         companyName: companyByRealm.get(realmId) ?? null,
         cells: (await fetchAllRows((fromRow, toRow) =>
-          supabase
+          db
             .rpc("gl_pivot", {
               p_start: `${from}-01`,
               p_end: lastDayOfMonth(to),
