@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Download, Landmark } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
+import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { moneyWhole } from "@/lib/format";
 import {
@@ -41,9 +42,12 @@ export default async function FinancialsPage({
   }>;
 }) {
   const sp = await searchParams;
-  // Financials are admin-only (RLS on the gl_* tables enforces this; the
-  // redirect just keeps non-admins off an empty page).
-  const { supabase } = await requireAdmin();
+  // Financials are admin-only. requireAdmin() verifies the caller; the reads
+  // below then go through the service-role client because the admin RLS qual
+  // on the gl_* tables pushes a query the size of gl_pivot past the statement
+  // timeout. RLS still guards those tables against direct API access.
+  await requireAdmin();
+  const supabase = createServiceClient();
   const { data: connRows } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
