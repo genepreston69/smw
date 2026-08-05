@@ -66,9 +66,17 @@ export default async function FinancialsPage({
   // Aggregated cells; paged like every other complete list so PostgREST's
   // 1000-row cap can't silently truncate a wide pivot. The four-column
   // ordering matches the RPC's GROUP BY, so pages are deterministic.
-  // Under the Net income scope a second slice — revenue by customer — feeds
-  // the Intercompany eliminations section below the Net income line.
-  const [cells, eliminationCells] = (await Promise.all([
+  // Under the Net income scope, one revenue-by-customer slice per company in
+  // scope feeds the Intercompany eliminations section below the Net income
+  // line (per company because the Marathon billing-agent rule depends on
+  // which company booked the revenue).
+  const eliminationRealms =
+    scope === "pl"
+      ? company === "all"
+        ? companies.map((c) => c.realm_id)
+        : [company]
+      : [];
+  const [cells, eliminationSlices] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
         .rpc("gl_pivot", {
@@ -84,16 +92,19 @@ export default async function FinancialsPage({
         .order("classification")
         .order("account_type")
         .range(fromRow, toRow),
-    ),
-    scope === "pl"
-      ? fetchAllRows((fromRow, toRow) =>
+    ) as Promise<PivotCell[]>,
+    Promise.all(
+      eliminationRealms.map(async (realmId) => ({
+        realmId,
+        companyName: companyByRealm.get(realmId) ?? null,
+        cells: (await fetchAllRows((fromRow, toRow) =>
           supabase
             .rpc("gl_pivot", {
               p_start: `${from}-01`,
               p_end: lastDayOfMonth(to),
               p_row_dim: "customer",
               p_col_dim: colDim,
-              p_realm_id: company === "all" ? null : company,
+              p_realm_id: realmId,
               p_classifications: SCOPE_CLASSIFICATIONS.income,
             })
             .order("row_key")
@@ -101,14 +112,15 @@ export default async function FinancialsPage({
             .order("classification")
             .order("account_type")
             .range(fromRow, toRow),
-        )
-      : Promise.resolve([]),
-  ])) as [PivotCell[], PivotCell[]];
+        )) as PivotCell[],
+      })),
+    ),
+  ]);
 
   const pivot = buildPivot(cells, rowDim, scope);
   const eliminations =
     scope === "pl"
-      ? buildEliminations(eliminationCells, pivot.netIncome ?? pivot.grand)
+      ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
       : null;
   const showRowTotal = colDim !== "total";
 
@@ -338,7 +350,7 @@ export default async function FinancialsPage({
         Net income on the account view is Income minus Expenses. Click any
         amount to drill into the underlying ledger lines.
         {eliminations
-          ? " Intercompany eliminations back out revenue billed between sister companies (e.g. Superior Marine invoicing as billing agent for Precision Paint), which both companies recognize."
+          ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize: invoices between sister companies, and Marathon revenue booked by a company other than Superior Marine."
           : ""}
       </p>
     </div>

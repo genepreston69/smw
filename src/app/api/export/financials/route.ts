@@ -57,10 +57,18 @@ export async function GET(request: Request) {
   );
   const { company, from, to, rows: rowDim, cols: colDim, scope } = state;
 
-  // Same two slices as the Financials page: the pivot itself plus, under the
-  // Net income scope, revenue by customer for the Intercompany eliminations
-  // section below the Net income line.
-  const [cells, eliminationCells] = (await Promise.all([
+  // Same slices as the Financials page: the pivot itself plus, under the Net
+  // income scope, one revenue-by-customer slice per company in scope for the
+  // Intercompany eliminations section below the Net income line (per company
+  // because the Marathon billing-agent rule depends on which company booked
+  // the revenue).
+  const eliminationRealms =
+    scope === "pl"
+      ? company === "all"
+        ? [...companyByRealm.keys()]
+        : [company]
+      : [];
+  const [cells, eliminationSlices] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
         .rpc("gl_pivot", {
@@ -76,16 +84,19 @@ export async function GET(request: Request) {
         .order("classification")
         .order("account_type")
         .range(fromRow, toRow),
-    ),
-    scope === "pl"
-      ? fetchAllRows((fromRow, toRow) =>
+    ) as Promise<PivotCell[]>,
+    Promise.all(
+      eliminationRealms.map(async (realmId) => ({
+        realmId,
+        companyName: companyByRealm.get(realmId) ?? null,
+        cells: (await fetchAllRows((fromRow, toRow) =>
           supabase
             .rpc("gl_pivot", {
               p_start: `${from}-01`,
               p_end: lastDayOfMonth(to),
               p_row_dim: "customer",
               p_col_dim: colDim,
-              p_realm_id: company === "all" ? null : company,
+              p_realm_id: realmId,
               p_classifications: SCOPE_CLASSIFICATIONS.income,
             })
             .order("row_key")
@@ -93,13 +104,14 @@ export async function GET(request: Request) {
             .order("classification")
             .order("account_type")
             .range(fromRow, toRow),
-        )
-      : Promise.resolve([]),
-  ])) as [PivotCell[], PivotCell[]];
+        )) as PivotCell[],
+      })),
+    ),
+  ]);
   const pivot = buildPivot(cells, rowDim, scope);
   const eliminations =
     scope === "pl"
-      ? buildEliminations(eliminationCells, pivot.netIncome ?? pivot.grand)
+      ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
       : null;
   const showRowTotal = colDim !== "total";
 

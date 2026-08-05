@@ -292,15 +292,34 @@ export function buildPivot(
 }
 
 /* ---------------------------------------------------------------------------
-   Intercompany eliminations. When one sister company bills another —
-   Superior Marine invoicing end customers as billing agent for Precision
-   Paint — the same revenue is recognized on both companies' books, so the
-   consolidated Net income line is overstated. The eliminations section shown
-   below Net income backs out revenue whose customer is a sister company,
-   using the same fuzzy name matching (isEnterpriseName) that buckets
-   Intercompany jobs on the dashboard. Feed it gl_pivot cells sliced with
-   row_dim = 'customer' and classifications = ['Revenue'].
+   Intercompany eliminations. Superior Marine acts as billing agent for its
+   sister companies, so the same revenue is recognized on two companies'
+   books and the consolidated Net income line is overstated. The eliminations
+   section shown below Net income backs out the duplicate side, always
+   keeping the agent's customer-facing invoice:
+
+     1. Revenue whose customer is a sister company (Precision Paint invoicing
+        Superior Marine for work SMW billed on to the end customer), matched
+        with the same fuzzy naming (isEnterpriseName) that buckets
+        Intercompany jobs on the dashboard.
+     2. Revenue under a "Marathon" customer booked by any company other than
+        Superior Marine — SMW is always the billing agent for Marathon
+        invoices, so the operating company's (IRDC's) own booking is the
+        duplicate.
+
+   Feed it one slice per company: gl_pivot cells with row_dim = 'customer',
+   classifications = ['Revenue'], p_realm_id set to that company.
 --------------------------------------------------------------------------- */
+
+const AGENCY_CUSTOMER_PHRASE = "marathon";
+const BILLING_AGENT_PHRASE = "superior marine";
+
+export interface RealmRevenueSlice {
+  realmId: string;
+  companyName: string | null;
+  /** gl_pivot cells: row_dim 'customer', Revenue only, this realm. */
+  cells: PivotCell[];
+}
 
 export interface EliminationLine {
   label: string;
@@ -315,32 +334,50 @@ export interface Eliminations {
 }
 
 export function buildEliminations(
-  customerRevenueCells: PivotCell[],
+  slices: RealmRevenueSlice[],
   netIncome: PivotTotals,
 ): Eliminations | null {
-  const bycol = new Map<string, number>();
-  let total = 0;
-  for (const c of customerRevenueCells) {
-    if (!isEnterpriseName(c.row_key)) continue;
-    const v = -Number(c.amount);
-    bycol.set(c.col_key, (bycol.get(c.col_key) ?? 0) + v);
-    total += v;
-  }
-  if (bycol.size === 0) return null;
-
-  const adjustedBycol = new Map(netIncome.bycol);
-  for (const [k, v] of bycol) {
-    adjustedBycol.set(k, (adjustedBycol.get(k) ?? 0) + v);
-  }
-  return {
-    lines: [
-      {
-        label: "Intercompany revenue (billed between sister companies)",
-        totals: { bycol, total },
-      },
-    ],
-    adjusted: { bycol: adjustedBycol, total: netIncome.total + total },
+  const lines: EliminationLine[] = [];
+  const collect = (
+    label: string,
+    match: (slice: RealmRevenueSlice, customer: string) => boolean,
+  ) => {
+    const bycol = new Map<string, number>();
+    let total = 0;
+    let any = false;
+    for (const s of slices) {
+      for (const c of s.cells) {
+        if (!match(s, c.row_key)) continue;
+        any = true;
+        const v = -Number(c.amount);
+        bycol.set(c.col_key, (bycol.get(c.col_key) ?? 0) + v);
+        total += v;
+      }
+    }
+    if (any) lines.push({ label, totals: { bycol, total } });
   };
+
+  collect(
+    "Intercompany revenue (billed between sister companies)",
+    (_s, customer) => isEnterpriseName(customer),
+  );
+  // Guarded with !isEnterpriseName so a line can never be eliminated twice.
+  collect(
+    "Marathon revenue booked outside Superior Marine (billing agent)",
+    (s, customer) =>
+      !isEnterpriseName(customer) &&
+      customer.toLowerCase().includes(AGENCY_CUSTOMER_PHRASE) &&
+      !(s.companyName ?? "").toLowerCase().includes(BILLING_AGENT_PHRASE),
+  );
+
+  if (lines.length === 0) return null;
+  const bycol = new Map(netIncome.bycol);
+  let total = netIncome.total;
+  for (const l of lines) {
+    for (const [k, v] of l.totals.bycol) bycol.set(k, (bycol.get(k) ?? 0) + v);
+    total += l.totals.total;
+  }
+  return { lines, adjusted: { bycol, total } };
 }
 
 /** Validate raw search params into a FinancialsState (bad values → defaults). */
