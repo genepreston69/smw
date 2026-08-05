@@ -222,13 +222,22 @@ export default async function CapitalizedLaborPage({
         title="Capitalized Labor"
         subtitle="Labor posted by journal entry to non-billable (EQP) or intercompany jobs — payroll allocations that may belong in a capital account rather than job cost. Credits already posted against those labor accounts count as capitalized; the net is what still awaits review. Click a job to see the entries, and see the methodology summary at the bottom of the page."
         action={
-          <a
-            href="/api/export/capitalized-labor"
-            className={buttonCls("secondary")}
-          >
-            <Download size={15} strokeWidth={2} />
-            Download CSV
-          </a>
+          <div className="flex gap-2">
+            <a
+              href="/api/export/capitalized-labor-workbook"
+              className={buttonCls("secondary")}
+            >
+              <Download size={15} strokeWidth={2} />
+              Download Excel
+            </a>
+            <a
+              href="/api/export/capitalized-labor"
+              className={buttonCls("secondary")}
+            >
+              <Download size={15} strokeWidth={2} />
+              Download CSV
+            </a>
+          </div>
         }
       />
 

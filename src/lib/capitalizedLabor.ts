@@ -5,9 +5,10 @@ import { isNonBillableJobName, isTransportationJobName } from "@/lib/jobViews";
    Capitalized-labor candidates. Labor posted by journal entry (payroll
    allocations against labor/payroll/wages accounts) to a job that isn't
    outside-customer work may belong in a capital account rather than job
-   cost. The dashboard (src/app/(app)/capitalized-labor/) and the CSV export
-   (src/app/api/export/capitalized-labor/) must bucket identically, so the
-   rule lives here.
+   cost. The dashboard (src/app/(app)/capitalized-labor/), the CSV export
+   (src/app/api/export/capitalized-labor/), and the Excel export
+   (src/app/api/export/capitalized-labor-workbook/) must bucket identically,
+   so the rule lives here.
 --------------------------------------------------------------------------- */
 
 export type CapLaborBucket = "nonbillable" | "intercompany";
