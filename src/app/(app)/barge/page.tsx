@@ -5,7 +5,12 @@ import { moneyWhole, shortDate } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
 import { DeleteRowButton } from "@/components/DeleteRowButton";
 import { BargeProgramPlanner } from "@/components/barge/BargeProgramPlanner";
-import { createBargeQuote, deleteBargeConfig, deleteBargeQuote } from "./actions";
+import {
+  createBargeQuote,
+  createBargeQuoteFromSavedConfig,
+  deleteBargeConfig,
+  deleteBargeQuote,
+} from "./actions";
 import {
   Card,
   CardTitle,
@@ -84,7 +89,7 @@ export default async function BargeProgramPage() {
                 New quote
                 <ChevronDown size={14} strokeWidth={2} />
               </summary>
-              <div className="absolute right-0 z-20 mt-2 w-80 rounded-xl border border-line bg-white p-2 shadow-lg">
+              <div className="absolute right-0 z-20 mt-2 max-h-[70vh] w-80 overflow-y-auto rounded-xl border border-line bg-white p-2 shadow-lg">
                 {BARGE_TEMPLATES.map((t) => (
                   <form key={t.key} action={createBargeQuote}>
                     <input type="hidden" name="template" value={t.key} />
@@ -101,6 +106,33 @@ export default async function BargeProgramPage() {
                     </button>
                   </form>
                 ))}
+                {configs.length > 0 && (
+                  <div className="mt-1 border-t border-line pt-1">
+                    <p className="px-3 py-1.5 text-[0.68rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
+                      From saved configuration
+                    </p>
+                    {configs.map((c) => (
+                      <form key={c.id} action={createBargeQuoteFromSavedConfig}>
+                        <input type="hidden" name="config_id" value={c.id} />
+                        <button
+                          type="submit"
+                          className="w-full rounded-lg px-3 py-2 text-left transition-colors hover:bg-surface"
+                        >
+                          <span className="block text-sm font-medium text-ink-900">
+                            {c.name}
+                          </span>
+                          <span className="mt-0.5 block text-xs tabular-nums text-ink-600">
+                            {Number(c.length_ft)}&prime; × {Number(c.beam_ft)}
+                            &prime; × {Number(c.depth_ft)}&prime; ·{" "}
+                            {c.spud_wells} wells · $
+                            {Number(c.steel_per_lb).toFixed(2)}/lb ·{" "}
+                            {Number(c.hours_per_ton)} hrs/ton
+                          </span>
+                        </button>
+                      </form>
+                    ))}
+                  </div>
+                )}
               </div>
             </details>
           </div>
@@ -195,13 +227,17 @@ export default async function BargeProgramPage() {
 
       <div className="grid gap-6 lg:grid-cols-2">
         <Card pad={false} clip={false}>
-          <div className="px-6 pt-6">
+          <div className="flex items-start justify-between px-6 pt-6">
             <CardTitle>Saved configurations</CardTitle>
+            <Link href="/barge/rough" className={buttonCls("secondary", "sm")}>
+              <Plus size={13} strokeWidth={2} />
+              New configuration
+            </Link>
           </div>
           {configs.length === 0 ? (
             <p className="px-6 pb-6 text-sm text-ink-600">
-              Dimension &amp; rate sets saved from the rough quote builder land
-              here for reuse.
+              Dimension &amp; rate sets saved from the configuration builder
+              land here, and appear as choices under &ldquo;New quote&rdquo;.
             </p>
           ) : (
             <Table

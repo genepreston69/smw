@@ -67,6 +67,32 @@ export type BargeConfigValues = Omit<
   "id" | "created_by" | "created_at" | "updated_at" | "notes"
 >;
 
+/** Normalize a barge_configs row (numerics arrive as strings) to plain values. */
+export function configToValues(c: BargeConfig): BargeConfigValues {
+  return {
+    name: c.name,
+    length_ft: Number(c.length_ft),
+    beam_ft: Number(c.beam_ft),
+    depth_ft: Number(c.depth_ft),
+    spud_wells: Number(c.spud_wells),
+    deck_plate_in: Number(c.deck_plate_in),
+    side_plate_in: Number(c.side_plate_in),
+    bhd_plate_in: Number(c.bhd_plate_in),
+    long_bhd_spacing_ft: Number(c.long_bhd_spacing_ft),
+    wt_bhd_spacing_ft: Number(c.wt_bhd_spacing_ft),
+    plate_allowance_pct: Number(c.plate_allowance_pct),
+    framing_pct: Number(c.framing_pct),
+    yield_pct: Number(c.yield_pct),
+    steel_per_lb: Number(c.steel_per_lb),
+    hours_per_ton: Number(c.hours_per_ton),
+    labor_rate: Number(c.labor_rate),
+    blast_per_sqft: Number(c.blast_per_sqft),
+    spud_well_cost: Number(c.spud_well_cost),
+    fittings_per_sqft: Number(c.fittings_per_sqft),
+    target_pct: Number(c.target_pct),
+  };
+}
+
 export interface BargeQuote {
   id: string;
   config_id: string | null;
