@@ -499,6 +499,117 @@ export function buildEliminations(
   return { lines, adjusted: { bycol, total } };
 }
 
+/* ---------------------------------------------------------------------------
+   Category-grouped income statement for /financials/statement. Groups
+   account-level gl_pivot cells (Revenue + Expense classifications) by the
+   admin-assigned Category on gl_accounts (edited on the Chart of Accounts
+   page), one expandable group per category. Everything is plain JSON —
+   records, not Maps — because the built statement crosses the server →
+   client boundary into the collapsible table component.
+--------------------------------------------------------------------------- */
+
+export const UNCATEGORIZED = "Uncategorized";
+
+export interface StatementTotals {
+  cells: Record<string, number>;
+  total: number;
+}
+
+export interface StatementLine extends StatementTotals {
+  /** Account full name (gl_pivot account row key). */
+  key: string;
+}
+
+export interface StatementGroup extends StatementTotals {
+  /** Category label; UNCATEGORIZED for accounts with none assigned. */
+  label: string;
+  rows: StatementLine[];
+}
+
+export interface StatementSection extends StatementTotals {
+  label: string;
+  groups: StatementGroup[];
+}
+
+export interface CategoryStatement {
+  colKeys: string[];
+  income: StatementSection;
+  expenses: StatementSection;
+  /** income.total - expenses.total, per column and overall. */
+  netIncome: StatementTotals;
+}
+
+export function buildCategoryStatement(
+  cells: PivotCell[],
+  categoryByAccount: ReadonlyMap<string, string>,
+): CategoryStatement {
+  const colKeys = [...new Set(cells.map((c) => c.col_key))].sort();
+
+  // classification → category → account → line
+  const byClass = new Map<string, Map<string, Map<string, StatementLine>>>([
+    ["Revenue", new Map()],
+    ["Expense", new Map()],
+  ]);
+  for (const c of cells) {
+    const groups = byClass.get(c.classification ?? "");
+    if (!groups) continue;
+    const category = categoryByAccount.get(c.row_key) ?? UNCATEGORIZED;
+    let group = groups.get(category);
+    if (!group) {
+      group = new Map();
+      groups.set(category, group);
+    }
+    let line = group.get(c.row_key);
+    if (!line) {
+      line = { key: c.row_key, cells: {}, total: 0 };
+      group.set(c.row_key, line);
+    }
+    const v = Number(c.amount);
+    line.cells[c.col_key] = (line.cells[c.col_key] ?? 0) + v;
+    line.total += v;
+  }
+
+  const sum = (parts: StatementTotals[]): StatementTotals => {
+    const out: StatementTotals = { cells: {}, total: 0 };
+    for (const p of parts) {
+      for (const [k, v] of Object.entries(p.cells))
+        out.cells[k] = (out.cells[k] ?? 0) + v;
+      out.total += p.total;
+    }
+    return out;
+  };
+
+  const section = (classification: string, label: string): StatementSection => {
+    const groups = [...byClass.get(classification)!.entries()]
+      .sort(([a], [b]) => {
+        // Alphabetical, Uncategorized always last.
+        if (a === UNCATEGORIZED) return 1;
+        if (b === UNCATEGORIZED) return -1;
+        return a.localeCompare(b);
+      })
+      .map(([category, lines]): StatementGroup => {
+        const rows = [...lines.values()].sort((a, b) =>
+          a.key.localeCompare(b.key),
+        );
+        return { label: category, rows, ...sum(rows) };
+      });
+    return { label, groups, ...sum(groups) };
+  };
+
+  const income = section("Revenue", "Income");
+  const expenses = section("Expense", "Expenses");
+  const netIncome: StatementTotals = {
+    cells: Object.fromEntries(
+      colKeys.map((k) => [
+        k,
+        (income.cells[k] ?? 0) - (expenses.cells[k] ?? 0),
+      ]),
+    ),
+    total: income.total - expenses.total,
+  };
+  return { colKeys, income, expenses, netIncome };
+}
+
 /** Validate raw search params into a FinancialsState (bad values → defaults). */
 export function resolveFinancialsState(
   sp: {
