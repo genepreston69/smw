@@ -1,10 +1,18 @@
 import Link from "next/link";
-import { ArrowDown, ArrowUp, ArrowUpDown, Download, Wrench } from "lucide-react";
+import {
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Download,
+  SearchX,
+  Wrench,
+} from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { classifyJobView, type JobView } from "@/lib/jobViews";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import { JobRows, type JobRowData } from "./JobRows";
+import { JobsFilters } from "./JobsFilters";
 
 interface JobRow {
   id: string;
@@ -56,9 +64,23 @@ const PERIODS: { key: Period; label: string }[] = [
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; sort?: string; period?: string }>;
+  searchParams: Promise<{
+    tab?: string;
+    sort?: string;
+    period?: string;
+    q?: string;
+    company?: string;
+  }>;
 }) {
-  const { tab, sort, period: periodParam } = await searchParams;
+  const {
+    tab,
+    sort,
+    period: periodParam,
+    q: qParam,
+    company: companyParam,
+  } = await searchParams;
+  const q = (qParam ?? "").trim();
+  const companyFilter = companyParam ?? "";
   const period: Period =
     periodParam === "ytd" || periodParam === "mtd" ? periodParam : "all";
   const activeTab =
@@ -76,6 +98,8 @@ export default async function JobsPage({
     tab?: string;
     sort?: string | null;
     period?: Period;
+    q?: string | null;
+    company?: string | null;
   }) => {
     const params = new URLSearchParams();
     const t = opts && "tab" in opts ? opts.tab : activeTab;
@@ -84,8 +108,12 @@ export default async function JobsPage({
     if (s && SORT_PATTERN.test(s)) params.set("sort", s);
     const p = opts && "period" in opts ? opts.period : period;
     if (p && p !== "all") params.set("period", p);
-    const q = params.toString();
-    return q ? `/jobs?${q}` : "/jobs";
+    const search = opts && "q" in opts ? opts.q : q;
+    if (search) params.set("q", search);
+    const c = opts && "company" in opts ? opts.company : companyFilter;
+    if (c) params.set("company", c);
+    const qs = params.toString();
+    return qs ? `/jobs?${qs}` : "/jobs";
   };
 
   const { supabase, profile } = await requireUser();
@@ -126,6 +154,9 @@ export default async function JobsPage({
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
   );
   const showCompany = companyByRealm.size > 1;
+  const companies = [...companyByRealm.entries()]
+    .map(([realmId, name]) => ({ realmId, name: name ?? realmId }))
+    .sort((a, b) => a.name.localeCompare(b.name));
   // Period sums are null when a job has no activity in the period, so the
   // row shows "—" (and sorts last) just like a job with no rows at all.
   const costByJob = new Map(
@@ -160,6 +191,25 @@ export default async function JobsPage({
     return cost !== 0 || invoiced !== 0;
   });
 
+  // Search + company filter apply before grouping so the tab counts reflect
+  // what's shown. An unknown realm in the URL is ignored rather than
+  // filtering everything out.
+  const companyRealm = companyByRealm.has(companyFilter) ? companyFilter : "";
+  const search = q.toLowerCase();
+  const hasFilters = Boolean(search || companyRealm);
+  const visibleJobs = !hasFilters
+    ? allJobs
+    : allJobs.filter((j) => {
+        if (companyRealm && j.realm_id !== companyRealm) return false;
+        if (!search) return true;
+        return [
+          j.name,
+          j.fully_qualified_name,
+          j.customer?.display_name,
+          j.customer?.company_name,
+        ].some((s) => s?.toLowerCase().includes(search));
+      });
+
   // Latest activity across costs and invoices. Dates are YYYY-MM-DD strings,
   // so string compare works.
   const latestTxnDate = (jobId: string): string | null => {
@@ -176,7 +226,7 @@ export default async function JobsPage({
     nonbillable: [],
     notransactions: [],
   };
-  for (const j of allJobs) {
+  for (const j of visibleJobs) {
     grouped[
       classifyJobView({
         name: j.name,
@@ -334,42 +384,59 @@ export default async function JobsPage({
         }
       />
 
-      <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
-        <Link
-          href={jobsHref({ tab: "customer" })}
-          className={tabCls(activeTab === "customer")}
-        >
-          Customer jobs ({customerJobs.length})
-        </Link>
-        <Link
-          href={jobsHref({ tab: "transportation" })}
-          className={tabCls(activeTab === "transportation")}
-        >
-          Transportation ({transportationJobs.length})
-        </Link>
-        <Link
-          href={jobsHref({ tab: "intercompany" })}
-          className={tabCls(activeTab === "intercompany")}
-        >
-          Intercompany ({intercompanyJobs.length})
-        </Link>
-        <Link
-          href={jobsHref({ tab: "nonbillable" })}
-          className={tabCls(activeTab === "nonbillable")}
-        >
-          Non-Billable ({nonBillableJobs.length})
-        </Link>
-        <Link
-          href={jobsHref({ tab: "notransactions" })}
-          className={tabCls(activeTab === "notransactions")}
-        >
-          No transactions ({noTxnJobs.length})
-        </Link>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <div className="flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
+          <Link
+            href={jobsHref({ tab: "customer" })}
+            className={tabCls(activeTab === "customer")}
+          >
+            Customer jobs ({customerJobs.length})
+          </Link>
+          <Link
+            href={jobsHref({ tab: "transportation" })}
+            className={tabCls(activeTab === "transportation")}
+          >
+            Transportation ({transportationJobs.length})
+          </Link>
+          <Link
+            href={jobsHref({ tab: "intercompany" })}
+            className={tabCls(activeTab === "intercompany")}
+          >
+            Intercompany ({intercompanyJobs.length})
+          </Link>
+          <Link
+            href={jobsHref({ tab: "nonbillable" })}
+            className={tabCls(activeTab === "nonbillable")}
+          >
+            Non-Billable ({nonBillableJobs.length})
+          </Link>
+          <Link
+            href={jobsHref({ tab: "notransactions" })}
+            className={tabCls(activeTab === "notransactions")}
+          >
+            No transactions ({noTxnJobs.length})
+          </Link>
+        </div>
+        <JobsFilters q={q} company={companyRealm} companies={companies} />
       </div>
 
       {/* clip off so the sticky header can escape the card while scrolling */}
       <Card pad={false} clip={false}>
-        {rows.length === 0 ? (
+        {rows.length === 0 && hasFilters ? (
+          <EmptyState icon={SearchX} title="No matching jobs">
+            No jobs in this tab match{q ? ` “${q}”` : ""}
+            {companyRealm
+              ? `${q ? " in" : ""} ${companyByRealm.get(companyRealm) ?? "the selected company"}`
+              : ""}
+            .{" "}
+            <Link
+              href={jobsHref({ q: null, company: null })}
+              className="font-medium text-brand-700 hover:underline"
+            >
+              Clear filters
+            </Link>
+          </EmptyState>
+        ) : rows.length === 0 ? (
           <EmptyState
             icon={Wrench}
             title={
