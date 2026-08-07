@@ -1,3 +1,4 @@
+import { Fragment } from "react";
 import Link from "next/link";
 import { Landmark, Table2 } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
@@ -8,6 +9,7 @@ import {
   COL_DIMS,
   MONTH_PARAM,
   SCOPE_CLASSIFICATIONS,
+  buildEliminations,
   buildIncomeStatement,
   currentMonth,
   defaultFrom,
@@ -85,22 +87,53 @@ export default async function IncomeRatiosPage({
     return q ? `/financials/ratios?${q}` : "/financials/ratios";
   };
 
-  const cells = (await fetchAllRows((fromRow, toRow) =>
-    supabase
-      .rpc("gl_pivot", {
-        p_start: `${from}-01`,
-        p_end: lastDayOfMonth(to),
-        p_row_dim: "account",
-        p_col_dim: colDim,
-        p_realm_id: company === "all" ? null : company,
-        p_classifications: SCOPE_CLASSIFICATIONS.pl,
-      })
-      .order("row_key")
-      .order("col_key")
-      .order("classification")
-      .order("account_type")
-      .range(fromRow, toRow),
-  )) as PivotCell[];
+  // Same slices as the Financials page under the Net income scope: the
+  // statement itself plus one revenue-by-customer slice per company in scope
+  // for the Intercompany eliminations below the Net income line (per company
+  // because the Marathon billing-agent rule depends on which company booked
+  // the revenue).
+  const eliminationRealms =
+    company === "all" ? companies.map((c) => c.realm_id) : [company];
+  const [cells, eliminationSlices] = await Promise.all([
+    fetchAllRows((fromRow, toRow) =>
+      supabase
+        .rpc("gl_pivot", {
+          p_start: `${from}-01`,
+          p_end: lastDayOfMonth(to),
+          p_row_dim: "account",
+          p_col_dim: colDim,
+          p_realm_id: company === "all" ? null : company,
+          p_classifications: SCOPE_CLASSIFICATIONS.pl,
+        })
+        .order("row_key")
+        .order("col_key")
+        .order("classification")
+        .order("account_type")
+        .range(fromRow, toRow),
+    ) as Promise<PivotCell[]>,
+    Promise.all(
+      eliminationRealms.map(async (realmId) => ({
+        realmId,
+        companyName: companyByRealm.get(realmId) ?? null,
+        cells: (await fetchAllRows((fromRow, toRow) =>
+          supabase
+            .rpc("gl_pivot", {
+              p_start: `${from}-01`,
+              p_end: lastDayOfMonth(to),
+              p_row_dim: "customer",
+              p_col_dim: colDim,
+              p_realm_id: realmId,
+              p_classifications: SCOPE_CLASSIFICATIONS.income,
+            })
+            .order("row_key")
+            .order("col_key")
+            .order("classification")
+            .order("account_type")
+            .range(fromRow, toRow),
+        )) as PivotCell[],
+      })),
+    ),
+  ]);
 
   const stmt = buildIncomeStatement(cells);
   const denom = stmt.totalRevenue;
@@ -108,10 +141,29 @@ export default async function IncomeRatiosPage({
   const hasActivity = (t: PivotTotals) =>
     t.total !== 0 || [...t.bycol.values()].some((v) => v !== 0);
 
-  const ratioOf = (v: number | undefined, colKey: string | null): number | null => {
-    const d = colKey === null ? denom.total : (denom.bycol.get(colKey) ?? 0);
-    if (v === undefined || d === 0) return null;
-    return v / d;
+  // Eliminations are pure revenue removals (costs are untouched), so they
+  // reduce net income and the ratio denominator by the same amounts: the
+  // after-eliminations margin is (NI + elim) ÷ (revenue + elim).
+  const eliminations = buildEliminations(eliminationSlices, stmt.netIncome);
+  let revenueAfterElim = denom;
+  if (eliminations) {
+    const bycol = new Map(denom.bycol);
+    let total = denom.total;
+    for (const l of eliminations.lines) {
+      for (const [k, v] of l.totals.bycol) bycol.set(k, (bycol.get(k) ?? 0) + v);
+      total += l.totals.total;
+    }
+    revenueAfterElim = { bycol, total };
+  }
+
+  const ratioOf = (
+    v: number | undefined,
+    colKey: string | null,
+    d: PivotTotals = denom,
+  ): number | null => {
+    const dv = colKey === null ? d.total : (d.bycol.get(colKey) ?? 0);
+    if (v === undefined || dv === 0) return null;
+    return v / dv;
   };
 
   const moneyCell = (v: number | undefined, bold = false) => (
@@ -128,8 +180,12 @@ export default async function IncomeRatiosPage({
     </td>
   );
 
-  const ratioCell = (v: number | undefined, colKey: string | null) => {
-    const r = ratioOf(v, colKey);
+  const ratioCell = (
+    v: number | undefined,
+    colKey: string | null,
+    d: PivotTotals = denom,
+  ) => {
+    const r = ratioOf(v, colKey, d);
     return (
       <td
         className={`whitespace-nowrap px-4 py-1.5 text-right text-[0.8rem] tabular-nums ${
@@ -157,13 +213,17 @@ export default async function IncomeRatiosPage({
     </tr>
   );
 
-  const ratioRow = (label: string, totals: PivotTotals) => (
+  const ratioRow = (
+    label: string,
+    totals: PivotTotals,
+    d: PivotTotals = denom,
+  ) => (
     <tr className="bg-brand-50/40">
       <td className="px-4 py-1.5 pl-8 text-[0.8rem] font-medium text-ink-600">
         {label}
       </td>
-      {stmt.colKeys.map((k) => ratioCell(totals.bycol.get(k), k))}
-      {showRowTotal && ratioCell(totals.total, null)}
+      {stmt.colKeys.map((k) => ratioCell(totals.bycol.get(k), k, d))}
+      {showRowTotal && ratioCell(totals.total, null, d)}
     </tr>
   );
 
@@ -281,8 +341,18 @@ export default async function IncomeRatiosPage({
           />
           <StatTile
             label="Net margin"
-            value={periodMargin(stmt.netIncome)}
-            hint="Net income ÷ revenue"
+            value={
+              eliminations
+                ? revenueAfterElim.total !== 0
+                  ? pct(eliminations.adjusted.total / revenueAfterElim.total)
+                  : "—"
+                : periodMargin(stmt.netIncome)
+            }
+            hint={
+              eliminations
+                ? "After intercompany eliminations"
+                : "Net income ÷ revenue"
+            }
           />
         </div>
       )}
@@ -321,6 +391,31 @@ export default async function IncomeRatiosPage({
               dollarRow("Other expense", stmt.otherExpense)}
             {dollarRow("Net income", stmt.netIncome, { bold: true })}
             {ratioRow("Net margin", stmt.netIncome)}
+            {eliminations && (
+              <>
+                <tr className="bg-surface/50">
+                  <td
+                    colSpan={stmt.colKeys.length + 1 + (showRowTotal ? 1 : 0)}
+                    className="px-4 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
+                  >
+                    Intercompany eliminations
+                  </td>
+                </tr>
+                {eliminations.lines.map((line) => (
+                  <Fragment key={line.label}>
+                    {dollarRow(line.label, line.totals)}
+                  </Fragment>
+                ))}
+                {dollarRow("Net income after eliminations", eliminations.adjusted, {
+                  bold: true,
+                })}
+                {ratioRow(
+                  "Net margin after eliminations",
+                  eliminations.adjusted,
+                  revenueAfterElim,
+                )}
+              </>
+            )}
           </Table>
         )}
       </Card>
@@ -332,6 +427,9 @@ export default async function IncomeRatiosPage({
         Net margin here matches Net income as a percent of revenue on the
         Financials page. Columns with no revenue show a dash. Drill into
         individual accounts on the Financials page.
+        {eliminations
+          ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize (the same adjustment shown on the Financials page); because eliminations remove revenue only, Net margin after eliminations divides adjusted net income by adjusted revenue."
+          : ""}
       </p>
     </div>
   );
