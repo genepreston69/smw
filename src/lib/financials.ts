@@ -15,6 +15,7 @@ export type RowDim =
   | "month";
 export type ColDim = "month" | "quarter" | "year" | "class" | "company" | "total";
 export type Scope = "pl" | "income" | "expense" | "all";
+export type DisplayMode = "amount" | "pct";
 
 export const ROW_DIMS: { key: RowDim; label: string }[] = [
   { key: "account", label: "Account" },
@@ -39,6 +40,13 @@ export const SCOPES: { key: Scope; label: string }[] = [
   { key: "income", label: "Income only" },
   { key: "expense", label: "Expenses only" },
   { key: "all", label: "All accounts" },
+];
+
+// Common-size display: every cell as a percent of the same column's total
+// revenue (classification = Revenue) instead of dollars.
+export const DISPLAY_MODES: { key: DisplayMode; label: string }[] = [
+  { key: "amount", label: "Amounts" },
+  { key: "pct", label: "% of revenue" },
 ];
 
 // Which account classifications each scope pulls from the ledger.
@@ -77,6 +85,7 @@ export interface FinancialsState {
   rows: RowDim;
   cols: ColDim;
   scope: Scope;
+  display: DisplayMode;
 }
 
 /** Pivot-page URL for a filter state; defaults are omitted to keep URLs clean. */
@@ -88,6 +97,7 @@ export function financialsHref(s: FinancialsState): string {
   if (s.rows !== "account") params.set("rows", s.rows);
   if (s.cols !== "month") params.set("cols", s.cols);
   if (s.scope !== "pl") params.set("scope", s.scope);
+  if (s.display !== "amount") params.set("display", s.display);
   const q = params.toString();
   return q ? `/financials?${q}` : "/financials";
 }
@@ -101,6 +111,7 @@ export function financialsExportHref(s: FinancialsState): string {
     rows: s.rows,
     cols: s.cols,
     scope: s.scope,
+    display: s.display,
   });
   return `/api/export/financials?${params}`;
 }
@@ -119,6 +130,7 @@ export function linesHref(
     rows: s.rows,
     cols: s.cols,
     scope: s.scope,
+    display: s.display,
   });
   if (rowKey !== null) params.set("rowkey", rowKey);
   if (colKey !== null) params.set("colkey", colKey);
@@ -291,6 +303,113 @@ export function buildPivot(
   };
 }
 
+/** Total revenue per column from a pivot slice — the % of revenue denominators. */
+export function revenueByCol(cells: PivotCell[]): PivotTotals {
+  const bycol = new Map<string, number>();
+  let total = 0;
+  for (const c of cells) {
+    if (c.classification !== "Revenue") continue;
+    const v = Number(c.amount);
+    bycol.set(c.col_key, (bycol.get(c.col_key) ?? 0) + v);
+    total += v;
+  }
+  return { bycol, total };
+}
+
+/* ---------------------------------------------------------------------------
+   Income statement assembly for /financials/ratios. Buckets gl_pivot account
+   cells (Revenue + Expense classifications) into statement lines by QuickBooks
+   account type — Other Income / Cost of Goods Sold / Other Expense split out,
+   everything else is operating revenue or operating expense — and derives the
+   subtotals. Ratios divide by totalRevenue (all Revenue activity, other
+   income included) so the net margin here always matches Net income ÷ revenue
+   on the common-size Financials view.
+--------------------------------------------------------------------------- */
+
+export interface IncomeStatement {
+  colKeys: string[];
+  revenue: PivotTotals; // operating revenue (Revenue minus Other Income types)
+  otherIncome: PivotTotals;
+  totalRevenue: PivotTotals; // revenue + otherIncome; the ratio denominator
+  cogs: PivotTotals;
+  grossProfit: PivotTotals; // revenue - cogs
+  opex: PivotTotals; // Expense classification, plain Expense account type
+  operatingIncome: PivotTotals; // grossProfit - opex
+  otherExpense: PivotTotals;
+  netIncome: PivotTotals; // operatingIncome + otherIncome - otherExpense
+}
+
+export function buildIncomeStatement(cells: PivotCell[]): IncomeStatement {
+  const colKeys = [...new Set(cells.map((c) => c.col_key))].sort();
+  const make = (): PivotTotals => ({ bycol: new Map(), total: 0 });
+  const revenue = make();
+  const otherIncome = make();
+  const cogs = make();
+  const opex = make();
+  const otherExpense = make();
+
+  for (const c of cells) {
+    let bucket: PivotTotals;
+    const type = c.account_type ?? "";
+    if (c.classification === "Revenue") {
+      bucket = type === "Other Income" ? otherIncome : revenue;
+    } else if (c.classification === "Expense") {
+      bucket =
+        type === "Cost of Goods Sold"
+          ? cogs
+          : type === "Other Expense"
+            ? otherExpense
+            : opex;
+    } else {
+      continue;
+    }
+    const v = Number(c.amount);
+    bucket.bycol.set(c.col_key, (bucket.bycol.get(c.col_key) ?? 0) + v);
+    bucket.total += v;
+  }
+
+  const merge = (parts: [PivotTotals, 1 | -1][]): PivotTotals => {
+    const out = make();
+    for (const [t, sign] of parts) {
+      for (const [k, v] of t.bycol)
+        out.bycol.set(k, (out.bycol.get(k) ?? 0) + sign * v);
+      out.total += sign * t.total;
+    }
+    return out;
+  };
+
+  const grossProfit = merge([
+    [revenue, 1],
+    [cogs, -1],
+  ]);
+  const operatingIncome = merge([
+    [grossProfit, 1],
+    [opex, -1],
+  ]);
+  const netIncome = merge([
+    [operatingIncome, 1],
+    [otherIncome, 1],
+    [otherExpense, -1],
+  ]);
+  const totalRevenue = merge([
+    [revenue, 1],
+    [otherIncome, 1],
+  ]);
+
+  return {
+    colKeys,
+    revenue,
+    otherIncome,
+    totalRevenue,
+    cogs,
+    grossProfit,
+    opex,
+    operatingIncome,
+    otherExpense,
+    netIncome,
+  };
+}
+
 /* ---------------------------------------------------------------------------
    Intercompany eliminations. Superior Marine acts as billing agent for its
    sister companies, so the same revenue is recognized on two companies'
@@ -389,6 +508,7 @@ export function resolveFinancialsState(
     rows?: string;
     cols?: string;
     scope?: string;
+    display?: string;
   },
   validRealms: ReadonlySet<string>,
 ): FinancialsState {
@@ -403,5 +523,8 @@ export function resolveFinancialsState(
       ? (sp.cols as ColDim)
       : "month",
     scope: SCOPES.some((s) => s.key === sp.scope) ? (sp.scope as Scope) : "pl",
+    display: DISPLAY_MODES.some((d) => d.key === sp.display)
+      ? (sp.display as DisplayMode)
+      : "amount",
   };
 }

@@ -11,6 +11,7 @@ import {
   Wrench,
   HardHat,
   Landmark,
+  Percent,
   Settings,
   Ship,
   type LucideIcon,
@@ -31,6 +32,12 @@ const ALL_NAV: {
   { href: "/jobs", label: "Jobs", icon: Wrench },
   { href: "/capitalized-labor", label: "Capitalized Labor", icon: HardHat },
   { href: "/financials", label: "Financials", icon: Landmark, adminOnly: true },
+  {
+    href: "/financials/ratios",
+    label: "Income Ratios",
+    icon: Percent,
+    adminOnly: true,
+  },
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 

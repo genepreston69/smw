@@ -3,9 +3,10 @@ import { Download, Landmark } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
-import { moneyWhole } from "@/lib/format";
+import { moneyWhole, pct } from "@/lib/format";
 import {
   COL_DIMS,
+  DISPLAY_MODES,
   ROW_DIMS,
   SCOPES,
   SCOPE_CLASSIFICATIONS,
@@ -18,6 +19,7 @@ import {
   linesHref,
   pivotColLabel,
   resolveFinancialsState,
+  revenueByCol,
   type FinancialsState,
   type PivotCell,
 } from "@/lib/financials";
@@ -40,6 +42,7 @@ export default async function FinancialsPage({
     rows?: string;
     cols?: string;
     scope?: string;
+    display?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -62,7 +65,7 @@ export default async function FinancialsPage({
   );
 
   const state = resolveFinancialsState(sp, new Set(companyByRealm.keys()));
-  const { company, from, to, rows: rowDim, cols: colDim, scope } = state;
+  const { company, from, to, rows: rowDim, cols: colDim, scope, display } = state;
   const thisMonth = currentMonth();
   const href = (overrides: Partial<FinancialsState>) =>
     financialsHref({ ...state, ...overrides });
@@ -80,7 +83,11 @@ export default async function FinancialsPage({
         ? companies.map((c) => c.realm_id)
         : [company]
       : [];
-  const [cells, eliminationSlices] = await Promise.all([
+  // The % of revenue display divides by each column's total revenue. Every
+  // scope except expense-only already carries the Revenue cells; expense-only
+  // needs one extra revenue slice for the denominators.
+  const needsRevenueSlice = display === "pct" && scope === "expense";
+  const [cells, eliminationSlices, revenueCells] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
         .rpc("gl_pivot", {
@@ -119,36 +126,78 @@ export default async function FinancialsPage({
         )) as PivotCell[],
       })),
     ),
+    needsRevenueSlice
+      ? (fetchAllRows((fromRow, toRow) =>
+          supabase
+            .rpc("gl_pivot", {
+              p_start: `${from}-01`,
+              p_end: lastDayOfMonth(to),
+              p_row_dim: "account",
+              p_col_dim: colDim,
+              p_realm_id: company === "all" ? null : company,
+              p_classifications: SCOPE_CLASSIFICATIONS.income,
+            })
+            .order("row_key")
+            .order("col_key")
+            .order("classification")
+            .order("account_type")
+            .range(fromRow, toRow),
+        ) as Promise<PivotCell[]>)
+      : Promise.resolve([] as PivotCell[]),
   ]);
 
   const pivot = buildPivot(cells, rowDim, scope);
+  const revenueTotals =
+    display === "pct"
+      ? revenueByCol(needsRevenueSlice ? revenueCells : cells)
+      : null;
   const eliminations =
     scope === "pl"
       ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
       : null;
   const showRowTotal = colDim !== "total";
 
-  const amountCell = (v: number | undefined, bold = false, drill?: string) => (
-    <td
-      className={`whitespace-nowrap px-4 py-2 text-right tabular-nums ${
-        bold ? "font-semibold text-ink-900" : "text-ink-900"
-      } ${v !== undefined && v < 0 ? "text-bad-600" : ""}`}
-    >
-      {v === undefined || v === 0 ? (
-        <span className="text-ink-400">—</span>
-      ) : drill ? (
-        <Link
-          href={drill}
-          className="rounded-sm underline-offset-2 hover:bg-brand-50 hover:underline"
-          title="View ledger lines"
-        >
-          {moneyWhole(v)}
-        </Link>
-      ) : (
-        moneyWhole(v)
-      )}
-    </td>
-  );
+  // colKey null = the row-total column, whose % denominator is total revenue.
+  const amountCell = (
+    v: number | undefined,
+    colKey: string | null,
+    bold = false,
+    drill?: string,
+  ) => {
+    let text: string | null = null;
+    if (v !== undefined && v !== 0) {
+      if (revenueTotals) {
+        const denom =
+          colKey === null
+            ? revenueTotals.total
+            : (revenueTotals.bycol.get(colKey) ?? 0);
+        if (denom !== 0) text = pct(v / denom);
+      } else {
+        text = moneyWhole(v);
+      }
+    }
+    return (
+      <td
+        className={`whitespace-nowrap px-4 py-2 text-right tabular-nums ${
+          bold ? "font-semibold text-ink-900" : "text-ink-900"
+        } ${text !== null && v !== undefined && v < 0 ? "text-bad-600" : ""}`}
+      >
+        {text === null ? (
+          <span className="text-ink-400">—</span>
+        ) : drill ? (
+          <Link
+            href={drill}
+            className="rounded-sm underline-offset-2 hover:bg-brand-50 hover:underline"
+            title="View ledger lines"
+          >
+            {text}
+          </Link>
+        ) : (
+          text
+        )}
+      </td>
+    );
+  };
 
   const pill = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -234,12 +283,27 @@ export default async function FinancialsPage({
             </Link>
           )),
         )}
+        {pillGroup(
+          "Display",
+          DISPLAY_MODES.map((d) => (
+            <Link
+              key={d.key}
+              href={href({ display: d.key })}
+              className={pill(display === d.key)}
+            >
+              {d.label}
+            </Link>
+          )),
+        )}
         <form method="get" action="/financials" className={filterRowCls}>
           {filterLabel("Period")}
           {company !== "all" && <input type="hidden" name="company" value={company} />}
           {rowDim !== "account" && <input type="hidden" name="rows" value={rowDim} />}
           {colDim !== "month" && <input type="hidden" name="cols" value={colDim} />}
           {scope !== "pl" && <input type="hidden" name="scope" value={scope} />}
+          {display !== "amount" && (
+            <input type="hidden" name="display" value={display} />
+          )}
           <div className="flex flex-wrap items-center gap-2 py-0.5">
             <input
               type="month"
@@ -302,8 +366,10 @@ export default async function FinancialsPage({
             {pivot.netIncome ? (
               <tr className="bg-surface">
                 <td className="px-4 py-2 font-semibold text-ink-900">Net income</td>
-                {pivot.colKeys.map((k) => amountCell(pivot.netIncome!.bycol.get(k), true))}
-                {showRowTotal && amountCell(pivot.netIncome.total, true)}
+                {pivot.colKeys.map((k) =>
+                  amountCell(pivot.netIncome!.bycol.get(k), k, true),
+                )}
+                {showRowTotal && amountCell(pivot.netIncome.total, null, true)}
               </tr>
             ) : (
               <tr className="bg-surface/70">
@@ -311,10 +377,10 @@ export default async function FinancialsPage({
                   {pivot.totalLabel}
                 </td>
                 {pivot.colKeys.map((k) =>
-                  amountCell(pivot.grand.bycol.get(k), true, linesHref(state, null, k)),
+                  amountCell(pivot.grand.bycol.get(k), k, true, linesHref(state, null, k)),
                 )}
                 {showRowTotal &&
-                  amountCell(pivot.grand.total, true, linesHref(state, null, null))}
+                  amountCell(pivot.grand.total, null, true, linesHref(state, null, null))}
               </tr>
             )}
             {eliminations && (
@@ -332,8 +398,8 @@ export default async function FinancialsPage({
                     <td className="max-w-[26rem] truncate px-4 py-2 text-ink-900" title={line.label}>
                       {line.label}
                     </td>
-                    {pivot.colKeys.map((k) => amountCell(line.totals.bycol.get(k)))}
-                    {showRowTotal && amountCell(line.totals.total)}
+                    {pivot.colKeys.map((k) => amountCell(line.totals.bycol.get(k), k))}
+                    {showRowTotal && amountCell(line.totals.total, null)}
                   </tr>
                 ))}
                 <tr className="bg-surface">
@@ -341,9 +407,9 @@ export default async function FinancialsPage({
                     Net income after eliminations
                   </td>
                   {pivot.colKeys.map((k) =>
-                    amountCell(eliminations.adjusted.bycol.get(k), true),
+                    amountCell(eliminations.adjusted.bycol.get(k), k, true),
                   )}
-                  {showRowTotal && amountCell(eliminations.adjusted.total, true)}
+                  {showRowTotal && amountCell(eliminations.adjusted.total, null, true)}
                 </tr>
               </>
             )}
@@ -353,6 +419,9 @@ export default async function FinancialsPage({
       <p className="mt-3 text-xs text-ink-400">
         Amounts are natural signed ledger activity: positive increases an
         account in its normal direction.
+        {revenueTotals
+          ? " Common-size display: each cell is shown as a percent of the same column's total revenue (columns with no revenue show a dash)."
+          : ""}
         {rowDim !== "account" && scope === "pl"
           ? " With Net income scope, each row shows income minus expenses for that slice."
           : ""}{" "}
@@ -389,7 +458,12 @@ function SectionRows({
   showRowTotal: boolean;
   subtotal: { bycol: Map<string, number>; total: number } | null;
   span: number;
-  amountCell: (v: number | undefined, bold?: boolean, drill?: string) => React.ReactNode;
+  amountCell: (
+    v: number | undefined,
+    colKey: string | null,
+    bold?: boolean,
+    drill?: string,
+  ) => React.ReactNode;
   drillHref: (rowKey: string | null, colKey: string | null) => string;
 }) {
   return (
@@ -412,15 +486,15 @@ function SectionRows({
           >
             {r.key}
           </td>
-          {colKeys.map((k) => amountCell(r.cells.get(k), false, drillHref(r.key, k)))}
-          {showRowTotal && amountCell(r.total, false, drillHref(r.key, null))}
+          {colKeys.map((k) => amountCell(r.cells.get(k), k, false, drillHref(r.key, k)))}
+          {showRowTotal && amountCell(r.total, null, false, drillHref(r.key, null))}
         </tr>
       ))}
       {showHeader && subtotal && (
         <tr className="bg-surface/30">
           <td className="px-4 py-2 font-medium text-ink-700">Total {label}</td>
-          {colKeys.map((k) => amountCell(subtotal.bycol.get(k), true))}
-          {showRowTotal && amountCell(subtotal.total, true)}
+          {colKeys.map((k) => amountCell(subtotal.bycol.get(k), k, true))}
+          {showRowTotal && amountCell(subtotal.total, null, true)}
         </tr>
       )}
     </>
