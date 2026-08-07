@@ -207,15 +207,6 @@ export async function GET(request: Request) {
     ...(showRowTotal ? [t.total] : []),
   ];
 
-  // Accounting-style rule above every total line's amounts. Set as a top
-  // border on the total row itself (not a bottom border on the row above) so
-  // it survives collapsing the category's account rows.
-  const ruleAbove = (row: ExcelJS.Row) => {
-    for (let i = 0; i < colLabels.length + (showRowTotal ? 1 : 0); i++) {
-      row.getCell(i + 2).border = { top: { style: "thin" } };
-    }
-  };
-
   const writeSection = (section: StatementSection) => {
     sheet.addRow([section.label]).font = { bold: true };
     for (const group of section.groups) {
@@ -235,33 +226,26 @@ export async function GET(request: Request) {
       ]);
       subtotal.font = { bold: true };
       subtotal.getCell(1).alignment = { indent: 1 };
-      ruleAbove(subtotal);
     }
     const totalRow = sheet.addRow([
       `Total ${section.label.toLowerCase()}`,
       ...totalsCells(section),
     ]);
     totalRow.font = { bold: true };
-    ruleAbove(totalRow);
   };
 
   writeSection(statement.income);
   if (statement.directCosts.groups.length > 0) writeSection(statement.directCosts);
   if (statement.grossProfit) {
-    const grossProfitRow = sheet.addRow([
-      "Gross profit",
-      ...totalsCells(statement.grossProfit),
-    ]);
-    grossProfitRow.font = { bold: true };
-    ruleAbove(grossProfitRow);
+    sheet.addRow(["Gross profit", ...totalsCells(statement.grossProfit)]).font = {
+      bold: true,
+    };
   }
   writeSection(statement.expenses);
-  const netIncomeRow = sheet.addRow([
+  sheet.addRow([
     eliminations ? "Net income before eliminations" : "Net income",
     ...totalsCells(statement.netIncome),
-  ]);
-  netIncomeRow.font = { bold: true };
-  ruleAbove(netIncomeRow);
+  ]).font = { bold: true };
 
   if (eliminations) {
     sheet.addRow(["Intercompany eliminations"]).font = { bold: true };
@@ -273,7 +257,6 @@ export async function GET(request: Request) {
       ...totalsCells(eliminations.adjusted),
     ]);
     adjusted.font = { bold: true };
-    ruleAbove(adjusted);
   }
 
   const buffer = await workbook.xlsx.writeBuffer();
