@@ -88,12 +88,13 @@ export default async function IncomeRatiosPage({
   };
 
   // Same slices as the Financials page under the Net income scope: the
-  // statement itself plus one revenue-by-customer slice per company in scope
-  // for the Intercompany eliminations below the Net income line (per company
-  // because the Marathon billing-agent rule depends on which company booked
-  // the revenue).
+  // statement itself plus, on the All companies view, one revenue-by-customer
+  // slice per company for the Intercompany eliminations below the Net income
+  // line (per company because the Marathon billing-agent rule depends on
+  // which company booked the revenue). Eliminations are a consolidation
+  // adjustment, so single-company views skip them entirely.
   const eliminationRealms =
-    company === "all" ? companies.map((c) => c.realm_id) : [company];
+    company === "all" ? companies.map((c) => c.realm_id) : [];
   const [cells, eliminationSlices] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
@@ -144,7 +145,10 @@ export default async function IncomeRatiosPage({
   // Eliminations are pure revenue removals (costs are untouched), so they
   // reduce net income and the ratio denominator by the same amounts: the
   // after-eliminations margin is (NI + elim) ÷ (revenue + elim).
-  const eliminations = buildEliminations(eliminationSlices, stmt.netIncome);
+  const eliminations =
+    company === "all"
+      ? buildEliminations(eliminationSlices, stmt.netIncome)
+      : null;
   let revenueAfterElim = denom;
   if (eliminations) {
     const bycol = new Map(denom.bycol);

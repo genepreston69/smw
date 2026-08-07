@@ -86,12 +86,14 @@ export default async function IncomeStatementPage({
     return q ? `/financials/statement?${q}` : "/financials/statement";
   };
 
-  // One revenue-by-customer slice per company in scope for the Intercompany
-  // eliminations below the Net income line (per company because the Marathon
-  // billing-agent rule depends on which company booked the revenue) — the
-  // same slices the Income Ratios page fetches.
+  // On the All companies view, one revenue-by-customer slice per company for
+  // the Intercompany eliminations below the Net income line (per company
+  // because the Marathon billing-agent rule depends on which company booked
+  // the revenue) — the same slices the Income Ratios page fetches.
+  // Eliminations are a consolidation adjustment, so single-company views
+  // skip them entirely.
   const eliminationRealms =
-    company === "all" ? companies.map((c) => c.realm_id) : [company];
+    company === "all" ? companies.map((c) => c.realm_id) : [];
   const [cells, accountRows, eliminationSlices] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
@@ -168,7 +170,10 @@ export default async function IncomeStatementPage({
     bycol: new Map(Object.entries(statement.netIncome.cells)),
     total: statement.netIncome.total,
   };
-  const rawEliminations = buildEliminations(eliminationSlices, netIncomePivot);
+  const rawEliminations =
+    company === "all"
+      ? buildEliminations(eliminationSlices, netIncomePivot)
+      : null;
   const eliminations = rawEliminations
     ? serializeEliminations(rawEliminations)
     : null;

@@ -66,16 +66,13 @@ export async function GET(request: Request) {
   const { company, from, to, rows: rowDim, cols: colDim, scope, display } = state;
 
   // Same slices as the Financials page: the pivot itself plus, under the Net
-  // income scope, one revenue-by-customer slice per company in scope for the
-  // Intercompany eliminations section below the Net income line (per company
-  // because the Marathon billing-agent rule depends on which company booked
-  // the revenue).
+  // income scope on the All companies view, one revenue-by-customer slice per
+  // company for the Intercompany eliminations section below the Net income
+  // line (per company because the Marathon billing-agent rule depends on
+  // which company booked the revenue). Eliminations are a consolidation
+  // adjustment, so single-company exports skip them entirely.
   const eliminationRealms =
-    scope === "pl"
-      ? company === "all"
-        ? [...companyByRealm.keys()]
-        : [company]
-      : [];
+    scope === "pl" && company === "all" ? [...companyByRealm.keys()] : [];
   // Same as the page: the % of revenue display divides by each column's total
   // revenue, and only the expense-only scope lacks the Revenue cells to
   // derive that from the pivot itself.
@@ -144,7 +141,7 @@ export async function GET(request: Request) {
       ? revenueByCol(needsRevenueSlice ? revenueCells : cells)
       : null;
   const eliminations =
-    scope === "pl"
+    scope === "pl" && company === "all"
       ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
       : null;
   const showRowTotal = colDim !== "total";
