@@ -13,7 +13,7 @@ export default async function AppLayout({
   return (
     <div className="flex min-h-screen">
       {/* Sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-20 flex w-48 flex-col bg-navy-950 print:hidden">
+      <aside className="fixed inset-y-0 left-0 z-20 flex w-56 flex-col bg-navy-950 print:hidden">
         <div className="flex items-center gap-2.5 px-4 pb-6 pt-6">
           <span className="flex h-9 w-9 items-center justify-center rounded-lg bg-brand-600 text-white">
             <Anchor size={18} strokeWidth={2} />
@@ -42,7 +42,7 @@ export default async function AppLayout({
       </aside>
 
       {/* Main */}
-      <div className="ml-48 flex min-h-screen min-w-0 flex-1 flex-col print:ml-0">
+      <div className="ml-56 flex min-h-screen min-w-0 flex-1 flex-col print:ml-0">
         <main className="mx-auto w-full max-w-[1480px] flex-1 px-6 py-8 print:max-w-none print:px-0 print:py-0">
           {children}
         </main>

@@ -183,13 +183,13 @@ export function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
       <Link
         key={href}
         href={href}
-        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[0.84rem] font-medium transition-colors ${
+        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[0.95rem] font-medium transition-colors ${
           active
             ? "bg-white/10 text-white"
             : "text-white/60 hover:bg-white/5 hover:text-white/90"
         }`}
       >
-        <Icon size={16} strokeWidth={active ? 2 : 1.75} />
+        <Icon size={18} strokeWidth={active ? 2 : 1.75} />
         {label}
       </Link>
     );
@@ -207,7 +207,7 @@ export function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
               type="button"
               onClick={() => setSectionCollapsed(section.label, !isCollapsed)}
               aria-expanded={!isCollapsed}
-              className={`flex w-full items-center justify-between rounded-md px-3 pb-1 pt-3.5 text-left text-[0.66rem] font-semibold uppercase tracking-[0.12em] transition-colors ${
+              className={`flex w-full items-center justify-between rounded-md px-3 pb-1 pt-3.5 text-left text-[0.72rem] font-semibold uppercase tracking-[0.12em] transition-colors ${
                 isCollapsed && containsActive
                   ? "text-white/80"
                   : "text-white/35 hover:text-white/70"
