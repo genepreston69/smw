@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpen, Landmark } from "lucide-react";
+import { BookOpen, Download, Landmark } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
@@ -17,6 +17,7 @@ import {
   monthLabel,
   pivotColLabel,
   serializeEliminations,
+  statementExportHref,
   type ColDim,
   type PivotCell,
   type PivotTotals,
@@ -219,10 +220,19 @@ export default async function IncomeStatementPage({
         title="Income Statement"
         subtitle="Income and expenses grouped by the Category assigned to each account. Click a category to expand its accounts."
         action={
-          <Link href="/financials/accounts" className={buttonCls("secondary")}>
-            <BookOpen size={15} strokeWidth={2} />
-            Chart of Accounts
-          </Link>
+          <div className="flex items-center gap-2">
+            <a
+              href={statementExportHref({ company, from, to, cols: colDim })}
+              className={buttonCls("secondary")}
+            >
+              <Download size={15} strokeWidth={2} />
+              Export Excel
+            </a>
+            <Link href="/financials/accounts" className={buttonCls("secondary")}>
+              <BookOpen size={15} strokeWidth={2} />
+              Chart of Accounts
+            </Link>
+          </div>
         }
       />
 

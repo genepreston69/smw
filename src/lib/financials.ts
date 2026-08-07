@@ -116,6 +116,22 @@ export function financialsExportHref(s: FinancialsState): string {
   return `/api/export/financials?${params}`;
 }
 
+/** Excel export of the category income statement; carries the full state so the file matches the screen. */
+export function statementExportHref(s: {
+  company: string;
+  from: string;
+  to: string;
+  cols: ColDim;
+}): string {
+  const params = new URLSearchParams({
+    company: s.company,
+    from: s.from,
+    to: s.to,
+    cols: s.cols,
+  });
+  return `/api/export/statement?${params}`;
+}
+
 /** Drill-down URL for one pivot cell (null key = no filter on that axis). */
 export function linesHref(
   s: FinancialsState,
