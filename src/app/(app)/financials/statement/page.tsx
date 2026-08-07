@@ -132,7 +132,11 @@ export default async function IncomeStatementPage({
   const colLabels = Object.fromEntries(
     statement.colKeys.map((k) => [k, pivotColLabel(colDim, k, companyByRealm)]),
   );
-  const uncategorizedCount = [statement.income, statement.expenses]
+  const uncategorizedCount = [
+    statement.income,
+    statement.directCosts,
+    statement.expenses,
+  ]
     .flatMap((s) => s.groups)
     .filter((g) => g.label === UNCATEGORIZED)
     .reduce((n, g) => n + g.rows.length, 0);
@@ -230,21 +234,30 @@ export default async function IncomeStatementPage({
       </div>
 
       {cells.length > 0 && (
-        <div className="mb-4 grid gap-4 sm:grid-cols-3">
+        <div
+          className={`mb-4 grid gap-4 sm:grid-cols-2 ${statement.grossProfit ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
+        >
           <StatTile
             label="Income"
             value={moneyWhole(statement.income.total)}
             hint={periodHint}
           />
+          {statement.grossProfit && (
+            <StatTile
+              label="Gross profit"
+              value={moneyWhole(statement.grossProfit.total)}
+              hint="Income less direct costs"
+            />
+          )}
           <StatTile
-            label="Expenses"
+            label={statement.grossProfit ? "Operating expenses" : "Expenses"}
             value={moneyWhole(statement.expenses.total)}
             hint={periodHint}
           />
           <StatTile
             label="Net income"
             value={moneyWhole(statement.netIncome.total)}
-            hint="Income less expenses"
+            hint="Income less all expenses"
           />
         </div>
       )}
@@ -272,9 +285,13 @@ export default async function IncomeStatementPage({
         {uncategorizedCount > 0
           ? ` (${uncategorizedCount} account${uncategorizedCount === 1 ? "" : "s"} in this view)`
           : ""}
-        . Amounts are the same natural-signed ledger activity as the Financials
-        pivot, so Net income here matches the Financials page for the same
-        filters.
+        . Expense categories named &ldquo;Direct Costs&rdquo; (or Cost of Goods
+        Sold / Cost of Sales / COGS) are shown between Income and the operating
+        expense categories, and Gross profit is Income less those direct costs
+        — the line appears once at least one account carries a direct-cost
+        category. Amounts are the same natural-signed ledger activity as the
+        Financials pivot, so Net income here matches the Financials page for
+        the same filters.
       </p>
     </div>
   );

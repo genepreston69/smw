@@ -220,7 +220,10 @@ export default async function ChartOfAccountsPage({
         Accounts, numbers, and types come from QuickBooks and refresh on every
         general-ledger sync; Category is assigned here and survives syncs. Only
         income and expense account categories appear on the Income Statement —
-        accounts left blank fall under Uncategorized there.
+        accounts left blank fall under Uncategorized there. Name an expense
+        category &ldquo;Direct Costs&rdquo; (or Cost of Goods Sold / Cost of
+        Sales / COGS) to have its accounts subtracted from income on the
+        statement&rsquo;s Gross profit line.
       </p>
     </div>
   );
