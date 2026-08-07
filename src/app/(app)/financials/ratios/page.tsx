@@ -249,8 +249,16 @@ export default async function IncomeRatiosPage({
     </div>
   );
 
-  const periodMargin = (t: PivotTotals) =>
-    denom.total !== 0 ? pct(t.total / denom.total) : "—";
+  // Summary cards reflect the consolidated (after-eliminations) view.
+  // Eliminations remove revenue dollar-for-dollar, so every profit line is
+  // adjusted by the same elimination total and divided by adjusted revenue.
+  const elimSum = eliminations
+    ? eliminations.lines.reduce((s, l) => s + l.totals.total, 0)
+    : 0;
+  const adjMargin = (t: PivotTotals) =>
+    revenueAfterElim.total !== 0
+      ? pct((t.total + elimSum) / revenueAfterElim.total)
+      : "—";
   const periodHint = `${monthLabel(from)} – ${monthLabel(to)}`;
 
   return (
@@ -326,28 +334,26 @@ export default async function IncomeRatiosPage({
         <div className="mb-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
           <StatTile
             label="Revenue"
-            value={moneyWhole(denom.total)}
-            hint={periodHint}
+            value={moneyWhole(revenueAfterElim.total)}
+            hint={
+              eliminations
+                ? `${periodHint} · after eliminations`
+                : periodHint
+            }
           />
           <StatTile
             label="Gross margin"
-            value={periodMargin(stmt.grossProfit)}
-            hint="Revenue less cost of goods sold"
+            value={adjMargin(stmt.grossProfit)}
+            hint={`Revenue less cost of goods sold${eliminations ? ", after eliminations" : ""}`}
           />
           <StatTile
             label="Operating margin"
-            value={periodMargin(stmt.operatingIncome)}
-            hint="After operating expenses"
+            value={adjMargin(stmt.operatingIncome)}
+            hint={`After operating expenses${eliminations ? " and eliminations" : ""}`}
           />
           <StatTile
             label="Net margin"
-            value={
-              eliminations
-                ? revenueAfterElim.total !== 0
-                  ? pct(eliminations.adjusted.total / revenueAfterElim.total)
-                  : "—"
-                : periodMargin(stmt.netIncome)
-            }
+            value={adjMargin(stmt.netIncome)}
             hint={
               eliminations
                 ? "After intercompany eliminations"
@@ -428,7 +434,7 @@ export default async function IncomeRatiosPage({
         Financials page. Columns with no revenue show a dash. Drill into
         individual accounts on the Financials page.
         {eliminations
-          ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize (the same adjustment shown on the Financials page); because eliminations remove revenue only, Net margin after eliminations divides adjusted net income by adjusted revenue."
+          ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize (the same adjustment shown on the Financials page); because eliminations remove revenue only, after-eliminations ratios adjust each profit line and the revenue denominator by the elimination total. The summary cards above reflect the after-eliminations view; the table shows both."
           : ""}
       </p>
     </div>
