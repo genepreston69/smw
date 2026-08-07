@@ -27,7 +27,12 @@ export function StatementTable({
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
 
-  const allKeys = [statement.income, statement.expenses].flatMap((s) =>
+  const sections = [
+    statement.income,
+    statement.directCosts,
+    statement.expenses,
+  ].filter((s) => s.groups.length > 0);
+  const allKeys = sections.flatMap((s) =>
     s.groups.map((g) => `${s.label}|${g.label}`),
   );
   const toggle = (key: string) =>
@@ -151,6 +156,16 @@ export function StatementTable({
         }
       >
         {sectionRows(statement.income)}
+        {statement.directCosts.groups.length > 0 &&
+          sectionRows(statement.directCosts)}
+        {statement.grossProfit && (
+          <tr className="bg-surface">
+            <td className="px-4 py-2 font-semibold text-ink-900">
+              Gross profit
+            </td>
+            {totalCells(statement.grossProfit, true)}
+          </tr>
+        )}
         {sectionRows(statement.expenses)}
         <tr className="bg-surface">
           <td className="px-4 py-2 font-semibold text-ink-900">Net income</td>

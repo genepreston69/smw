@@ -510,6 +510,22 @@ export function buildEliminations(
 
 export const UNCATEGORIZED = "Uncategorized";
 
+// Expense categories treated as direct costs: they render between Income and
+// the operating expense categories, and Gross profit = income − direct costs.
+// Matched on the normalized category name so "Direct Costs", "direct cost",
+// or a COGS-style label all work.
+const DIRECT_COST_CATEGORIES = new Set([
+  "direct costs",
+  "direct cost",
+  "cost of goods sold",
+  "cost of sales",
+  "cogs",
+]);
+
+export function isDirectCostCategory(label: string): boolean {
+  return DIRECT_COST_CATEGORIES.has(label.trim().toLowerCase());
+}
+
 export interface StatementTotals {
   cells: Record<string, number>;
   total: number;
@@ -534,8 +550,14 @@ export interface StatementSection extends StatementTotals {
 export interface CategoryStatement {
   colKeys: string[];
   income: StatementSection;
+  /** Expense categories matching isDirectCostCategory; empty when none. */
+  directCosts: StatementSection;
+  /** income − directCosts. Null when no direct-cost category is assigned —
+      showing income as "gross profit" would be misleading. */
+  grossProfit: StatementTotals | null;
+  /** The remaining (operating) expense categories. */
   expenses: StatementSection;
-  /** income.total - expenses.total, per column and overall. */
+  /** income − directCosts − expenses, per column and overall. */
   netIncome: StatementTotals;
 }
 
@@ -579,8 +601,8 @@ export function buildCategoryStatement(
     return out;
   };
 
-  const section = (classification: string, label: string): StatementSection => {
-    const groups = [...byClass.get(classification)!.entries()]
+  const buildGroups = (classification: string): StatementGroup[] =>
+    [...byClass.get(classification)!.entries()]
       .sort(([a], [b]) => {
         // Alphabetical, Uncategorized always last.
         if (a === UNCATEGORIZED) return 1;
@@ -593,21 +615,31 @@ export function buildCategoryStatement(
         );
         return { label: category, rows, ...sum(rows) };
       });
-    return { label, groups, ...sum(groups) };
-  };
 
-  const income = section("Revenue", "Income");
-  const expenses = section("Expense", "Expenses");
-  const netIncome: StatementTotals = {
+  const section = (label: string, groups: StatementGroup[]): StatementSection =>
+    ({ label, groups, ...sum(groups) });
+
+  const subtract = (a: StatementTotals, b: StatementTotals): StatementTotals => ({
     cells: Object.fromEntries(
-      colKeys.map((k) => [
-        k,
-        (income.cells[k] ?? 0) - (expenses.cells[k] ?? 0),
-      ]),
+      colKeys.map((k) => [k, (a.cells[k] ?? 0) - (b.cells[k] ?? 0)]),
     ),
-    total: income.total - expenses.total,
-  };
-  return { colKeys, income, expenses, netIncome };
+    total: a.total - b.total,
+  });
+
+  const income = section("Income", buildGroups("Revenue"));
+  const expenseGroups = buildGroups("Expense");
+  const directCosts = section(
+    "Direct Costs",
+    expenseGroups.filter((g) => isDirectCostCategory(g.label)),
+  );
+  const expenses = section(
+    directCosts.groups.length > 0 ? "Operating Expenses" : "Expenses",
+    expenseGroups.filter((g) => !isDirectCostCategory(g.label)),
+  );
+  const grossProfit =
+    directCosts.groups.length > 0 ? subtract(income, directCosts) : null;
+  const netIncome = subtract(subtract(income, directCosts), expenses);
+  return { colKeys, income, directCosts, grossProfit, expenses, netIncome };
 }
 
 /** Validate raw search params into a FinancialsState (bad values → defaults). */
