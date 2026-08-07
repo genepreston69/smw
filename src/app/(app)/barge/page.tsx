@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Anchor, Calculator, ChevronDown, Plus } from "lucide-react";
+import { Anchor, BookOpen, Calculator, ChevronDown, Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { moneyWhole, shortDate } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -79,6 +79,14 @@ export default async function BargeProgramPage() {
         subtitle="Component-level takeoff quotes for new-build deck barges, with the same approval workflow as job plans. Margins shown are direct contribution."
         action={
           <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/barge/manual"
+              title="Printable instruction manual for the Barge Program"
+              className={buttonCls("secondary")}
+            >
+              <BookOpen size={16} strokeWidth={2} />
+              Instruction manual
+            </Link>
             <Link href="/barge/rough" className={buttonCls("secondary")}>
               <Calculator size={16} strokeWidth={2} />
               Rough quote builder
