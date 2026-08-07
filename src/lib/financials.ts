@@ -539,12 +539,7 @@ const SALARY_WAGE_CATEGORIES = new Set([
   "wages",
 ]);
 
-const EMPLOYEE_BENEFIT_CATEGORIES = new Set([
-  "employee benefits",
-  "employee benefit",
-  "benefits",
-  "payroll benefits",
-]);
+const EMPLOYEE_BENEFIT_CATEGORIES = new Set(["employee benefits"]);
 
 export const ALLOCATED_BENEFITS_LABEL = "Employee Benefits (Allocated)";
 
