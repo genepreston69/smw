@@ -623,17 +623,15 @@ export function buildCategoryStatement(
 
   const buildGroups = (classification: string): StatementGroup[] =>
     [...byClass.get(classification)!.entries()]
-      .sort(([a], [b]) => {
-        // Alphabetical, Uncategorized always last.
-        if (a === UNCATEGORIZED) return 1;
-        if (b === UNCATEGORIZED) return -1;
-        return a.localeCompare(b);
-      })
       .map(([category, lines]): StatementGroup => {
-        const rows = [...lines.values()].sort((a, b) =>
-          a.key.localeCompare(b.key),
-        );
+        const rows = [...lines.values()].sort((a, b) => b.total - a.total);
         return { label: category, rows, ...sum(rows) };
+      })
+      .sort((a, b) => {
+        // Largest total first, Uncategorized always last.
+        if (a.label === UNCATEGORIZED) return 1;
+        if (b.label === UNCATEGORIZED) return -1;
+        return b.total - a.total;
       });
 
   const section = (label: string, groups: StatementGroup[]): StatementSection =>
