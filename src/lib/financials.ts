@@ -561,7 +561,10 @@ function isDirectLaborCategory(label: string): boolean {
 }
 
 function isDirectLaborAccount(name: string): boolean {
-  return normalizeLabel(name).includes("direct labor");
+  // "710 Labor Cost" is the direct-labor account in the SMW chart of
+  // accounts; "direct labor" covers conventionally named accounts.
+  const n = normalizeLabel(name);
+  return n.includes("direct labor") || n.includes("710 labor cost");
 }
 
 export interface StatementTotals {
