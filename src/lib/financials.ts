@@ -517,37 +517,51 @@ export const UNCATEGORIZED = "Uncategorized";
 const DIRECT_COST_CATEGORIES = new Set([
   "direct costs",
   "direct cost",
+  "direct labor",
   "cost of goods sold",
   "cost of sales",
   "cogs",
 ]);
 
+/** Lowercase, collapse whitespace, and fold "&" to "and" so user-typed
+    category labels match regardless of spacing/ampersand style. */
+const normalizeLabel = (label: string): string =>
+  label
+    .toLowerCase()
+    .replace(/&/g, " and ")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export function isDirectCostCategory(label: string): boolean {
-  return DIRECT_COST_CATEGORIES.has(label.trim().toLowerCase());
+  return DIRECT_COST_CATEGORIES.has(normalizeLabel(label));
 }
 
 // Employee-benefits allocation: the direct-labor share of each employee-
 // benefits category is reclassified above the gross profit line. Per column,
 // the share is Direct Labor ÷ (Direct Labor + Salaries & Wages). Direct Labor
-// is matched by account name (it lives inside a direct-cost category);
-// Salaries & Wages and Employee Benefits are matched by category name, same
-// normalization as DIRECT_COST_CATEGORIES.
-const SALARY_WAGE_CATEGORIES = new Set(["salaries & wages"]);
+// is matched by account name anywhere in the expense sections (or by
+// membership in a category named "Direct Labor"); Salaries & Wages and
+// Employee Benefits are matched by category name.
+const SALARY_WAGE_CATEGORIES = new Set(["salaries and wages"]);
 
 const EMPLOYEE_BENEFIT_CATEGORIES = new Set(["employee benefits"]);
 
 export const ALLOCATED_BENEFITS_LABEL = "Employee Benefits (Allocated)";
 
 function isSalaryWageCategory(label: string): boolean {
-  return SALARY_WAGE_CATEGORIES.has(label.trim().toLowerCase());
+  return SALARY_WAGE_CATEGORIES.has(normalizeLabel(label));
 }
 
 function isEmployeeBenefitsCategory(label: string): boolean {
-  return EMPLOYEE_BENEFIT_CATEGORIES.has(label.trim().toLowerCase());
+  return EMPLOYEE_BENEFIT_CATEGORIES.has(normalizeLabel(label));
+}
+
+function isDirectLaborCategory(label: string): boolean {
+  return normalizeLabel(label) === "direct labor";
 }
 
 function isDirectLaborAccount(name: string): boolean {
-  return name.trim().toLowerCase().includes("direct labor");
+  return normalizeLabel(name).includes("direct labor");
 }
 
 export interface StatementTotals {
@@ -672,10 +686,12 @@ export function buildCategoryStatement(
     const benefitGroups = opex.filter((g) => isEmployeeBenefitsCategory(g.label));
     if (direct.length === 0 || benefitGroups.length === 0) return;
 
+    // Direct Labor may be categorized anywhere in the expense sections —
+    // match by account name, or take a whole category named "Direct Labor".
     const laborByCol: Record<string, number> = {};
-    for (const g of direct)
+    for (const g of [...direct, ...opex])
       for (const r of g.rows)
-        if (isDirectLaborAccount(r.key))
+        if (isDirectLaborCategory(g.label) || isDirectLaborAccount(r.key))
           for (const [k, v] of Object.entries(r.cells))
             laborByCol[k] = (laborByCol[k] ?? 0) + v;
 
