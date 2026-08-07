@@ -11,9 +11,10 @@ import {
   UNCATEGORIZED,
   buildCategoryStatement,
   buildEliminations,
-  currentMonth,
+  clampMonth,
   defaultFrom,
   lastDayOfMonth,
+  latestMonth,
   monthLabel,
   pivotColLabel,
   serializeEliminations,
@@ -67,12 +68,14 @@ export default async function IncomeStatementPage({
 
   const company =
     sp.company && companyByRealm.has(sp.company) ? sp.company : "all";
-  const from = MONTH_PARAM.test(sp.from ?? "") ? sp.from! : defaultFrom();
-  const to = MONTH_PARAM.test(sp.to ?? "") ? sp.to! : currentMonth();
+  // The in-progress month is omitted app-wide: params are clamped to the
+  // last complete month and the pickers stop there too.
+  const from = MONTH_PARAM.test(sp.from ?? "") ? clampMonth(sp.from!) : defaultFrom();
+  const to = MONTH_PARAM.test(sp.to ?? "") ? clampMonth(sp.to!) : latestMonth();
   const colDim = COL_DIMS.some((d) => d.key === sp.cols)
     ? (sp.cols as ColDim)
     : "month";
-  const thisMonth = currentMonth();
+  const maxMonth = latestMonth();
 
   const href = (
     overrides: Partial<{ company: string; from: string; to: string; cols: ColDim }>,
@@ -81,7 +84,7 @@ export default async function IncomeStatementPage({
     const params = new URLSearchParams();
     if (s.company !== "all") params.set("company", s.company);
     if (s.from !== defaultFrom()) params.set("from", s.from);
-    if (s.to !== currentMonth()) params.set("to", s.to);
+    if (s.to !== latestMonth()) params.set("to", s.to);
     if (s.cols !== "month") params.set("cols", s.cols);
     const q = params.toString();
     return q ? `/financials/statement?${q}` : "/financials/statement";
@@ -273,7 +276,7 @@ export default async function IncomeStatementPage({
               name="from"
               defaultValue={from}
               min="2023-01"
-              max={thisMonth}
+              max={maxMonth}
               className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
             />
             <span className="text-sm text-ink-400">to</span>
@@ -282,7 +285,7 @@ export default async function IncomeStatementPage({
               name="to"
               defaultValue={to}
               min="2023-01"
-              max={thisMonth}
+              max={maxMonth}
               className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
             />
             <button type="submit" className={buttonCls("secondary", "sm")}>

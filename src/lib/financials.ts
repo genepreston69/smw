@@ -59,13 +59,24 @@ export const SCOPE_CLASSIFICATIONS: Record<Scope, string[] | null> = {
 
 export const MONTH_PARAM = /^\d{4}-\d{2}$/;
 
-export function currentMonth(): string {
+/** Latest month shown anywhere in Financials: the last complete month.
+    The current (in-progress) month is always omitted — its partial ledger
+    activity would read as a cliff next to complete months. */
+export function latestMonth(): string {
   const today = new Date();
-  return `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}`;
+  const prev = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth() - 1, 1));
+  return `${prev.getUTCFullYear()}-${String(prev.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** Cap a YYYY-MM value at latestMonth so the current month can't be reached
+    even by hand-editing the URL. */
+export function clampMonth(month: string): string {
+  const max = latestMonth();
+  return month > max ? max : month;
 }
 
 export function defaultFrom(): string {
-  return `${new Date().getUTCFullYear()}-01`;
+  return `${latestMonth().slice(0, 4)}-01`;
 }
 
 export function monthLabel(key: string): string {
@@ -93,7 +104,7 @@ export function financialsHref(s: FinancialsState): string {
   const params = new URLSearchParams();
   if (s.company !== "all") params.set("company", s.company);
   if (s.from !== defaultFrom()) params.set("from", s.from);
-  if (s.to !== currentMonth()) params.set("to", s.to);
+  if (s.to !== latestMonth()) params.set("to", s.to);
   if (s.rows !== "account") params.set("rows", s.rows);
   if (s.cols !== "month") params.set("cols", s.cols);
   if (s.scope !== "pl") params.set("scope", s.scope);
@@ -812,8 +823,8 @@ export function resolveFinancialsState(
 ): FinancialsState {
   return {
     company: sp.company && validRealms.has(sp.company) ? sp.company : "all",
-    from: MONTH_PARAM.test(sp.from ?? "") ? sp.from! : defaultFrom(),
-    to: MONTH_PARAM.test(sp.to ?? "") ? sp.to! : currentMonth(),
+    from: MONTH_PARAM.test(sp.from ?? "") ? clampMonth(sp.from!) : defaultFrom(),
+    to: MONTH_PARAM.test(sp.to ?? "") ? clampMonth(sp.to!) : latestMonth(),
     rows: ROW_DIMS.some((d) => d.key === sp.rows)
       ? (sp.rows as RowDim)
       : "account",

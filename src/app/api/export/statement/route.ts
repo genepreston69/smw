@@ -9,9 +9,10 @@ import {
   SCOPE_CLASSIFICATIONS,
   buildCategoryStatement,
   buildEliminations,
-  currentMonth,
+  clampMonth,
   defaultFrom,
   lastDayOfMonth,
+  latestMonth,
   monthLabel,
   pivotColLabel,
   serializeEliminations,
@@ -68,10 +69,14 @@ export async function GET(request: Request) {
     sp.get("company") && companyByRealm.has(sp.get("company")!)
       ? sp.get("company")!
       : "all";
+  // Same clamp as the statement page: the in-progress month is omitted
+  // app-wide, so the export can't reach it either.
   const from = MONTH_PARAM.test(sp.get("from") ?? "")
-    ? sp.get("from")!
+    ? clampMonth(sp.get("from")!)
     : defaultFrom();
-  const to = MONTH_PARAM.test(sp.get("to") ?? "") ? sp.get("to")! : currentMonth();
+  const to = MONTH_PARAM.test(sp.get("to") ?? "")
+    ? clampMonth(sp.get("to")!)
+    : latestMonth();
   const colDim = COL_DIMS.some((d) => d.key === sp.get("cols"))
     ? (sp.get("cols") as ColDim)
     : "month";

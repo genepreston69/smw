@@ -12,10 +12,10 @@ import {
   SCOPE_CLASSIFICATIONS,
   buildEliminations,
   buildPivot,
-  currentMonth,
   financialsExportHref,
   financialsHref,
   lastDayOfMonth,
+  latestMonth,
   linesHref,
   pivotColLabel,
   resolveFinancialsState,
@@ -66,7 +66,9 @@ export default async function FinancialsPage({
 
   const state = resolveFinancialsState(sp, new Set(companyByRealm.keys()));
   const { company, from, to, rows: rowDim, cols: colDim, scope, display } = state;
-  const thisMonth = currentMonth();
+  // Month pickers stop at the last complete month — the in-progress month is
+  // omitted app-wide (and clamped in resolveFinancialsState).
+  const maxMonth = latestMonth();
   const href = (overrides: Partial<FinancialsState>) =>
     financialsHref({ ...state, ...overrides });
 
@@ -309,7 +311,7 @@ export default async function FinancialsPage({
               name="from"
               defaultValue={from}
               min="2023-01"
-              max={thisMonth}
+              max={maxMonth}
               className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
             />
             <span className="text-sm text-ink-400">to</span>
@@ -318,7 +320,7 @@ export default async function FinancialsPage({
               name="to"
               defaultValue={to}
               min="2023-01"
-              max={thisMonth}
+              max={maxMonth}
               className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
             />
             <button type="submit" className={buttonCls("secondary", "sm")}>
