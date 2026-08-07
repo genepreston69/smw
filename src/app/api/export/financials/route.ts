@@ -13,6 +13,7 @@ import {
   monthLabel,
   pivotColLabel,
   resolveFinancialsState,
+  revenueByCol,
   type PivotCell,
   type PivotTotals,
 } from "@/lib/financials";
@@ -62,7 +63,7 @@ export async function GET(request: Request) {
     Object.fromEntries(url.searchParams),
     new Set(companyByRealm.keys()),
   );
-  const { company, from, to, rows: rowDim, cols: colDim, scope } = state;
+  const { company, from, to, rows: rowDim, cols: colDim, scope, display } = state;
 
   // Same slices as the Financials page: the pivot itself plus, under the Net
   // income scope, one revenue-by-customer slice per company in scope for the
@@ -75,7 +76,11 @@ export async function GET(request: Request) {
         ? [...companyByRealm.keys()]
         : [company]
       : [];
-  const [cells, eliminationSlices] = await Promise.all([
+  // Same as the page: the % of revenue display divides by each column's total
+  // revenue, and only the expense-only scope lacks the Revenue cells to
+  // derive that from the pivot itself.
+  const needsRevenueSlice = display === "pct" && scope === "expense";
+  const [cells, eliminationSlices, revenueCells] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       db
         .rpc("gl_pivot", {
@@ -114,8 +119,30 @@ export async function GET(request: Request) {
         )) as PivotCell[],
       })),
     ),
+    needsRevenueSlice
+      ? (fetchAllRows((fromRow, toRow) =>
+          db
+            .rpc("gl_pivot", {
+              p_start: `${from}-01`,
+              p_end: lastDayOfMonth(to),
+              p_row_dim: "account",
+              p_col_dim: colDim,
+              p_realm_id: company === "all" ? null : company,
+              p_classifications: SCOPE_CLASSIFICATIONS.income,
+            })
+            .order("row_key")
+            .order("col_key")
+            .order("classification")
+            .order("account_type")
+            .range(fromRow, toRow),
+        ) as Promise<PivotCell[]>)
+      : Promise.resolve([] as PivotCell[]),
   ]);
   const pivot = buildPivot(cells, rowDim, scope);
+  const revenueTotals =
+    display === "pct"
+      ? revenueByCol(needsRevenueSlice ? revenueCells : cells)
+      : null;
   const eliminations =
     scope === "pl"
       ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
@@ -140,6 +167,9 @@ export async function GET(request: Request) {
       company === "all" ? "All companies" : companyByRealm.get(company),
       `${monthLabel(from)} – ${monthLabel(to)}`,
       "Amounts are natural signed ledger activity",
+      ...(revenueTotals
+        ? ["Common-size: cells are a percent of the column's total revenue"]
+        : []),
     ]
       .filter(Boolean)
       .join(" · "),
@@ -154,16 +184,29 @@ export async function GET(request: Request) {
   sheet.views = [{ state: "frozen", ySplit: 4 }];
 
   sheet.getColumn(1).width = 42;
-  const moneyFmt = "#,##0.00";
+  const cellFmt = revenueTotals ? "0.0%" : "#,##0.00";
   for (let i = 0; i < colLabels.length + (showRowTotal ? 1 : 0); i++) {
     const col = sheet.getColumn(i + 2);
     col.width = 15;
-    col.numFmt = moneyFmt;
+    col.numFmt = cellFmt;
   }
 
+  // Under the % of revenue display, cells are written as fractions of the
+  // column's total revenue (colKey null = row total ÷ total revenue) and the
+  // percent number format above renders them.
+  const outVal = (v: number | null | undefined, colKey: string | null) => {
+    if (v == null) return null;
+    if (!revenueTotals) return v;
+    const denom =
+      colKey === null
+        ? revenueTotals.total
+        : (revenueTotals.bycol.get(colKey) ?? 0);
+    return denom !== 0 ? v / denom : null;
+  };
+
   const totalsCells = (t: PivotTotals) => [
-    ...pivot.colKeys.map((k) => t.bycol.get(k) ?? null),
-    ...(showRowTotal ? [t.total] : []),
+    ...pivot.colKeys.map((k) => outVal(t.bycol.get(k) ?? null, k)),
+    ...(showRowTotal ? [outVal(t.total, null)] : []),
   ];
 
   for (const section of pivot.sections) {
@@ -173,8 +216,8 @@ export async function GET(request: Request) {
     for (const r of section.rows) {
       sheet.addRow([
         r.key,
-        ...pivot.colKeys.map((k) => r.cells.get(k) ?? null),
-        ...(showRowTotal ? [r.total] : []),
+        ...pivot.colKeys.map((k) => outVal(r.cells.get(k) ?? null, k)),
+        ...(showRowTotal ? [outVal(r.total, null)] : []),
       ]);
     }
     if (pivot.sectioned && pivot.sections.length > 1 && section.subtotal) {
@@ -210,7 +253,7 @@ export async function GET(request: Request) {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="financials-${scope}-${rowDim}-by-${colDim}-${from}-to-${to}.xlsx"`,
+      "Content-Disposition": `attachment; filename="financials-${scope}-${rowDim}-by-${colDim}${display === "pct" ? "-pct-of-revenue" : ""}-${from}-to-${to}.xlsx"`,
     },
   });
 }

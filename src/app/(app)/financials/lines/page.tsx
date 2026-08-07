@@ -57,6 +57,7 @@ export default async function FinancialLinesPage({
     rows?: string;
     cols?: string;
     scope?: string;
+    display?: string;
     rowkey?: string;
     colkey?: string;
     page?: string;
