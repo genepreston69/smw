@@ -13,6 +13,7 @@ import { moneyWhole } from "@/lib/format";
 import {
   DEFAULT_CONFIG,
   computeRoughQuote,
+  configToValues,
   type BargeConfig,
   type BargeConfigValues,
 } from "@/lib/barge";
@@ -98,15 +99,8 @@ export function RoughQuoteBuilder({
   const [configId, setConfigId] = useState<string | null>(initial?.id ?? null);
   const [name, setName] = useState(initial?.name ?? "");
   const [fields, setFields] = useState<Record<NumericKey, string>>(
-    toFields(initial ? toValues(initial) : DEFAULT_CONFIG),
+    toFields(initial ? configToValues(initial) : DEFAULT_CONFIG),
   );
-
-  function toValues(c: BargeConfig): BargeConfigValues {
-    const out = { ...DEFAULT_CONFIG, name: c.name };
-    for (const g of FIELD_GROUPS)
-      for (const f of g.fields) out[f.key] = Number(c[f.key]);
-    return out;
-  }
 
   const values: BargeConfigValues = useMemo(() => {
     const out = { ...DEFAULT_CONFIG, name };
@@ -129,7 +123,7 @@ export function RoughQuoteBuilder({
     }
     setConfigId(c.id);
     setName(c.name);
-    setFields(toFields(toValues(c)));
+    setFields(toFields(configToValues(c)));
   }
 
   function run(fn: () => Promise<{ ok: boolean; error?: string } | void>) {
@@ -163,7 +157,7 @@ export function RoughQuoteBuilder({
     <div>
       <PageHeader
         title="Rough Quote Builder"
-        subtitle="Dimensions to a priced estimate in seconds. Defaults are deliberately conservative — industry-benchmark steel and first-article hours — so every number states the case that must be beaten."
+        subtitle="Dimensions to a priced estimate in seconds. Save the parameter set as a configuration to reuse it from the New Quote menu. Defaults are deliberately conservative — industry-benchmark steel and first-article hours — so every number states the case that must be beaten."
         action={
           <Link href="/barge" className={buttonCls("secondary")}>
             <ArrowLeft size={16} strokeWidth={2} />

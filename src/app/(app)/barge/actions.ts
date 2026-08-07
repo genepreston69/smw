@@ -7,7 +7,9 @@ import { createClient } from "@/lib/supabase/server";
 import {
   BARGE_TEMPLATES,
   computeRoughQuote,
+  configToValues,
   roughQuoteToTakeoff,
+  type BargeConfig,
   type BargeConfigValues,
 } from "@/lib/barge";
 
@@ -145,6 +147,30 @@ export async function createBargeQuoteFromConfig(
   const takeoff = roughQuoteToTakeoff(c, rough);
   const id = await insertQuoteWithContent({
     name: `Rough quote — ${c.length_ft}×${c.beam_ft}×${c.depth_ft} crane-ready`,
+    config_id: configId,
+    fields: { ...takeoff.quote },
+    lines: takeoff.lines,
+    labor: takeoff.labor,
+  });
+  redirect(`/barge/${id}`);
+}
+
+// "New quote" menu path: build the takeoff from a saved configuration.
+export async function createBargeQuoteFromSavedConfig(formData: FormData) {
+  const configId = String(formData.get("config_id") ?? "");
+  const supabase = await createClient();
+  const { data: config, error } = await supabase
+    .from("barge_configs")
+    .select("*")
+    .eq("id", configId)
+    .single();
+  if (error || !config) throw new Error("Configuration not found");
+
+  const values = configToValues(config as BargeConfig);
+  const rough = computeRoughQuote(values);
+  const takeoff = roughQuoteToTakeoff(values, rough);
+  const id = await insertQuoteWithContent({
+    name: `${values.name} — ${values.length_ft}×${values.beam_ft}×${values.depth_ft}`,
     config_id: configId,
     fields: { ...takeoff.quote },
     lines: takeoff.lines,
