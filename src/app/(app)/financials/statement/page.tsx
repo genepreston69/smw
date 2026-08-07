@@ -340,9 +340,16 @@ export default async function IncomeStatementPage({
         Sold / Cost of Sales / COGS) are shown between Income and the operating
         expense categories, and Gross profit is Income less those direct costs
         — the line appears once at least one account carries a direct-cost
-        category. Amounts are the same natural-signed ledger activity as the
-        Financials pivot, so Net income before eliminations matches the
-        Financials page for the same filters.
+        category. The direct-labor share of any Employee Benefits category is
+        reclassified into Direct Costs: each column moves Employee Benefits
+        &times; Direct Labor &divide; (Direct Labor + Salaries &amp; Wages),
+        where Direct Labor is matched by account name within the direct-cost
+        categories and Salaries &amp; Wages by category name. The remainder
+        stays in Operating Expenses, with the movement shown as a
+        &ldquo;Less: allocated to Direct Costs&rdquo; line, so Net income is
+        unaffected. Amounts are otherwise the same natural-signed ledger
+        activity as the Financials pivot, so Net income before eliminations
+        matches the Financials page for the same filters.
         {eliminations
           ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize — the same adjustment shown on the Financials and Income Ratios pages. The Net income card above reflects the after-eliminations view."
           : ""}
