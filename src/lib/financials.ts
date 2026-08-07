@@ -532,12 +532,7 @@ export function isDirectCostCategory(label: string): boolean {
 // is matched by account name (it lives inside a direct-cost category);
 // Salaries & Wages and Employee Benefits are matched by category name, same
 // normalization as DIRECT_COST_CATEGORIES.
-const SALARY_WAGE_CATEGORIES = new Set([
-  "salaries & wages",
-  "salaries and wages",
-  "salaries",
-  "wages",
-]);
+const SALARY_WAGE_CATEGORIES = new Set(["salaries & wages"]);
 
 const EMPLOYEE_BENEFIT_CATEGORIES = new Set(["employee benefits"]);
 
