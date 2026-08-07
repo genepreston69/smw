@@ -547,6 +547,26 @@ export interface StatementSection extends StatementTotals {
   groups: StatementGroup[];
 }
 
+/** Serializable form of Eliminations for the statement's client table. */
+export interface StatementEliminations {
+  lines: ({ label: string } & StatementTotals)[];
+  adjusted: StatementTotals;
+}
+
+/** Re-key an Eliminations result to plain records for the client boundary. */
+export function serializeEliminations(
+  e: Eliminations,
+): StatementEliminations {
+  const toTotals = (t: PivotTotals): StatementTotals => ({
+    cells: Object.fromEntries(t.bycol),
+    total: t.total,
+  });
+  return {
+    lines: e.lines.map((l) => ({ label: l.label, ...toTotals(l.totals) })),
+    adjusted: toTotals(e.adjusted),
+  };
+}
+
 export interface CategoryStatement {
   colKeys: string[];
   income: StatementSection;

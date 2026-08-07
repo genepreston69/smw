@@ -10,13 +10,16 @@ import {
   SCOPE_CLASSIFICATIONS,
   UNCATEGORIZED,
   buildCategoryStatement,
+  buildEliminations,
   currentMonth,
   defaultFrom,
   lastDayOfMonth,
   monthLabel,
   pivotColLabel,
+  serializeEliminations,
   type ColDim,
   type PivotCell,
+  type PivotTotals,
 } from "@/lib/financials";
 import {
   Card,
@@ -83,7 +86,13 @@ export default async function IncomeStatementPage({
     return q ? `/financials/statement?${q}` : "/financials/statement";
   };
 
-  const [cells, accountRows] = await Promise.all([
+  // One revenue-by-customer slice per company in scope for the Intercompany
+  // eliminations below the Net income line (per company because the Marathon
+  // billing-agent rule depends on which company booked the revenue) — the
+  // same slices the Income Ratios page fetches.
+  const eliminationRealms =
+    company === "all" ? companies.map((c) => c.realm_id) : [company];
+  const [cells, accountRows, eliminationSlices] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
         .rpc("gl_pivot", {
@@ -115,6 +124,28 @@ export default async function IncomeStatementPage({
         category: string | null;
       }[]
     >,
+    Promise.all(
+      eliminationRealms.map(async (realmId) => ({
+        realmId,
+        companyName: companyByRealm.get(realmId) ?? null,
+        cells: (await fetchAllRows((fromRow, toRow) =>
+          supabase
+            .rpc("gl_pivot", {
+              p_start: `${from}-01`,
+              p_end: lastDayOfMonth(to),
+              p_row_dim: "customer",
+              p_col_dim: colDim,
+              p_realm_id: realmId,
+              p_classifications: SCOPE_CLASSIFICATIONS.income,
+            })
+            .order("row_key")
+            .order("col_key")
+            .order("classification")
+            .order("account_type")
+            .range(fromRow, toRow),
+        )) as PivotCell[],
+      })),
+    ),
   ]);
 
   // gl_pivot's account row key is the account's full name, merged across
@@ -129,6 +160,19 @@ export default async function IncomeStatementPage({
   }
 
   const statement = buildCategoryStatement(cells, categoryByAccount);
+
+  // buildEliminations works on the Map-keyed PivotTotals the ratios page
+  // uses; re-key the statement's net income into that shape, then serialize
+  // the result back to plain records for the client table.
+  const netIncomePivot: PivotTotals = {
+    bycol: new Map(Object.entries(statement.netIncome.cells)),
+    total: statement.netIncome.total,
+  };
+  const rawEliminations = buildEliminations(eliminationSlices, netIncomePivot);
+  const eliminations = rawEliminations
+    ? serializeEliminations(rawEliminations)
+    : null;
+
   const colLabels = Object.fromEntries(
     statement.colKeys.map((k) => [k, pivotColLabel(colDim, k, companyByRealm)]),
   );
@@ -256,8 +300,14 @@ export default async function IncomeStatementPage({
           />
           <StatTile
             label="Net income"
-            value={moneyWhole(statement.netIncome.total)}
-            hint="Income less all expenses"
+            value={moneyWhole(
+              (eliminations?.adjusted ?? statement.netIncome).total,
+            )}
+            hint={
+              eliminations
+                ? "After intercompany eliminations"
+                : "Income less all expenses"
+            }
           />
         </div>
       )}
@@ -271,6 +321,7 @@ export default async function IncomeStatementPage({
         ) : (
           <StatementTable
             statement={statement}
+            eliminations={eliminations}
             colLabels={colLabels}
             showRowTotal={colDim !== "total"}
           />
@@ -290,8 +341,11 @@ export default async function IncomeStatementPage({
         expense categories, and Gross profit is Income less those direct costs
         — the line appears once at least one account carries a direct-cost
         category. Amounts are the same natural-signed ledger activity as the
-        Financials pivot, so Net income here matches the Financials page for
-        the same filters.
+        Financials pivot, so Net income before eliminations matches the
+        Financials page for the same filters.
+        {eliminations
+          ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize — the same adjustment shown on the Financials and Income Ratios pages. The Net income card above reflects the after-eliminations view."
+          : ""}
       </p>
     </div>
   );
