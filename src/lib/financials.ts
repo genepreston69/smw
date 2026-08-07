@@ -526,6 +526,40 @@ export function isDirectCostCategory(label: string): boolean {
   return DIRECT_COST_CATEGORIES.has(label.trim().toLowerCase());
 }
 
+// Employee-benefits allocation: the direct-labor share of each employee-
+// benefits category is reclassified above the gross profit line. Per column,
+// the share is Direct Labor ÷ (Direct Labor + Salaries & Wages). Direct Labor
+// is matched by account name (it lives inside a direct-cost category);
+// Salaries & Wages and Employee Benefits are matched by category name, same
+// normalization as DIRECT_COST_CATEGORIES.
+const SALARY_WAGE_CATEGORIES = new Set([
+  "salaries & wages",
+  "salaries and wages",
+  "salaries",
+  "wages",
+]);
+
+const EMPLOYEE_BENEFIT_CATEGORIES = new Set([
+  "employee benefits",
+  "employee benefit",
+  "benefits",
+  "payroll benefits",
+]);
+
+export const ALLOCATED_BENEFITS_LABEL = "Employee Benefits (Allocated)";
+
+function isSalaryWageCategory(label: string): boolean {
+  return SALARY_WAGE_CATEGORIES.has(label.trim().toLowerCase());
+}
+
+function isEmployeeBenefitsCategory(label: string): boolean {
+  return EMPLOYEE_BENEFIT_CATEGORIES.has(label.trim().toLowerCase());
+}
+
+function isDirectLaborAccount(name: string): boolean {
+  return name.trim().toLowerCase().includes("direct labor");
+}
+
 export interface StatementTotals {
   cells: Record<string, number>;
   total: number;
@@ -621,18 +655,95 @@ export function buildCategoryStatement(
     return out;
   };
 
+  // Largest total first, Uncategorized always last.
+  const byTotalDesc = (a: StatementGroup, b: StatementGroup): number => {
+    if (a.label === UNCATEGORIZED) return 1;
+    if (b.label === UNCATEGORIZED) return -1;
+    return b.total - a.total;
+  };
+
   const buildGroups = (classification: string): StatementGroup[] =>
     [...byClass.get(classification)!.entries()]
       .map(([category, lines]): StatementGroup => {
         const rows = [...lines.values()].sort((a, b) => b.total - a.total);
         return { label: category, rows, ...sum(rows) };
       })
-      .sort((a, b) => {
-        // Largest total first, Uncategorized always last.
-        if (a.label === UNCATEGORIZED) return 1;
-        if (b.label === UNCATEGORIZED) return -1;
-        return b.total - a.total;
+      .sort(byTotalDesc);
+
+  // Reclassify the direct-labor share of Employee Benefits into Direct Costs,
+  // per column: moved = benefits × Direct Labor ÷ (Direct Labor + Salaries &
+  // Wages). Mutates both group arrays; net income is unchanged. The source
+  // category keeps its full account rows plus a "Less:" contra line so the
+  // ledger amounts stay auditable against QuickBooks.
+  const allocateBenefits = (
+    direct: StatementGroup[],
+    opex: StatementGroup[],
+  ): void => {
+    const benefitGroups = opex.filter((g) => isEmployeeBenefitsCategory(g.label));
+    if (direct.length === 0 || benefitGroups.length === 0) return;
+
+    const laborByCol: Record<string, number> = {};
+    for (const g of direct)
+      for (const r of g.rows)
+        if (isDirectLaborAccount(r.key))
+          for (const [k, v] of Object.entries(r.cells))
+            laborByCol[k] = (laborByCol[k] ?? 0) + v;
+
+    const salariesByCol: Record<string, number> = {};
+    for (const g of opex)
+      if (isSalaryWageCategory(g.label))
+        for (const [k, v] of Object.entries(g.cells))
+          salariesByCol[k] = (salariesByCol[k] ?? 0) + v;
+
+    const ratio = (k: string): number => {
+      const labor = laborByCol[k] ?? 0;
+      const denom = labor + (salariesByCol[k] ?? 0);
+      if (labor <= 0 || denom <= 0) return 0;
+      return Math.min(1, labor / denom);
+    };
+
+    const allocated: StatementGroup = {
+      label: ALLOCATED_BENEFITS_LABEL,
+      rows: [],
+      cells: {},
+      total: 0,
+    };
+    for (const g of benefitGroups) {
+      const moved: StatementTotals = { cells: {}, total: 0 };
+      for (const k of colKeys) {
+        const v = (g.cells[k] ?? 0) * ratio(k);
+        if (v === 0) continue;
+        moved.cells[k] = v;
+        moved.total += v;
+      }
+      if (Object.keys(moved.cells).length === 0) continue;
+
+      g.rows.push({
+        key: "Less: allocated to Direct Costs",
+        cells: Object.fromEntries(
+          Object.entries(moved.cells).map(([k, v]) => [k, -v]),
+        ),
+        total: -moved.total,
       });
+      for (const [k, v] of Object.entries(moved.cells))
+        g.cells[k] = (g.cells[k] ?? 0) - v;
+      g.total -= moved.total;
+
+      allocated.rows.push({
+        key: `Allocated from ${g.label}`,
+        cells: moved.cells,
+        total: moved.total,
+      });
+      for (const [k, v] of Object.entries(moved.cells))
+        allocated.cells[k] = (allocated.cells[k] ?? 0) + v;
+      allocated.total += moved.total;
+    }
+    if (allocated.rows.length > 0) {
+      direct.push(allocated);
+      direct.sort(byTotalDesc);
+      opex.sort(byTotalDesc);
+    }
+  };
 
   const section = (label: string, groups: StatementGroup[]): StatementSection =>
     ({ label, groups, ...sum(groups) });
@@ -644,15 +755,16 @@ export function buildCategoryStatement(
     total: a.total - b.total,
   });
 
-  const income = section("Income", buildGroups("Revenue"));
   const expenseGroups = buildGroups("Expense");
-  const directCosts = section(
-    "Direct Costs",
-    expenseGroups.filter((g) => isDirectCostCategory(g.label)),
-  );
+  const directGroups = expenseGroups.filter((g) => isDirectCostCategory(g.label));
+  const opexGroups = expenseGroups.filter((g) => !isDirectCostCategory(g.label));
+  allocateBenefits(directGroups, opexGroups);
+
+  const income = section("Income", buildGroups("Revenue"));
+  const directCosts = section("Direct Costs", directGroups);
   const expenses = section(
     directCosts.groups.length > 0 ? "Operating Expenses" : "Expenses",
-    expenseGroups.filter((g) => !isDirectCostCategory(g.label)),
+    opexGroups,
   );
   const grossProfit =
     directCosts.groups.length > 0 ? subtract(income, directCosts) : null;
