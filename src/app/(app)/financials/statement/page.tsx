@@ -343,8 +343,9 @@ export default async function IncomeStatementPage({
         category. The direct-labor share of any Employee Benefits category is
         reclassified into Direct Costs: each column moves Employee Benefits
         &times; Direct Labor &divide; (Direct Labor + Salaries &amp; Wages),
-        where Direct Labor is matched by account name within the direct-cost
-        categories and Salaries &amp; Wages by category name. The remainder
+        where Direct Labor is matched by account name (&ldquo;710 Labor
+        Cost&rdquo; or any account containing &ldquo;Direct Labor&rdquo;) and
+        Salaries &amp; Wages by category name. The remainder
         stays in Operating Expenses, with the movement shown as a
         &ldquo;Less: allocated to Direct Costs&rdquo; line, so Net income is
         unaffected. Amounts are otherwise the same natural-signed ledger
