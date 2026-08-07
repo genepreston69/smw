@@ -12,6 +12,7 @@ import {
   HardHat,
   Landmark,
   Settings,
+  Ship,
   type LucideIcon,
 } from "lucide-react";
 
@@ -23,6 +24,7 @@ const ALL_NAV: {
 }[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
   { href: "/plans", label: "Job Plans", icon: ClipboardList },
+  { href: "/barge", label: "Barge Program", icon: Ship },
   { href: "/approvals", label: "Approvals", icon: Stamp },
   { href: "/customers", label: "Customers", icon: Users },
   { href: "/customers/summary", label: "Customer Summary", icon: PieChart },
