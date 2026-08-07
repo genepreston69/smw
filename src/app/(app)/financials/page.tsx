@@ -73,15 +73,14 @@ export default async function FinancialsPage({
   // Aggregated cells; paged like every other complete list so PostgREST's
   // 1000-row cap can't silently truncate a wide pivot. The four-column
   // ordering matches the RPC's GROUP BY, so pages are deterministic.
-  // Under the Net income scope, one revenue-by-customer slice per company in
-  // scope feeds the Intercompany eliminations section below the Net income
-  // line (per company because the Marathon billing-agent rule depends on
-  // which company booked the revenue).
+  // Under the Net income scope on the All companies view, one revenue-by-
+  // customer slice per company feeds the Intercompany eliminations section
+  // below the Net income line (per company because the Marathon billing-agent
+  // rule depends on which company booked the revenue). Eliminations are a
+  // consolidation adjustment, so single-company views skip them entirely.
   const eliminationRealms =
-    scope === "pl"
-      ? company === "all"
-        ? companies.map((c) => c.realm_id)
-        : [company]
+    scope === "pl" && company === "all"
+      ? companies.map((c) => c.realm_id)
       : [];
   // The % of revenue display divides by each column's total revenue. Every
   // scope except expense-only already carries the Revenue cells; expense-only
@@ -152,7 +151,7 @@ export default async function FinancialsPage({
       ? revenueByCol(needsRevenueSlice ? revenueCells : cells)
       : null;
   const eliminations =
-    scope === "pl"
+    scope === "pl" && company === "all"
       ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
       : null;
   const showRowTotal = colDim !== "total";
