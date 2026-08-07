@@ -25,7 +25,8 @@ import {
 // Excel export of the category income statement: same query params as
 // /financials/statement, same gl_pivot slice and buildCategoryStatement
 // assembly — the file always matches the statement on screen, with account
-// rows nested under their category via Excel row grouping.
+// rows indented and grouped under their category header and a
+// "Total {Category}" subtotal line closing each group.
 export async function GET(request: Request) {
   const supabase = await createClient();
   const {
@@ -209,7 +210,9 @@ export async function GET(request: Request) {
   const writeSection = (section: StatementSection) => {
     sheet.addRow([section.label]).font = { bold: true };
     for (const group of section.groups) {
-      sheet.addRow([group.label, ...totalsCells(group)]);
+      // Category header carries no amounts; the subtotal line below the
+      // member accounts does.
+      sheet.addRow([group.label]).font = { bold: true };
       // Member accounts nest under the category as a collapsible Excel
       // group, mirroring the expandable rows on screen.
       for (const r of group.rows) {
@@ -217,6 +220,12 @@ export async function GET(request: Request) {
         row.outlineLevel = 1;
         row.getCell(1).alignment = { indent: 2 };
       }
+      const subtotal = sheet.addRow([
+        `Total ${group.label}`,
+        ...totalsCells(group),
+      ]);
+      subtotal.font = { bold: true };
+      subtotal.getCell(1).alignment = { indent: 1 };
     }
     const totalRow = sheet.addRow([
       `Total ${section.label.toLowerCase()}`,
