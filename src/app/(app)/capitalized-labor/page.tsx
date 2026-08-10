@@ -3,6 +3,7 @@ import {
   Building2,
   CheckCircle2,
   Download,
+  HandCoins,
   HardHat,
   Layers,
   ScrollText,
@@ -107,7 +108,7 @@ export default async function CapitalizedLaborPage({
   const { supabase } = await requireUser();
   // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
   // cap; .order("id") tie-breaks for stable pages.
-  const [jobData, { data: connRows }, lineRows] = await Promise.all([
+  const [jobData, { data: connRows }, lineRows, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -126,6 +127,17 @@ export default async function CapitalizedLaborPage({
         .eq("qb_txn_type", "JournalEntry")
         .eq("cost_type", "labor")
         .order("id")
+        .range(from, to),
+    ),
+    // Month-grain employee-benefit allocation per job (migration 0022) —
+    // the same figure as the Jobs dashboard's Benefit allocation column,
+    // at month grain so this page's custom range can sum any window.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("job_benefit_allocation_months")
+        .select("job_id, month, amount")
+        .order("job_id")
+        .order("month")
         .range(from, to),
     ),
   ]);
@@ -151,6 +163,21 @@ export default async function CapitalizedLaborPage({
           : null;
   // Only a custom range has an upper bound — the presets all run to today.
   const periodEnd = period === "custom" ? lastDayOfMonth(customTo!) : null;
+
+  // Benefit allocation summed over the selected window. Months are
+  // first-of-month YYYY-MM-DD strings and every period bound is a month
+  // boundary, so the same string compares work.
+  const benefitByJob = new Map<string, number>();
+  for (const r of benefitRows) {
+    const month = (r.month as string).slice(0, 10);
+    if (periodStart && month < periodStart) continue;
+    if (periodEnd && month > periodEnd) continue;
+    const jobId = r.job_id as string;
+    benefitByJob.set(
+      jobId,
+      (benefitByJob.get(jobId) ?? 0) + Number(r.amount ?? 0),
+    );
+  }
 
   // Debits (positive amounts) are payroll allocations posted to the job;
   // credits (negative amounts) are labor moved back off the labor accounts —
@@ -221,6 +248,7 @@ export default async function CapitalizedLaborPage({
       grossAmount: agg.inPeriod ? agg.periodDebits : null,
       capitalizedAmount: agg.inPeriod ? agg.periodCredits : null,
       amount: agg.inPeriod ? net : null,
+      benefitAllocation: benefitByJob.get(j.id) ?? null,
       periodDebits: agg.inPeriod ? agg.periodDebits : 0,
       periodCredits: agg.inPeriod ? agg.periodCredits : 0,
       periodNet: agg.inPeriod ? net : 0,
@@ -246,6 +274,10 @@ export default async function CapitalizedLaborPage({
     list.reduce((s, c) => s + c.periodNet, 0);
   const grossTotal = candidates.reduce((s, c) => s + c.periodDebits, 0);
   const capitalizedTotal = candidates.reduce((s, c) => s + c.periodCredits, 0);
+  const benefitTotal = candidates.reduce(
+    (s, c) => s + (c.benefitAllocation ?? 0),
+    0,
+  );
   const entryCount = (list: { entryCount: number }[]) =>
     list.reduce((s, c) => s + c.entryCount, 0);
   const periodLabel =
@@ -364,6 +396,12 @@ export default async function CapitalizedLaborPage({
           hint="all time, across candidate jobs"
           icon={ScrollText}
         />
+        <StatTile
+          label={`Benefit allocation (${periodLabel})`}
+          value={money(benefitTotal)}
+          hint="direct-labor share of employee benefits, candidate jobs"
+          icon={HandCoins}
+        />
       </div>
 
       <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
@@ -406,6 +444,7 @@ export default async function CapitalizedLaborPage({
                 <Th right>Labor posted</Th>
                 <Th right>Already capitalized</Th>
                 <Th right>Awaiting review</Th>
+                <Th right>Benefit allocation</Th>
               </tr>
             }
           >
@@ -462,7 +501,23 @@ export default async function CapitalizedLaborPage({
           </div>
           <div>
             <h3 className="mb-1 font-semibold text-ink-900">
-              4. Traceability
+              4. Benefit allocation
+            </h3>
+            <p>
+              The direct-labor share of Employee Benefits attributed to each
+              job — the same figure as the Jobs dashboard column: per company
+              per month, Employee Benefits &times; Direct Labor &divide;
+              (Direct Labor + Salaries &amp; Wages) from the Income Statement,
+              distributed across jobs pro-rata by direct-labor cost, summed
+              over the selected period. It covers all of a job&rsquo;s direct
+              labor (not just journal entries) and is shown for context — a
+              capitalization entry may need to carry this burden along with
+              the labor. It is not included in the Awaiting review amounts.
+            </p>
+          </div>
+          <div>
+            <h3 className="mb-1 font-semibold text-ink-900">
+              5. Traceability
             </h3>
             <p>
               Every line carries its journal number so it traces back to the
