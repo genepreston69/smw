@@ -71,22 +71,43 @@ export async function reconcileQbWorkbook(
   const parsed = omitMonthsAfter(parsePlWorkbook(grid), latestMonth());
 
   const supabase = createServiceClient();
-  const glCells = (await fetchAllRows((fromRow, toRow) =>
-    supabase
-      .rpc("gl_pivot", {
-        p_start: parsed.start,
-        p_end: parsed.end,
-        p_row_dim: "account",
-        p_col_dim: "month",
-        p_realm_id: null,
-        p_classifications: ["Revenue", "Expense"],
-      })
-      .order("row_key")
-      .order("col_key")
-      .order("classification")
-      .order("account_type")
-      .range(fromRow, toRow),
-  )) as PivotCell[];
+  const glSlice = (rowDim: string, realmId: string | null, classifications: string[]) =>
+    fetchAllRows((fromRow, toRow) =>
+      supabase
+        .rpc("gl_pivot", {
+          p_start: parsed.start,
+          p_end: parsed.end,
+          p_row_dim: rowDim,
+          p_col_dim: "month",
+          p_realm_id: realmId,
+          p_classifications: classifications,
+        })
+        .order("row_key")
+        .order("col_key")
+        .order("classification")
+        .order("account_type")
+        .range(fromRow, toRow),
+    ) as Promise<PivotCell[]>;
 
-  return buildReconciliation(parsed, glCells);
+  // The rec always compares the consolidated export against every company
+  // combined, so the Intercompany eliminations always apply — one
+  // revenue-by-customer slice per company, exactly as the Financials and
+  // Income Statement pages fetch them on the All companies view.
+  const { data: connRows } = await supabase
+    .from("qb_connection_status")
+    .select("realm_id, company_name");
+  const [glCells, eliminationSlices] = await Promise.all([
+    glSlice("account", null, ["Revenue", "Expense"]),
+    Promise.all(
+      ((connRows ?? []) as { realm_id: string; company_name: string | null }[]).map(
+        async (c) => ({
+          realmId: c.realm_id,
+          companyName: c.company_name,
+          cells: await glSlice("customer", c.realm_id, ["Revenue"]),
+        }),
+      ),
+    ),
+  ]);
+
+  return buildReconciliation(parsed, glCells, eliminationSlices);
 }
