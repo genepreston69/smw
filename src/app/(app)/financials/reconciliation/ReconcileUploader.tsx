@@ -4,33 +4,26 @@ import { useRef, useState, useTransition } from "react";
 import {
   CheckCircle2,
   CircleAlert,
+  Download,
   FileSpreadsheet,
   Loader2,
   Scale,
 } from "lucide-react";
 import { money, moneyWhole } from "@/lib/format";
 import { monthLabel } from "@/lib/financials";
-import type {
-  AccountRecon,
-  ReconciliationResult,
+import {
+  RECON_STATUS_LABELS,
+  type AccountRecon,
+  type ReconciliationResult,
 } from "@/lib/reconciliation";
 import { Alert, Card, EmptyState, StatTile, Table, Th, buttonCls } from "@/components/ui";
 import { reconcileQbExport } from "./actions";
 
-const STATUS_META: Record<
-  AccountRecon["status"],
-  { label: string; cls: string }
-> = {
-  tied: { label: "Tied", cls: "bg-ok-50 text-ok-600 border-ok-600/25" },
-  variance: { label: "Variance", cls: "bg-bad-50 text-bad-600 border-bad-600/25" },
-  qb_only: {
-    label: "Missing from GL",
-    cls: "bg-warn-50 text-warn-700 border-warn-700/25",
-  },
-  gl_only: {
-    label: "Not in export",
-    cls: "bg-warn-50 text-warn-700 border-warn-700/25",
-  },
+const STATUS_CLS: Record<AccountRecon["status"], string> = {
+  tied: "bg-ok-50 text-ok-600 border-ok-600/25",
+  variance: "bg-bad-50 text-bad-600 border-bad-600/25",
+  qb_only: "bg-warn-50 text-warn-700 border-warn-700/25",
+  gl_only: "bg-warn-50 text-warn-700 border-warn-700/25",
 };
 
 const shortDate = (iso: string): string => {
@@ -45,6 +38,7 @@ export function ReconcileUploader() {
   const [result, setResult] = useState<ReconciliationResult | null>(null);
   const [onlyDiffs, setOnlyDiffs] = useState(true);
   const [pending, startTransition] = useTransition();
+  const [exporting, setExporting] = useState(false);
 
   const run = () => {
     const file = fileInput.current?.files?.[0];
@@ -64,6 +58,43 @@ export function ReconcileUploader() {
         setError(res.error);
       }
     });
+  };
+
+  // The Excel export re-uploads the same file to /api/export/reconciliation,
+  // which runs the identical shared pipeline — the workbook always matches
+  // the tie-out on screen.
+  const exportExcel = async () => {
+    const file = fileInput.current?.files?.[0];
+    if (!file || !result) {
+      setError("Choose the QuickBooks export and reconcile first");
+      return;
+    }
+    setExporting(true);
+    setError(null);
+    try {
+      const formData = new FormData();
+      formData.set("file", file);
+      const res = await fetch("/api/export/reconciliation", {
+        method: "POST",
+        body: formData,
+      });
+      if (!res.ok) {
+        const data = (await res.json().catch(() => null)) as
+          | { error?: string }
+          | null;
+        throw new Error(data?.error ?? "Export failed");
+      }
+      const url = URL.createObjectURL(await res.blob());
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `reconciliation-${result.period.start}-to-${result.period.end}.xlsx`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Export failed");
+    } finally {
+      setExporting(false);
+    }
   };
 
   const amount = (v: number, bold = false) => (
@@ -86,21 +117,18 @@ export function ReconcileUploader() {
     </td>
   );
 
-  const statusPill = (status: AccountRecon["status"]) => {
-    const meta = STATUS_META[status];
-    return (
-      <span
-        className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${meta.cls}`}
-      >
-        {status === "tied" ? (
-          <CheckCircle2 size={12} strokeWidth={2} />
-        ) : (
-          <CircleAlert size={12} strokeWidth={2} />
-        )}
-        {meta.label}
-      </span>
-    );
-  };
+  const statusPill = (status: AccountRecon["status"]) => (
+    <span
+      className={`inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs font-medium ${STATUS_CLS[status]}`}
+    >
+      {status === "tied" ? (
+        <CheckCircle2 size={12} strokeWidth={2} />
+      ) : (
+        <CircleAlert size={12} strokeWidth={2} />
+      )}
+      {RECON_STATUS_LABELS[status]}
+    </span>
+  );
 
   const netTied = result ? Math.abs(result.netIncome.diff) <= 0.005 : false;
 
@@ -136,11 +164,28 @@ export function ReconcileUploader() {
             )}
             {pending ? "Reconciling…" : "Reconcile"}
           </button>
+          {result && (
+            <button
+              type="button"
+              onClick={exportExcel}
+              disabled={exporting}
+              className={buttonCls("secondary")}
+            >
+              {exporting ? (
+                <Loader2 size={15} strokeWidth={2} className="animate-spin" />
+              ) : (
+                <Download size={15} strokeWidth={2} />
+              )}
+              {exporting ? "Exporting…" : "Export Excel"}
+            </button>
+          )}
           <p className="text-sm text-ink-600">
             In QuickBooks, run <span className="font-medium">Reports → Profit
             and Loss</span> (the consolidated view across all companies),
             display columns by <span className="font-medium">month</span>, and
-            export to Excel. Upload that file here unchanged.
+            export to Excel. Upload that file here unchanged. Reconciliation
+            runs through the last complete month — a current-month column in
+            the export is excluded automatically.
           </p>
         </div>
         {error && (
