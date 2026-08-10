@@ -31,6 +31,7 @@ type SortKey =
   | "company"
   | "customer"
   | "cost"
+  | "benefits"
   | "invoiced"
   | "gm"
   | "latest"
@@ -38,10 +39,11 @@ type SortKey =
   | "synced";
 
 const SORT_PATTERN =
-  /^(name|company|customer|cost|invoiced|gm|latest|active|synced)_(asc|desc)$/;
+  /^(name|company|customer|cost|benefits|invoiced|gm|latest|active|synced)_(asc|desc)$/;
 
 const DESC_FIRST: ReadonlySet<SortKey> = new Set([
   "cost",
+  "benefits",
   "invoiced",
   "gm",
   "latest",
@@ -120,7 +122,7 @@ export default async function JobsPage({
   const isAdmin = profile.role === "admin";
   // Paged reads (fetchAllRows) so no list is cut off at Supabase's
   // 1000-row cap; .order("id") tie-breaks duplicate names for stable pages.
-  const [data, { data: connRows }, costRows, invRows] = await Promise.all([
+  const [data, { data: connRows }, costRows, invRows, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -145,6 +147,16 @@ export default async function JobsPage({
         .select(
           "job_id, total_invoiced, ytd_invoiced, mtd_invoiced, latest_invoice_date",
         )
+        .order("job_id")
+        .range(from, to),
+    ),
+    // Direct-labor share of Employee Benefits, distributed to jobs pro-rata
+    // by monthly labor cost — same math as the Income Statement's
+    // "Employee Benefits (Allocated)" line (migration 0021).
+    fetchAllRows((from, to) =>
+      supabase
+        .from("job_benefit_allocation_totals")
+        .select("job_id, total_amount, ytd_amount, mtd_amount")
         .order("job_id")
         .range(from, to),
     ),
@@ -178,6 +190,16 @@ export default async function JobsPage({
         ytd: r.ytd_invoiced == null ? null : Number(r.ytd_invoiced),
         mtd: r.mtd_invoiced == null ? null : Number(r.mtd_invoiced),
         latestInvoiceDate: (r.latest_invoice_date as string | null) ?? null,
+      },
+    ]),
+  );
+  const benefitByJob = new Map(
+    benefitRows.map((r) => [
+      r.job_id as string,
+      {
+        amount: Number(r.total_amount ?? 0),
+        ytd: r.ytd_amount == null ? null : Number(r.ytd_amount),
+        mtd: r.mtd_amount == null ? null : Number(r.mtd_amount),
       },
     ]),
   );
@@ -247,6 +269,7 @@ export default async function JobsPage({
   const rows: JobRowData[] = jobs.map((j) => {
     const cost = costByJob.get(j.id);
     const invoice = invoiceByJob.get(j.id);
+    const benefit = benefitByJob.get(j.id);
     const totalCost = !cost
       ? null
       : period === "all"
@@ -265,6 +288,11 @@ export default async function JobsPage({
       active: j.active,
       lastSyncedAt: j.last_synced_at,
       totalCost,
+      benefitAllocation: !benefit
+        ? null
+        : period === "all"
+          ? benefit.amount
+          : benefit[period],
       invoiced,
       currentGm:
         totalCost != null && invoiced != null ? invoiced - totalCost : null,
@@ -284,6 +312,8 @@ export default async function JobsPage({
         return r.customerName?.toLowerCase() ?? null;
       case "cost":
         return r.totalCost;
+      case "benefits":
+        return r.benefitAllocation;
       case "invoiced":
         return r.invoiced;
       case "gm":
@@ -470,6 +500,7 @@ export default async function JobsPage({
                 {showCompany && <Th>{sortHeader("company", "QB Company")}</Th>}
                 <Th>{sortHeader("customer", "Customer")}</Th>
                 <Th right>{sortHeader("cost", "Actual cost")}</Th>
+                <Th right>{sortHeader("benefits", "Benefit allocation")}</Th>
                 <Th right>{sortHeader("invoiced", "Invoiced")}</Th>
                 <Th right>{sortHeader("gm", "Current GM")}</Th>
                 <Th right>{sortHeader("latest", "Latest transaction")}</Th>

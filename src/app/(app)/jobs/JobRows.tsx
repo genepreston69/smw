@@ -15,6 +15,9 @@ export interface JobRowData {
   lastSyncedAt: string | null;
   /** null when the job has no imported cost lines. */
   totalCost: number | null;
+  /** Direct-labor share of Employee Benefits allocated to this job (same
+      math as the Income Statement); null when nothing was allocated. */
+  benefitAllocation: number | null;
   /** null when the job has no imported invoices. */
   invoiced: number | null;
   /** Invoiced minus cost; null unless the job has both. */
@@ -47,9 +50,10 @@ export function JobRows({
   const [costs, setCosts] = useState<Record<string, LoadState>>({});
   const [, startTransition] = useTransition();
 
-  // Job + Customer + Actual cost + Invoiced + Current GM + Latest transaction +
-  // Active + Last synced, plus optional columns.
-  const colSpan = 8 + (showCompany ? 1 : 0) + (isAdmin ? 1 : 0);
+  // Job + Customer + Actual cost + Benefit allocation + Invoiced +
+  // Current GM + Latest transaction + Active + Last synced, plus optional
+  // columns.
+  const colSpan = 9 + (showCompany ? 1 : 0) + (isAdmin ? 1 : 0);
 
   const toggle = (jobId: string) => {
     setOpen((prev) => {
@@ -100,6 +104,9 @@ export function JobRows({
               <td className="px-4 py-3 text-ink-600">{j.customerName ?? "—"}</td>
               <td className="px-4 py-3 text-right tabular-nums">
                 {j.totalCost != null ? money(j.totalCost) : "—"}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">
+                {j.benefitAllocation != null ? money(j.benefitAllocation) : "—"}
               </td>
               <td className="px-4 py-3 text-right tabular-nums">
                 {j.invoiced != null ? money(j.invoiced) : "—"}

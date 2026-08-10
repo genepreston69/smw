@@ -69,6 +69,8 @@ New-build deck barge quoting (`src/app/(app)/barge/`) reuses the plan blueprint 
 - Sister-company customers (fuzzy name matching in `src/lib/enterprise.ts`) → Intercompany.
 - No cost/invoice activity since `NO_TXN_CUTOFF` → No Transactions (US Army Corps of Engineers jobs are exempt and stay under Customer Jobs).
 
+The dashboard's Benefit allocation column (also in the workbook export) comes from the `job_benefit_allocation_totals` view (migration `0021`): per QB company × month it computes the Income Statement's employee-benefits allocation — Employee Benefits × Direct Labor ÷ (Direct Labor + Salaries & Wages), matched via `gl_accounts.category` and account names — and distributes it across that company's jobs pro-rata by direct-labor cost. Its matching/math is a deliberate SQL mirror of `allocateBenefits` in `src/lib/financials.ts` (same lockstep contract as `costing.ts`); the view is intentionally **not** `security_invoker` so it can aggregate the admin-only `gl_lines` while exposing only per-job dollars to all signed-in users.
+
 ## Conventions
 
 - Path alias `@/*` → `./src/*`.
