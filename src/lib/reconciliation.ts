@@ -3,8 +3,10 @@
 //
 // The flow: /financials/reconciliation uploads the workbook QuickBooks
 // produces from Reports → Profit and Loss (monthly columns), the server
-// action parses it into account × month amounts, pulls the same period from
-// gl_pivot (row_dim 'account', col_dim 'month', all companies, Revenue +
+// action parses it into account × month amounts, truncates the result at the
+// last complete month (omitMonthsAfter — the in-progress month is omitted
+// app-wide, and a partial month can never tie anyway), pulls the same period
+// from gl_pivot (row_dim 'account', col_dim 'month', all companies, Revenue +
 // Expense), and this module lines the two up. Both sides use QuickBooks'
 // natural sign convention — income positive, expenses positive — so amounts
 // compare directly with no sign flipping.
@@ -265,6 +267,53 @@ export function parsePlWorkbook(grid: GridValue[][]): ParsedPl {
   };
 }
 
+/**
+ * Drop every month column after maxMonthKey (YYYY-MM) from a parsed export —
+ * the reconciliation always runs against complete months only, so the
+ * caller passes the last complete month and any current-month column
+ * (full or partial, e.g. "Aug 1-10, 2026") falls away. Account rows are
+ * re-totaled over the surviving columns; rows whose only activity was in
+ * dropped months disappear with them. Throws PlParseError when nothing
+ * survives — an export covering only the in-progress month can't reconcile.
+ */
+export function omitMonthsAfter(parsed: ParsedPl, maxMonthKey: string): ParsedPl {
+  const kept = parsed.columns.filter((c) => c.key <= maxMonthKey);
+  if (kept.length === parsed.columns.length) return parsed;
+  if (kept.length === 0) {
+    throw new PlParseError(
+      "The export only covers the current month, which is excluded — reconciliation runs through the last complete month. Export a Profit and Loss that includes prior months.",
+    );
+  }
+  const dropped = parsed.columns.filter((c) => c.key > maxMonthKey);
+  const keptKeys = new Set(kept.map((c) => c.key));
+  const filterCells = (cells: Record<string, number>) => {
+    const out: Record<string, number> = {};
+    let total = 0;
+    for (const [k, v] of Object.entries(cells)) {
+      if (!keptKeys.has(k)) continue;
+      out[k] = v;
+      total += v;
+    }
+    return { cells: out, total };
+  };
+
+  return {
+    columns: kept,
+    rows: parsed.rows
+      .map((r) => ({ ...r, ...filterCells(r.cells) }))
+      .filter((r) => Object.keys(r.cells).length > 0),
+    reportedNetIncome: parsed.reportedNetIncome
+      ? { ...filterCells(parsed.reportedNetIncome.cells) }
+      : null,
+    start: kept[0].start,
+    end: kept[kept.length - 1].end,
+    warnings: [
+      ...parsed.warnings,
+      `${dropped.length === 1 ? "Column" : "Columns"} ${dropped.map((c) => `"${c.label}"`).join(", ")} ${dropped.length === 1 ? "was" : "were"} excluded — reconciliation runs through the last complete month, so the in-progress month never enters the tie-out.`,
+    ],
+  };
+}
+
 /* ---------------------------------------------------------------------------
    Comparison against gl_pivot cells.
 --------------------------------------------------------------------------- */
@@ -277,6 +326,14 @@ export interface MonthDiff {
 }
 
 export type ReconStatus = "tied" | "variance" | "qb_only" | "gl_only";
+
+/** Display names for each status — shared by the page and the Excel export. */
+export const RECON_STATUS_LABELS: Record<ReconStatus, string> = {
+  tied: "Tied",
+  variance: "Variance",
+  qb_only: "Missing from GL",
+  gl_only: "Not in export",
+};
 
 export interface AccountRecon {
   account: string;
