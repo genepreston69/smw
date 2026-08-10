@@ -26,6 +26,7 @@ import {
 import {
   Card,
   EmptyState,
+  MonthSelect,
   PageHeader,
   StatTile,
   buttonCls,
@@ -271,23 +272,9 @@ export default async function IncomeStatementPage({
           {company !== "all" && <input type="hidden" name="company" value={company} />}
           {colDim !== "month" && <input type="hidden" name="cols" value={colDim} />}
           <div className="flex flex-wrap items-center gap-2 py-0.5">
-            <input
-              type="month"
-              name="from"
-              defaultValue={from}
-              min="2023-01"
-              max={maxMonth}
-              className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
-            />
+            <MonthSelect name="from" defaultValue={from} min="2023-01" max={maxMonth} />
             <span className="text-sm text-ink-400">to</span>
-            <input
-              type="month"
-              name="to"
-              defaultValue={to}
-              min="2023-01"
-              max={maxMonth}
-              className="rounded-md border border-line bg-white px-3 py-1 text-sm text-ink-900"
-            />
+            <MonthSelect name="to" defaultValue={to} min="2023-01" max={maxMonth} />
             <button type="submit" className={buttonCls("secondary", "sm")}>
               Apply
             </button>

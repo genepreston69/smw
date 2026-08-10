@@ -22,6 +22,7 @@ import {
   Card,
   CardTitle,
   EmptyState,
+  MonthSelect,
   PageHeader,
   StatTile,
   Table,
@@ -313,22 +314,20 @@ export default async function CapitalizedLaborPage({
           {activeTab !== "all" && (
             <input type="hidden" name="tab" value={activeTab} />
           )}
-          <input
-            type="month"
+          <MonthSelect
             name="from"
             defaultValue={customFrom ?? ""}
             min={MIN_MONTH}
             max={nowMonth}
-            className="rounded-md border border-line bg-white px-2 py-1 text-sm text-ink-900"
+            placeholder="Start"
           />
           <span className="text-sm text-ink-400">to</span>
-          <input
-            type="month"
+          <MonthSelect
             name="to"
             defaultValue={customTo ?? ""}
             min={MIN_MONTH}
             max={nowMonth}
-            className="rounded-md border border-line bg-white px-2 py-1 text-sm text-ink-900"
+            placeholder="End"
           />
           <button type="submit" className={buttonCls("secondary", "sm")}>
             Apply

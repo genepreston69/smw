@@ -222,3 +222,57 @@ export function Alert({
     </div>
   );
 }
+
+const MONTH_NAMES = [
+  "Jan", "Feb", "Mar", "Apr", "May", "Jun",
+  "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
+];
+
+/** Month picker for GET filter forms, as a native select of YYYY-MM values
+    (newest first). Desktop Safari doesn't support <input type="month"> — it
+    degrades to a bare text field whose free-typed value fails YYYY-MM
+    parsing server-side, silently resetting the filter — so month ranges use
+    a select, which behaves identically everywhere. Pass `placeholder` to
+    prepend an empty option for filters where no selection is a valid state. */
+export function MonthSelect({
+  name,
+  defaultValue,
+  min,
+  max,
+  placeholder,
+}: {
+  name: string;
+  defaultValue?: string;
+  /** Earliest selectable month (YYYY-MM). */
+  min: string;
+  /** Latest selectable month (YYYY-MM). */
+  max: string;
+  placeholder?: string;
+}) {
+  const months: string[] = [];
+  let [y, m] = max.split("-").map(Number);
+  for (;;) {
+    const key = `${y}-${String(m).padStart(2, "0")}`;
+    if (key < min || months.length > 600) break;
+    months.push(key);
+    m -= 1;
+    if (m === 0) {
+      m = 12;
+      y -= 1;
+    }
+  }
+  return (
+    <select
+      name={name}
+      defaultValue={defaultValue ?? ""}
+      className="rounded-md border border-line bg-white px-2 py-1.5 text-sm text-ink-900"
+    >
+      {placeholder != null && <option value="">{placeholder}</option>}
+      {months.map((key) => (
+        <option key={key} value={key}>
+          {`${MONTH_NAMES[Number(key.slice(5)) - 1]} ${key.slice(0, 4)}`}
+        </option>
+      ))}
+    </select>
+  );
+}
