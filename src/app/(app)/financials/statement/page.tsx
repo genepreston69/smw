@@ -366,7 +366,10 @@ export default async function IncomeStatementPage({
         Salaries &amp; Wages by category name. The remainder
         stays in Operating Expenses, with the movement shown as a
         &ldquo;Less: allocated to Direct Costs&rdquo; line, so Net income is
-        unaffected. Amounts are otherwise the same natural-signed ledger
+        unaffected. The % column after each amount is the common-size view:
+        the amount as a percent of the same column&rsquo;s total income
+        (columns with no income show a dash). Amounts are otherwise the same
+        natural-signed ledger
         activity as the Financials pivot, so Net income before eliminations
         matches the Financials page for the same filters.
         {eliminations

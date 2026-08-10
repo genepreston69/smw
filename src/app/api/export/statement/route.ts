@@ -186,6 +186,7 @@ export async function GET(request: Request) {
       `${monthLabel(from)} – ${monthLabel(to)}`,
       "Grouped by the Category assigned to each account on the Chart of Accounts page",
       "Amounts are natural signed ledger activity",
+      "% columns show each amount as a percent of the same column's total income",
     ]
       .filter(Boolean)
       .join(" · "),
@@ -193,22 +194,36 @@ export async function GET(request: Request) {
   sheet.addRow([]);
   const header = sheet.addRow([
     "Category",
-    ...colLabels,
-    ...(showRowTotal ? ["Total"] : []),
+    ...colLabels.flatMap((label) => [label, "%"]),
+    ...(showRowTotal ? ["Total", "%"] : []),
   ]);
   header.font = { bold: true };
   sheet.views = [{ state: "frozen", ySplit: 4 }];
 
   sheet.getColumn(1).width = 42;
+  // Each value column is an amount/percent pair: dollars, then that amount
+  // as a share of the same column's total income (common size).
   for (let i = 0; i < colLabels.length + (showRowTotal ? 1 : 0); i++) {
-    const col = sheet.getColumn(i + 2);
-    col.width = 15;
-    col.numFmt = "#,##0.00";
+    const amountCol = sheet.getColumn(2 + i * 2);
+    amountCol.width = 15;
+    amountCol.numFmt = "#,##0.00";
+    const pctCol = sheet.getColumn(3 + i * 2);
+    pctCol.width = 9;
+    pctCol.numFmt = "0.0%";
   }
 
+  const incomeFor = (colKey: string | null): number =>
+    colKey === null
+      ? statement.income.total
+      : (statement.income.cells[colKey] ?? 0);
+  const withPct = (v: number | null, colKey: string | null) => {
+    const denom = incomeFor(colKey);
+    return [v, v !== null && denom !== 0 ? v / denom : null];
+  };
+
   const totalsCells = (t: StatementTotals) => [
-    ...statement.colKeys.map((k) => t.cells[k] ?? null),
-    ...(showRowTotal ? [t.total] : []),
+    ...statement.colKeys.flatMap((k) => withPct(t.cells[k] ?? null, k)),
+    ...(showRowTotal ? withPct(t.total, null) : []),
   ];
 
   const writeSection = (section: StatementSection) => {
