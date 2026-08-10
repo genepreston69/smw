@@ -16,6 +16,7 @@ import {
   CAP_LABOR_BUCKET_LABELS,
   type CapLaborBucket,
 } from "@/lib/capitalizedLabor";
+import { lastDayOfMonth, monthLabel } from "@/lib/financials";
 import {
   Card,
   CardTitle,
@@ -37,32 +38,68 @@ interface JobRow {
 
 // Time filter for the amounts. Switching periods never changes which jobs
 // are listed or how they bucket — only the amounts shown, matching the Jobs
-// dashboard.
-type Period = "all" | "ytd" | "mtd";
+// dashboard. Besides the preset periods, a from/to month range (the same
+// picker as the Financials pages) sums an arbitrary window.
+type Period = "all" | "ytd" | "mtd" | "custom";
 
-const PERIODS: { key: Period; label: string }[] = [
+const PERIODS: { key: Exclude<Period, "custom">; label: string }[] = [
   { key: "all", label: "All time" },
   { key: "ytd", label: "Year to date" },
   { key: "mtd", label: "Month to date" },
 ];
 
+const MONTH_PARAM = /^\d{4}-\d{2}$/;
+
+// Imported history pools from the start of 2023 (see JOB_COSTS_START_DATE in
+// src/lib/quickbooks.ts — pre-2025 rows are frozen history).
+const MIN_MONTH = "2023-01";
+
 export default async function CapitalizedLaborPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string; period?: string }>;
+  searchParams: Promise<{
+    tab?: string;
+    period?: string;
+    from?: string;
+    to?: string;
+  }>;
 }) {
-  const { tab, period: periodParam } = await searchParams;
-  const period: Period =
-    periodParam === "ytd" || periodParam === "mtd" ? periodParam : "all";
+  const { tab, period: periodParam, from: fromParam, to: toParam } =
+    await searchParams;
   const activeTab: CapLaborBucket | "all" =
     tab === "nonbillable" || tab === "intercompany" ? tab : "all";
 
+  // Unlike Financials, the in-progress month is selectable here — the page
+  // has a month-to-date preset, so the range picker allows it too.
+  const nowMonth = new Date().toISOString().slice(0, 7);
+  const clamp = (m: string) => (m < MIN_MONTH ? MIN_MONTH : m > nowMonth ? nowMonth : m);
+  // A valid from/to pair overrides the preset pills; a lone bound fills the
+  // other end with the data's edge.
+  let customFrom = MONTH_PARAM.test(fromParam ?? "") ? clamp(fromParam!) : null;
+  let customTo = MONTH_PARAM.test(toParam ?? "") ? clamp(toParam!) : null;
+  if (customFrom || customTo) {
+    customFrom ??= MIN_MONTH;
+    customTo ??= nowMonth;
+    if (customFrom > customTo) [customFrom, customTo] = [customTo, customFrom];
+  }
+  const period: Period = customFrom
+    ? "custom"
+    : periodParam === "ytd" || periodParam === "mtd"
+      ? periodParam
+      : "all";
+
+  // Preset pills drop any custom range; tab links keep the whole time filter.
   const href = (opts?: { tab?: string; period?: Period }) => {
     const params = new URLSearchParams();
     const t = opts && "tab" in opts ? opts.tab : activeTab;
     if (t && t !== "all") params.set("tab", t);
     const p = opts && "period" in opts ? opts.period : period;
-    if (p && p !== "all") params.set("period", p);
+    if (p === "custom" && customFrom && customTo) {
+      params.set("from", customFrom);
+      params.set("to", customTo);
+    } else if (p && p !== "all" && p !== "custom") {
+      params.set("period", p);
+    }
     const q = params.toString();
     return q ? `/capitalized-labor?${q}` : "/capitalized-labor";
   };
@@ -104,7 +141,16 @@ export default async function CapitalizedLaborPage({
   const today = new Date();
   const ytdStart = `${today.getUTCFullYear()}-01-01`;
   const mtdStart = `${today.getUTCFullYear()}-${String(today.getUTCMonth() + 1).padStart(2, "0")}-01`;
-  const periodStart = period === "ytd" ? ytdStart : period === "mtd" ? mtdStart : null;
+  const periodStart =
+    period === "custom"
+      ? `${customFrom}-01`
+      : period === "ytd"
+        ? ytdStart
+        : period === "mtd"
+          ? mtdStart
+          : null;
+  // Only a custom range has an upper bound — the presets all run to today.
+  const periodEnd = period === "custom" ? lastDayOfMonth(customTo!) : null;
 
   // Debits (positive amounts) are payroll allocations posted to the job;
   // credits (negative amounts) are labor moved back off the labor accounts —
@@ -134,7 +180,10 @@ export default async function CapitalizedLaborPage({
     }
     const amount = Number(l.amount ?? 0);
     const date = (l.txn_date as string | null) ?? null;
-    if (!periodStart || (date && date >= periodStart)) {
+    const inPeriod =
+      (!periodStart || (date && date >= periodStart)) &&
+      (!periodEnd || (date && date <= periodEnd));
+    if (inPeriod) {
       if (amount >= 0) agg.periodDebits += amount;
       else agg.periodCredits += -amount;
       agg.inPeriod = true;
@@ -199,7 +248,12 @@ export default async function CapitalizedLaborPage({
   const capitalizedTotal = candidates.reduce((s, c) => s + c.periodCredits, 0);
   const entryCount = (list: { entryCount: number }[]) =>
     list.reduce((s, c) => s + c.entryCount, 0);
-  const periodLabel = PERIODS.find((p) => p.key === period)!.label.toLowerCase();
+  const periodLabel =
+    period === "custom"
+      ? customFrom === customTo
+        ? monthLabel(customFrom!)
+        : `${monthLabel(customFrom!)} – ${monthLabel(customTo!)}`
+      : PERIODS.find((p) => p.key === period)!.label.toLowerCase();
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -210,12 +264,44 @@ export default async function CapitalizedLaborPage({
 
   return (
     <div>
-      <div className="mb-4 flex w-fit gap-1 rounded-lg border border-line bg-white p-1">
+      <div className="mb-4 flex w-fit flex-wrap items-center gap-1 rounded-lg border border-line bg-white p-1">
         {PERIODS.map(({ key, label }) => (
           <Link key={key} href={href({ period: key })} className={tabCls(period === key)}>
             {label}
           </Link>
         ))}
+        <span className="mx-1 h-5 w-px bg-line" />
+        {/* Custom month range; submitting drops the preset and filters the
+            amounts to from..to. */}
+        <form
+          method="get"
+          action="/capitalized-labor"
+          className="flex items-center gap-2 px-1"
+        >
+          {activeTab !== "all" && (
+            <input type="hidden" name="tab" value={activeTab} />
+          )}
+          <input
+            type="month"
+            name="from"
+            defaultValue={customFrom ?? ""}
+            min={MIN_MONTH}
+            max={nowMonth}
+            className="rounded-md border border-line bg-white px-2 py-1 text-sm text-ink-900"
+          />
+          <span className="text-sm text-ink-400">to</span>
+          <input
+            type="month"
+            name="to"
+            defaultValue={customTo ?? ""}
+            min={MIN_MONTH}
+            max={nowMonth}
+            className="rounded-md border border-line bg-white px-2 py-1 text-sm text-ink-900"
+          />
+          <button type="submit" className={buttonCls("secondary", "sm")}>
+            Apply
+          </button>
+        </form>
       </div>
 
       <PageHeader
