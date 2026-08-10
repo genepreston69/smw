@@ -1,7 +1,7 @@
 import { Link2 } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
-import { QbSyncButton } from "@/components/QbSyncButton";
+import { QbSyncButtons } from "@/components/QbSyncButton";
 import { QbDisconnectButton } from "@/components/QbDisconnectButton";
 import { RoleSelect } from "@/components/RoleSelect";
 import { Alert, Card, CardTitle, PageHeader, Table, Th, buttonCls } from "@/components/ui";
@@ -103,10 +103,13 @@ export default async function SettingsPage({
                   : "Connect QuickBooks"}
               </a>
               {connections.length > 0 && (
-                <QbSyncButton
-                  realmIds={connections
+                <QbSyncButtons
+                  companies={connections
                     .filter((c) => c.status === "connected")
-                    .map((c) => c.realm_id)}
+                    .map((c) => ({
+                      realmId: c.realm_id,
+                      label: c.company_name ?? `Company ${c.realm_id}`,
+                    }))}
                 />
               )}
             </div>
