@@ -378,16 +378,21 @@ interface QboJournalEntry {
 // estimating default (project_plans.labor_cost_rate default).
 const DEFAULT_LABOR_COST_RATE = 37.15;
 
-// Only transactions dated on or after this are imported into job_costs.
-// The transaction-history feature pools costs from the start of 2023. Must
-// reach back at least to NO_TXN_CUTOFF (src/lib/jobViews.ts) so the
+// The books are audited through 2024-12-31, so syncs import — and refresh —
+// only transactions dated on or after this. Rows dated before it were
+// imported prior to the freeze and persist untouched in Supabase (the
+// transaction-history feature still pools costs from the start of 2023).
+// Must reach back at least to NO_TXN_CUTOFF (src/lib/jobViews.ts) so the
 // No Transactions view can classify against real data.
-const JOB_COSTS_START_DATE = "2023-01-01";
+const JOB_COSTS_START_DATE = "2025-01-01";
 
 // General-ledger lines (gl_lines) are imported from this date forward.
-// Balance-sheet accounts on the Financials page therefore show activity
-// since this date, not ending balances.
-const FINANCIALS_START_DATE = "2023-01-01";
+// Pre-2025 ledger lines are frozen audited history: migration 0020 marked
+// them archived, gl_line_facts keeps them visible outside the generation
+// scheme, and prune_gl_lines never touches them. Balance-sheet accounts on
+// the Financials page show activity since 2023-01-01 (frozen history plus
+// this import window), not ending balances.
+const FINANCIALS_START_DATE = "2025-01-01";
 
 // Direct-cost buckets for the per-job transaction history.
 type CostType = "materials" | "labor" | "other";
@@ -765,12 +770,17 @@ export async function syncJobCosts(): Promise<{
       ...journalRows,
     ];
 
-    // Full refresh per company so edits/deletions in QuickBooks are reflected.
+    // Refresh the import window per company so edits/deletions in QuickBooks
+    // are reflected. Only rows on or after JOB_COSTS_START_DATE are cleared —
+    // earlier rows are frozen audited history and are never deleted or
+    // reimported. (No row can have a null txn_date: the QBO query filters on
+    // TxnDate, so undated transactions were never imported.)
     const { error: delError } = await supabase
       .from("job_costs")
       .delete()
       .eq("org_id", org.id)
-      .eq("realm_id", realmId);
+      .eq("realm_id", realmId)
+      .gte("txn_date", JOB_COSTS_START_DATE);
     if (delError) throw new Error(`Job cost refresh failed: ${delError.message}`);
 
     if (rows.length > 0) {
@@ -805,12 +815,13 @@ export async function syncJobCosts(): Promise<{
       });
     }
 
-    // Full refresh per company, same as job_costs.
+    // Refresh the import window per company, same as job_costs.
     const { error: invDelError } = await supabase
       .from("job_invoices")
       .delete()
       .eq("org_id", org.id)
-      .eq("realm_id", realmId);
+      .eq("realm_id", realmId)
+      .gte("txn_date", JOB_COSTS_START_DATE);
     if (invDelError)
       throw new Error(`Invoice refresh failed: ${invDelError.message}`);
 
@@ -1020,7 +1031,9 @@ function quarterRanges(startDate: string): { start: string; end: string }[] {
 
 /**
  * Import the chart of accounts and all posted general-ledger lines since
- * FINANCIALS_START_DATE. Pass a realmId to import a single company — the
+ * FINANCIALS_START_DATE. Ledger lines dated before that (through the
+ * 2024-12-31 audit) are frozen in gl_lines as archived rows and are not
+ * re-fetched. Pass a realmId to import a single company — the
  * full import for every company in one serverless invocation exceeds
  * Vercel's function window, so the sync button runs one request per realm.
  */
@@ -1093,8 +1106,10 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
       `QB GL sync ${realmId} (${companyName ?? "unnamed"}): ${accounts.length} accounts, ${glLines.length} ledger lines since ${FINANCIALS_START_DATE}`,
     );
 
-    // Full refresh per company so edits/deletions in QuickBooks are
-    // reflected. gl_lines has no unique key (report rows carry no stable
+    // Full refresh of the import window per company so edits/deletions in
+    // QuickBooks are reflected; archived pre-FINANCIALS_START_DATE rows sit
+    // outside the generation scheme (migration 0020) and are untouched.
+    // gl_lines has no unique key (report rows carry no stable
     // per-line id), so a direct delete-then-insert doubles rows when two
     // syncs overlap — and doing the whole replacement in one transaction
     // outruns statement_timeout at real ledger sizes. Generation scheme
