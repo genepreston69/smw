@@ -23,7 +23,7 @@ export async function GET() {
 
   // Paged reads so the workbook includes every job past Supabase's
   // 1000-row cap; the dashboard (src/app/(app)/jobs/page.tsx) does the same.
-  const [jobs, { data: connRows }, costRows, invRows] = await Promise.all([
+  const [jobs, { data: connRows }, costRows, invRows, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -48,6 +48,15 @@ export async function GET() {
       supabase
         .from("job_invoice_totals")
         .select("job_id, total_invoiced, latest_invoice_date")
+        .order("job_id")
+        .range(from, to),
+    ),
+    // Direct-labor share of Employee Benefits allocated per job, same as the
+    // dashboard's Benefit allocation column (migration 0021).
+    fetchAllRows((from, to) =>
+      supabase
+        .from("job_benefit_allocation_totals")
+        .select("job_id, total_amount")
         .order("job_id")
         .range(from, to),
     ),
@@ -77,6 +86,10 @@ export async function GET() {
         latestInvoiceDate: (r.latest_invoice_date as string | null) ?? null,
       },
     ]),
+  );
+
+  const benefitByJob = new Map(
+    benefitRows.map((r) => [r.job_id as string, Number(r.total_amount ?? 0)]),
   );
 
   // Latest activity across costs and invoices (YYYY-MM-DD string compare).
@@ -174,6 +187,7 @@ export async function GET() {
       { header: "Customer", key: "customer", width: 28 },
       { header: "Materials", key: "materials", width: 14, style: { numFmt: moneyFmt } },
       { header: "Direct Labor", key: "labor", width: 14, style: { numFmt: moneyFmt } },
+      { header: "Benefit Allocation", key: "benefits", width: 17, style: { numFmt: moneyFmt } },
       { header: "Other Direct Costs", key: "other", width: 18, style: { numFmt: moneyFmt } },
       { header: "Actual Cost", key: "total", width: 14, style: { numFmt: moneyFmt } },
       { header: "Actual Hours", key: "hours", width: 13, style: { numFmt: "#,##0.0" } },
@@ -197,6 +211,7 @@ export async function GET() {
         customer: j.customer?.display_name ?? "",
         materials: cost ? cost.materials : null,
         labor: cost ? cost.labor : null,
+        benefits: benefitByJob.get(j.id) ?? null,
         other: cost ? cost.other : null,
         total: cost ? cost.amount : null,
         hours: cost && cost.hours > 0 ? cost.hours : null,
