@@ -2,7 +2,7 @@
 
 import { Fragment, useState } from "react";
 import { ChevronRight } from "lucide-react";
-import { moneyWhole } from "@/lib/format";
+import { moneyWhole, pct } from "@/lib/format";
 import type {
   CategoryStatement,
   StatementEliminations,
@@ -60,17 +60,45 @@ export function StatementTable({
     </td>
   );
 
+  // Common-size denominator: the same column's total income (null = row total).
+  const revenueFor = (colKey: string | null): number =>
+    colKey === null
+      ? statement.income.total
+      : (statement.income.cells[colKey] ?? 0);
+
+  const pctCell = (v: number | undefined, colKey: string | null, bold = false) => {
+    const denom = revenueFor(colKey);
+    const show = v !== undefined && v !== 0 && denom !== 0;
+    return (
+      <td
+        className={`whitespace-nowrap py-2 pr-4 pl-1 text-right text-xs tabular-nums ${
+          bold ? "font-medium" : ""
+        } ${show && v < 0 ? "text-bad-600" : "text-ink-500"}`}
+      >
+        {show ? pct(v / denom) : <span className="text-ink-400">—</span>}
+      </td>
+    );
+  };
+
   const totalCells = (t: StatementTotals, bold = false) => (
     <>
       {statement.colKeys.map((k) => (
-        <Fragment key={k}>{moneyCell(t.cells[k], bold)}</Fragment>
+        <Fragment key={k}>
+          {moneyCell(t.cells[k], bold)}
+          {pctCell(t.cells[k], k, bold)}
+        </Fragment>
       ))}
-      {showRowTotal && moneyCell(t.total, bold)}
+      {showRowTotal && (
+        <>
+          {moneyCell(t.total, bold)}
+          {pctCell(t.total, null, bold)}
+        </>
+      )}
     </>
   );
 
   const sectionRows = (section: StatementSection) => {
-    const colSpan = 1 + statement.colKeys.length + (showRowTotal ? 1 : 0);
+    const colSpan = 1 + 2 * statement.colKeys.length + (showRowTotal ? 2 : 0);
     return (
       <Fragment key={section.label}>
         <tr className="bg-surface/50">
@@ -150,11 +178,17 @@ export function StatementTable({
           <tr>
             <Th>Category</Th>
             {statement.colKeys.map((k) => (
-              <Th key={k} right>
-                {colLabels[k] ?? k}
-              </Th>
+              <Fragment key={k}>
+                <Th right>{colLabels[k] ?? k}</Th>
+                <Th right>%</Th>
+              </Fragment>
             ))}
-            {showRowTotal && <Th right>Total</Th>}
+            {showRowTotal && (
+              <>
+                <Th right>Total</Th>
+                <Th right>%</Th>
+              </>
+            )}
           </tr>
         }
       >
@@ -180,7 +214,7 @@ export function StatementTable({
           <>
             <tr className="bg-surface/50">
               <td
-                colSpan={1 + statement.colKeys.length + (showRowTotal ? 1 : 0)}
+                colSpan={1 + 2 * statement.colKeys.length + (showRowTotal ? 2 : 0)}
                 className="px-4 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
               >
                 Intercompany eliminations
