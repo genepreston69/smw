@@ -14,7 +14,11 @@
 // Everything here is pure and JSON-serializable: the result crosses the
 // server-action boundary into a client component.
 
-import type { PivotCell } from "@/lib/financials";
+import {
+  buildEliminations,
+  type PivotCell,
+  type RealmRevenueSlice,
+} from "@/lib/financials";
 
 /** Amounts at or under half a cent apart are the same number — both sides
     round to cents, so anything smaller is floating-point noise. */
@@ -353,6 +357,13 @@ export interface ReconSection {
   diff: number;
 }
 
+export interface ReconEliminationLine {
+  label: string;
+  cells: Record<string, number>;
+  /** Signed effect on GL net income: negative backs the revenue out. */
+  total: number;
+}
+
 export interface ReconciliationResult {
   period: { start: string; end: string };
   columns: PlColumn[];
@@ -363,6 +374,16 @@ export interface ReconciliationResult {
     diff: number;
     monthDiffs: MonthDiff[];
   };
+  /** Intercompany eliminations applied to the GL side — the same
+      adjustment the Financials and Income Statement pages show. Null when
+      no intercompany revenue falls in the period. A consolidated QuickBooks
+      report that nets out intercompany activity ties to the
+      after-eliminations net income, not the raw one; the eliminated revenue
+      itself surfaces at account level as "Not in export" / variance rows. */
+  eliminations: {
+    lines: ReconEliminationLine[];
+    netIncome: { qb: number; gl: number; diff: number; monthDiffs: MonthDiff[] };
+  } | null;
   summary: {
     tied: number;
     variance: number;
@@ -392,6 +413,7 @@ const tie = (diff: number): boolean => Math.abs(diff) <= RECONCILE_TOLERANCE;
 export function buildReconciliation(
   parsed: ParsedPl,
   glCells: PivotCell[],
+  eliminationSlices: RealmRevenueSlice[] = [],
 ): ReconciliationResult {
   const monthKeys = new Set(parsed.columns.map((c) => c.key));
 
@@ -528,6 +550,39 @@ export function buildReconciliation(
     qbNetTotal += sign * row.total;
   }
 
+  // Intercompany eliminations, same rules as the Financials and Income
+  // Statement pages (buildEliminations): revenue Superior Marine bills as
+  // agent for its sister companies is recognized on two companies' books, so
+  // the raw GL net income is overstated against a consolidated report that
+  // nets it out. Slices outside the report's columns are trimmed first so
+  // the adjustment covers exactly the reconciled period.
+  const slicesInPeriod = eliminationSlices.map((s) => ({
+    ...s,
+    cells: s.cells.filter((c) => monthKeys.has(c.col_key)),
+  }));
+  const rawElims = buildEliminations(slicesInPeriod, {
+    bycol: new Map(Object.entries(glNetByMonth)),
+    total: glNetTotal,
+  });
+  const eliminations: ReconciliationResult["eliminations"] = rawElims
+    ? {
+        lines: rawElims.lines.map((l) => ({
+          label: l.label,
+          cells: Object.fromEntries(l.totals.bycol),
+          total: l.totals.total,
+        })),
+        netIncome: {
+          qb: qbNetTotal,
+          gl: rawElims.adjusted.total,
+          diff: qbNetTotal - rawElims.adjusted.total,
+          monthDiffs: monthDiffsFor(
+            qbNetByMonth,
+            Object.fromEntries(rawElims.adjusted.bycol),
+          ),
+        },
+      }
+    : null;
+
   const warnings = [...parsed.warnings];
   if (
     parsed.reportedNetIncome &&
@@ -548,6 +603,7 @@ export function buildReconciliation(
       diff: qbNetTotal - glNetTotal,
       monthDiffs: monthDiffsFor(qbNetByMonth, glNetByMonth),
     },
+    eliminations,
     summary,
     warnings,
   };

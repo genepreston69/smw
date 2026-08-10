@@ -120,11 +120,28 @@ export async function POST(request: Request) {
     ]).font = { bold: true };
   }
   sheet.addRow([
-    "Net income",
+    result.eliminations ? "Net income before eliminations" : "Net income",
     result.netIncome.qb,
     result.netIncome.gl,
     result.netIncome.diff,
   ]).font = { bold: true };
+
+  // Same adjustment as the page: eliminations hit only the GL side, and the
+  // meaningful tie for a consolidated export is the after-eliminations row.
+  if (result.eliminations) {
+    sheet.addRow(["Intercompany eliminations (imported GL side)"]).font = {
+      bold: true,
+    };
+    for (const line of result.eliminations.lines) {
+      sheet.addRow([line.label, null, line.total]);
+    }
+    sheet.addRow([
+      "Net income after eliminations",
+      result.eliminations.netIncome.qb,
+      result.eliminations.netIncome.gl,
+      result.eliminations.netIncome.diff,
+    ]).font = { bold: true };
+  }
 
   if (result.warnings.length > 0) {
     sheet.addRow([]);
@@ -140,8 +157,16 @@ export async function POST(request: Request) {
       ),
     ),
     ...result.netIncome.monthDiffs.map(
-      (m) => ["", "Net income", m] as const,
+      (m) =>
+        [
+          "",
+          result.eliminations ? "Net income before eliminations" : "Net income",
+          m,
+        ] as const,
     ),
+    ...(result.eliminations?.netIncome.monthDiffs.map(
+      (m) => ["", "Net income after eliminations", m] as const,
+    ) ?? []),
   ];
   if (monthRows.length > 0) {
     const detail = workbook.addWorksheet("Month variances");

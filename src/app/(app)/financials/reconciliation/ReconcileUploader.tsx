@@ -130,7 +130,13 @@ export function ReconcileUploader() {
     </span>
   );
 
-  const netTied = result ? Math.abs(result.netIncome.diff) <= 0.005 : false;
+  // A consolidated QuickBooks report nets out intercompany activity, so the
+  // meaningful tie is against the GL after the same eliminations the
+  // Financials and Income Statement pages apply; raw when none apply.
+  const netFinal = result
+    ? (result.eliminations?.netIncome ?? result.netIncome)
+    : null;
+  const netTied = netFinal ? Math.abs(netFinal.diff) <= 0.005 : false;
 
   return (
     <div className="flex flex-col gap-4">
@@ -205,14 +211,18 @@ export function ReconcileUploader() {
             />
             <StatTile
               label="Imported GL net income"
-              value={moneyWhole(result.netIncome.gl)}
-              hint="From gl_lines for the same period"
+              value={moneyWhole(netFinal!.gl)}
+              hint={
+                result.eliminations
+                  ? "After intercompany eliminations"
+                  : "From gl_lines for the same period"
+              }
             />
             <StatTile
               label="Difference"
               value={
                 <span className={netTied ? "text-ok-600" : "text-bad-600"}>
-                  {netTied ? "$0" : money(result.netIncome.diff)}
+                  {netTied ? "$0" : money(netFinal!.diff)}
                 </span>
               }
               hint={netTied ? "Ties to QuickBooks" : "QuickBooks minus imported GL"}
@@ -294,15 +304,55 @@ export function ReconcileUploader() {
                 })}
                 <tr className="bg-surface">
                   <td className="px-4 py-2 font-semibold text-ink-900">
-                    Net income
+                    {result.eliminations
+                      ? "Net income before eliminations"
+                      : "Net income"}
                   </td>
                   {amount(result.netIncome.qb, true)}
                   {amount(result.netIncome.gl, true)}
                   {diffCell(result.netIncome.diff, true)}
                   <td className="px-4 py-2 pl-6">
-                    {statusPill(netTied ? "tied" : "variance")}
+                    {!result.eliminations &&
+                      statusPill(netTied ? "tied" : "variance")}
                   </td>
                 </tr>
+                {result.eliminations && (
+                  <>
+                    <tr className="bg-surface/50">
+                      <td
+                        colSpan={5}
+                        className="px-4 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
+                      >
+                        Intercompany eliminations (imported GL side)
+                      </td>
+                    </tr>
+                    {result.eliminations.lines.map((l) => (
+                      <tr key={l.label} className="hover:bg-surface/50">
+                        <td
+                          className="max-w-[26rem] truncate px-4 py-2 text-ink-900"
+                          title={l.label}
+                        >
+                          {l.label}
+                        </td>
+                        <td className="px-4 py-2 text-right text-ink-400">—</td>
+                        {amount(l.total)}
+                        <td />
+                        <td />
+                      </tr>
+                    ))}
+                    <tr className="bg-surface">
+                      <td className="px-4 py-2 font-semibold text-ink-900">
+                        Net income after eliminations
+                      </td>
+                      {amount(result.eliminations.netIncome.qb, true)}
+                      {amount(result.eliminations.netIncome.gl, true)}
+                      {diffCell(result.eliminations.netIncome.diff, true)}
+                      <td className="px-4 py-2 pl-6">
+                        {statusPill(netTied ? "tied" : "variance")}
+                      </td>
+                    </tr>
+                  </>
+                )}
               </Table>
             )}
           </Card>
@@ -311,9 +361,16 @@ export function ReconcileUploader() {
             and expenses both positive, difference = QuickBooks − imported GL.
             &ldquo;Missing from GL&rdquo; accounts are in the export but have
             no imported ledger activity for the period; &ldquo;Not in
-            export&rdquo; is the reverse. If recent months don&rsquo;t tie,
-            run a QuickBooks sync in Settings first — the ledger here is only
-            as fresh as the last import.
+            export&rdquo; is the reverse. Intercompany eliminations back out
+            revenue Superior Marine bills as agent for its sister companies
+            and that both companies recognize — the same adjustment shown on
+            the Financials and Income Statement pages — so a consolidated
+            export that nets out intercompany activity should tie to Net
+            income after eliminations; the eliminated revenue still appears
+            at account level as &ldquo;Not in export&rdquo; or variance rows.
+            If recent months don&rsquo;t tie, run a QuickBooks sync in
+            Settings first — the ledger here is only as fresh as the last
+            import.
           </p>
         </>
       )}
