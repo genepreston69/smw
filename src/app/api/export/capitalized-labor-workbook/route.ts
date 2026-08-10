@@ -20,7 +20,7 @@ export async function GET() {
   }
 
   // Paged reads so the workbook includes every row past Supabase's 1000-row cap.
-  const [jobs, { data: connRows }, lines] = await Promise.all([
+  const [jobs, { data: connRows }, lines, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -44,10 +44,22 @@ export async function GET() {
         .order("id")
         .range(from, to),
     ),
+    // All-time employee-benefit allocation per job, matching the dashboard's
+    // Benefit allocation column (migration 0021/0022).
+    fetchAllRows((from, to) =>
+      supabase
+        .from("job_benefit_allocation_totals")
+        .select("job_id, total_amount")
+        .order("job_id")
+        .range(from, to),
+    ),
   ]);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),
+  );
+  const benefitByJob = new Map(
+    benefitRows.map((r) => [r.job_id as string, Number(r.total_amount ?? 0)]),
   );
 
   interface JobRow {
@@ -115,6 +127,7 @@ export async function GET() {
     { header: "Labor Posted", key: "debits", width: 14, style: { numFmt: moneyFmt } },
     { header: "Already Capitalized", key: "credits", width: 18, style: { numFmt: moneyFmt } },
     { header: "Awaiting Review", key: "net", width: 15, style: { numFmt: moneyFmt } },
+    { header: "Benefit Allocation", key: "benefits", width: 17, style: { numFmt: moneyFmt } },
   ];
   jobsSheet.getRow(1).font = { bold: true };
   jobsSheet.views = [{ state: "frozen", ySplit: 1 }];
@@ -140,6 +153,7 @@ export async function GET() {
       debits: agg.debits,
       credits: agg.credits,
       net,
+      benefits: benefitByJob.get(job.id) ?? null,
     });
   }
   const totalRow = jobsSheet.addRow({
@@ -148,6 +162,10 @@ export async function GET() {
     debits: summaryRows.reduce((s, r) => s + r.agg.debits, 0),
     credits: summaryRows.reduce((s, r) => s + r.agg.credits, 0),
     net: summaryRows.reduce((s, r) => s + r.net, 0),
+    benefits: summaryRows.reduce(
+      (s, r) => s + (benefitByJob.get(r.job.id) ?? 0),
+      0,
+    ),
   });
   totalRow.font = { bold: true };
 

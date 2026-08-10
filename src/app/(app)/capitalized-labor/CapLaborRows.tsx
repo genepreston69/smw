@@ -24,6 +24,10 @@ export interface CapLaborRowData {
   grossAmount: number | null;
   capitalizedAmount: number | null;
   amount: number | null;
+  /** Direct-labor share of Employee Benefits allocated to this job in the
+      selected period (same figure as the Jobs dashboard column); null when
+      nothing was allocated. */
+  benefitAllocation: number | null;
   entryCount: number;
   latestDate: string | null;
 }
@@ -50,8 +54,9 @@ export function CapLaborRows({
   const [, startTransition] = useTransition();
 
   // Job + Customer + Type + Entries + Latest entry + Labor posted +
-  // Already capitalized + Awaiting review, plus the optional company column.
-  const colSpan = 8 + (showCompany ? 1 : 0);
+  // Already capitalized + Awaiting review + Benefit allocation, plus the
+  // optional company column.
+  const colSpan = 9 + (showCompany ? 1 : 0);
 
   const toggle = (jobId: string) => {
     setOpen((prev) => {
@@ -123,6 +128,9 @@ export function CapLaborRows({
               </td>
               <td className="px-4 py-3 text-right font-medium tabular-nums text-ink-900">
                 {j.amount != null ? money(j.amount) : "—"}
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                {j.benefitAllocation != null ? money(j.benefitAllocation) : "—"}
               </td>
             </tr>
             {expanded && (
