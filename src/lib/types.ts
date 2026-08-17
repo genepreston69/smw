@@ -126,3 +126,31 @@ export interface ApprovalThreshold {
   required_approvals: number;
   label: string;
 }
+
+// Scheduled QuickBooks sync (migration 0024).
+export type QbSyncStepKind = "customers_jobs" | "job_costs" | "general_ledger";
+
+export interface QbSyncRun {
+  id: string;
+  trigger: "scheduled" | "manual";
+  local_date: string;
+  timezone: string;
+  status: "running" | "succeeded" | "partial" | "failed";
+  started_at: string;
+  finished_at: string | null;
+}
+
+export interface QbSyncStep {
+  id: string;
+  run_id: string;
+  position: number;
+  kind: QbSyncStepKind;
+  realm_id: string | null;
+  label: string;
+  status: "pending" | "running" | "succeeded" | "failed";
+  attempts: number;
+  started_at: string | null;
+  finished_at: string | null;
+  error: string | null;
+  result: Record<string, number> | null;
+}

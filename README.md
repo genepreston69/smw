@@ -64,8 +64,38 @@ The Supabase add-on covers the Supabase vars. Add these as well:
 | `QB_CLIENT_SECRET` | from the Intuit developer app |
 | `QB_ENVIRONMENT` | `production` (or `sandbox` while testing) |
 | `NEXT_PUBLIC_APP_URL` | `https://<your-domain>` (used for the OAuth redirect) |
+| `CRON_SECRET` | any long random string — enables the nightly QuickBooks sync |
+| `QB_SYNC_TIMEZONE` | optional, default `America/New_York` |
+| `QB_SYNC_HOUR` | optional, default `4` (local hour the nightly sync starts) |
 
-### 4. Deploy & bootstrap
+Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on cron
+requests, and `/api/cron/qb-sync` rejects anything else — without the variable
+set the nightly sync returns 503 and never runs.
+
+### 4. Nightly QuickBooks sync
+
+`vercel.json` runs `/api/cron/qb-sync` every 15 minutes between 08:00 and 11:45
+UTC. The endpoint reads the wall clock in `QB_SYNC_TIMEZONE`: the first tick at
+or after `QB_SYNC_HOUR` opens that morning's run (Postgres allows one per local
+date), and the ticks after it drain the run's queued steps — customers and jobs,
+then actual costs and invoices, then one general-ledger import per connected
+company, one step at a time. The UTC window is deliberately wide so 4 AM stays
+4 AM through daylight saving time and so a step stranded by a function timeout
+gets retried the same morning (three attempts, then it's marked failed and the
+run reports "completed with errors"). Admins see the last run and its steps on
+the Settings page.
+
+Notes:
+
+- Sub-daily cron schedules require a Vercel **Pro** plan. On Hobby, change the
+  schedule in `vercel.json` to a single daily entry (e.g. `0 8 * * *`) — the run
+  then gets one 300s window instead of several, which is enough for one or two
+  connected companies.
+- Changing `QB_SYNC_HOUR`/`QB_SYNC_TIMEZONE` to a time outside the UTC window
+  means no tick ever lands in the start window; move the `vercel.json` window
+  to match.
+
+### 5. Deploy & bootstrap
 
 1. Push / import this repo into Vercel and deploy.
 2. Sign up — the first account becomes **admin**.
@@ -93,5 +123,9 @@ npm run dev
   customer/job import. Tokens live in `qb_connections`, which has RLS
   deny-all: only the service role (server-side API routes) can touch them.
 - `src/proxy.ts` — Supabase session refresh + auth redirects.
+- `src/lib/qbSyncSchedule.ts` + `supabase/migrations/0024_scheduled_qb_sync.sql`
+  — the nightly sync's run/step queue. Postgres owns the rules (one run per
+  local date, one step running at a time, ordered steps, stale-step recovery);
+  the cron route is just a worker that claims steps until its window runs out.
 - Approval thresholds are data (`approval_thresholds` table), not code —
   adjust them in SQL, the app picks them up immediately.

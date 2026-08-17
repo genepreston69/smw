@@ -2,7 +2,16 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { supabaseAnonKey, supabaseUrl } from "@/lib/env";
 
-const PUBLIC_PATHS = ["/login", "/auth", "/api/qb/callback", "/eula", "/privacy"];
+// /api/cron/* is public to the proxy only: it has no user session to refresh
+// (Vercel cron sends no cookies) and authenticates itself with CRON_SECRET.
+const PUBLIC_PATHS = [
+  "/login",
+  "/auth",
+  "/api/qb/callback",
+  "/api/cron",
+  "/eula",
+  "/privacy",
+];
 
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
