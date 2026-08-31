@@ -178,32 +178,62 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
   const debits = state.lines.reduce((s, l) => s + Math.max(l.amount, 0), 0);
   const credits = state.lines.reduce((s, l) => s + Math.min(l.amount, 0), 0);
   const total = debits + credits;
+
+  // Lines arrive newest first; grouping them by calendar year with a net
+  // subtotal per year matches how the dashboard splits the totals. Undated
+  // lines (rare) fall into their own group at the end.
+  const groups: { year: string; lines: CapLaborLine[] }[] = [];
+  for (const l of state.lines) {
+    const year = l.txn_date ? l.txn_date.slice(0, 4) : "Undated";
+    const last = groups[groups.length - 1];
+    if (last && last.year === year) last.lines.push(l);
+    else groups.push({ year, lines: [l] });
+  }
+
   return (
     <div>
       <table className="w-full text-[0.8rem]">
-        <tbody className="divide-y divide-line/50">
-          {state.lines.map((l) => (
-            <tr key={l.id}>
-              <td className="w-24 py-1.5 pr-3 whitespace-nowrap text-ink-400">
-                {shortDate(l.txn_date)}
-              </td>
-              <td className="w-28 py-1.5 pr-3 whitespace-nowrap text-ink-400">
-                JE {l.qb_doc_number ?? `#${l.qb_txn_id}`}
-              </td>
-              <td className="py-1.5 pr-3 text-ink-900">{l.category ?? "—"}</td>
-              <td className="py-1.5 pr-3 text-ink-600">
-                {l.description ?? "—"}
-              </td>
-              <td
-                className={`w-24 py-1.5 text-right tabular-nums ${
-                  l.amount < 0 ? "text-ok-600" : "text-ink-900"
-                }`}
-              >
-                {money(l.amount)}
-              </td>
-            </tr>
-          ))}
-        </tbody>
+        {groups.map((g) => {
+          const groupNet = g.lines.reduce((s, l) => s + l.amount, 0);
+          return (
+            <tbody key={g.year} className="divide-y divide-line/50">
+              <tr>
+                <td
+                  colSpan={4}
+                  className="pt-3 pb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
+                >
+                  {g.year}
+                </td>
+                <td className="pt-3 pb-1 text-right text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400 tabular-nums">
+                  {money(groupNet)}
+                </td>
+              </tr>
+              {g.lines.map((l) => (
+                <tr key={l.id}>
+                  <td className="w-24 py-1.5 pr-3 whitespace-nowrap text-ink-400">
+                    {shortDate(l.txn_date)}
+                  </td>
+                  <td className="w-28 py-1.5 pr-3 whitespace-nowrap text-ink-400">
+                    JE {l.qb_doc_number ?? `#${l.qb_txn_id}`}
+                  </td>
+                  <td className="py-1.5 pr-3 text-ink-900">
+                    {l.category ?? "—"}
+                  </td>
+                  <td className="py-1.5 pr-3 text-ink-600">
+                    {l.description ?? "—"}
+                  </td>
+                  <td
+                    className={`w-24 py-1.5 text-right tabular-nums ${
+                      l.amount < 0 ? "text-ok-600" : "text-ink-900"
+                    }`}
+                  >
+                    {money(l.amount)}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          );
+        })}
       </table>
       <div className="mt-2 space-y-1 border-t border-line pt-2 text-sm">
         <p className="flex justify-between text-ink-600">

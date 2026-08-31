@@ -60,3 +60,37 @@ export function capLaborBucket(j: {
   }
   return null;
 }
+
+/* ---------------------------------------------------------------------------
+   Year breakdown. The dashboard, the CSV export, and the Excel workbook all
+   split the same history into calendar years, so the range lives here too.
+--------------------------------------------------------------------------- */
+
+// Imported transaction history starts here: syncs refresh only rows dated on
+// or after JOB_COSTS_START_DATE (src/lib/quickbooks.ts), and everything back
+// to Jan 1 2023 persists in job_costs as frozen pre-audit history.
+export const CAP_LABOR_FIRST_YEAR = 2023;
+
+/**
+ * Calendar years the dashboard breaks out — 2023 through the current year,
+ * extended backwards if any imported line predates 2023.
+ * `earliestDate` is a YYYY-MM-DD string (the oldest line seen), if known.
+ */
+export function capLaborYears(
+  earliestDate?: string | null,
+  now: Date = new Date(),
+): number[] {
+  const dataFirst = earliestDate ? Number(earliestDate.slice(0, 4)) : NaN;
+  const first = Number.isFinite(dataFirst)
+    ? Math.min(CAP_LABOR_FIRST_YEAR, dataFirst)
+    : CAP_LABOR_FIRST_YEAR;
+  const last = Math.max(now.getUTCFullYear(), first);
+  return Array.from({ length: last - first + 1 }, (_, i) => first + i);
+}
+
+/** Calendar year of a YYYY-MM-DD (or YYYY-MM) string; null when undated. */
+export function yearOf(date: string | null | undefined): number | null {
+  if (!date) return null;
+  const y = Number(date.slice(0, 4));
+  return Number.isFinite(y) ? y : null;
+}

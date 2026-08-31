@@ -14,7 +14,9 @@ import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { money } from "@/lib/format";
 import {
   capLaborBucket,
+  capLaborYears,
   CAP_LABOR_BUCKET_LABELS,
+  yearOf,
   type CapLaborBucket,
 } from "@/lib/capitalizedLabor";
 import { lastDayOfMonth, monthLabel } from "@/lib/financials";
@@ -39,21 +41,19 @@ interface JobRow {
 
 // Time filter for the amounts. Switching periods never changes which jobs
 // are listed or how they bucket — only the amounts shown, matching the Jobs
-// dashboard. Besides the preset periods, a from/to month range (the same
-// picker as the Financials pages) sums an arbitrary window.
-type Period = "all" | "ytd" | "mtd" | "custom";
+// dashboard. Besides the preset periods and the calendar-year pills, a
+// from/to month range (the same picker as the Financials pages) sums an
+// arbitrary window.
+type Period = "all" | "ytd" | "mtd" | "custom" | "year";
 
-const PERIODS: { key: Exclude<Period, "custom">; label: string }[] = [
+const PERIODS: { key: "all" | "ytd" | "mtd"; label: string }[] = [
   { key: "all", label: "All time" },
   { key: "ytd", label: "Year to date" },
   { key: "mtd", label: "Month to date" },
 ];
 
 const MONTH_PARAM = /^\d{4}-\d{2}$/;
-
-// Imported history pools from the start of 2023 (see JOB_COSTS_START_DATE in
-// src/lib/quickbooks.ts — pre-2025 rows are frozen history).
-const MIN_MONTH = "2023-01";
+const YEAR_PARAM = /^\d{4}$/;
 
 export default async function CapitalizedLaborPage({
   searchParams,
@@ -69,41 +69,6 @@ export default async function CapitalizedLaborPage({
     await searchParams;
   const activeTab: CapLaborBucket | "all" =
     tab === "nonbillable" || tab === "intercompany" ? tab : "all";
-
-  // Unlike Financials, the in-progress month is selectable here — the page
-  // has a month-to-date preset, so the range picker allows it too.
-  const nowMonth = new Date().toISOString().slice(0, 7);
-  const clamp = (m: string) => (m < MIN_MONTH ? MIN_MONTH : m > nowMonth ? nowMonth : m);
-  // A valid from/to pair overrides the preset pills; a lone bound fills the
-  // other end with the data's edge.
-  let customFrom = MONTH_PARAM.test(fromParam ?? "") ? clamp(fromParam!) : null;
-  let customTo = MONTH_PARAM.test(toParam ?? "") ? clamp(toParam!) : null;
-  if (customFrom || customTo) {
-    customFrom ??= MIN_MONTH;
-    customTo ??= nowMonth;
-    if (customFrom > customTo) [customFrom, customTo] = [customTo, customFrom];
-  }
-  const period: Period = customFrom
-    ? "custom"
-    : periodParam === "ytd" || periodParam === "mtd"
-      ? periodParam
-      : "all";
-
-  // Preset pills drop any custom range; tab links keep the whole time filter.
-  const href = (opts?: { tab?: string; period?: Period }) => {
-    const params = new URLSearchParams();
-    const t = opts && "tab" in opts ? opts.tab : activeTab;
-    if (t && t !== "all") params.set("tab", t);
-    const p = opts && "period" in opts ? opts.period : period;
-    if (p === "custom" && customFrom && customTo) {
-      params.set("from", customFrom);
-      params.set("to", customTo);
-    } else if (p && p !== "all" && p !== "custom") {
-      params.set("period", p);
-    }
-    const q = params.toString();
-    return q ? `/capitalized-labor?${q}` : "/capitalized-labor";
-  };
 
   const { supabase } = await requireUser();
   // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
@@ -147,6 +112,64 @@ export default async function CapitalizedLaborPage({
   );
   const showCompany = companyByRealm.size > 1;
 
+  // Calendar years the page breaks out: 2023 (the start of the imported
+  // history) through the current year, extended back if anything older was
+  // imported. The oldest line drives that, so the years are read off the data.
+  let earliestDate: string | null = null;
+  for (const l of lineRows) {
+    const d = (l.txn_date as string | null) ?? null;
+    if (d && (!earliestDate || d < earliestDate)) earliestDate = d;
+  }
+  const years = capLaborYears(earliestDate);
+  const minMonth = `${years[0]}-01`;
+
+  // Unlike Financials, the in-progress month is selectable here — the page
+  // has a month-to-date preset, so the range picker allows it too.
+  const nowMonth = new Date().toISOString().slice(0, 7);
+  const clamp = (m: string) => (m < minMonth ? minMonth : m > nowMonth ? nowMonth : m);
+  // A valid from/to pair overrides the preset pills; a lone bound fills the
+  // other end with the data's edge.
+  let customFrom = MONTH_PARAM.test(fromParam ?? "") ? clamp(fromParam!) : null;
+  let customTo = MONTH_PARAM.test(toParam ?? "") ? clamp(toParam!) : null;
+  if (customFrom || customTo) {
+    customFrom ??= minMonth;
+    customTo ??= nowMonth;
+    if (customFrom > customTo) [customFrom, customTo] = [customTo, customFrom];
+  }
+  // A calendar year is selected as period=2023 — one of the year pills, or a
+  // row of the by-year breakdown. Years outside the imported history fall
+  // back to all time.
+  const yearParam =
+    !customFrom && YEAR_PARAM.test(periodParam ?? "") ? Number(periodParam) : null;
+  const activeYear = yearParam != null && years.includes(yearParam) ? yearParam : null;
+  const period: Period = customFrom
+    ? "custom"
+    : activeYear != null
+      ? "year"
+      : periodParam === "ytd" || periodParam === "mtd"
+        ? periodParam
+        : "all";
+
+  // Preset/year pills drop any custom range; tab links keep the whole time
+  // filter. A year is passed through as period=<year>.
+  const href = (opts?: { tab?: string; period?: Period; year?: number }) => {
+    const params = new URLSearchParams();
+    const t = opts && "tab" in opts ? opts.tab : activeTab;
+    if (t && t !== "all") params.set("tab", t);
+    const y = opts && "year" in opts ? opts.year : period === "year" ? activeYear : null;
+    const p = opts && "period" in opts ? opts.period : y != null ? "year" : period;
+    if (p === "year" && y != null) {
+      params.set("period", String(y));
+    } else if (p === "custom" && customFrom && customTo) {
+      params.set("from", customFrom);
+      params.set("to", customTo);
+    } else if (p && p !== "all" && p !== "custom" && p !== "year") {
+      params.set("period", p);
+    }
+    const q = params.toString();
+    return q ? `/capitalized-labor?${q}` : "/capitalized-labor";
+  };
+
   // Period boundaries in UTC, matching the database rollup views
   // (current_date is UTC on Supabase). Dates are YYYY-MM-DD strings, so
   // string compare works.
@@ -156,27 +179,41 @@ export default async function CapitalizedLaborPage({
   const periodStart =
     period === "custom"
       ? `${customFrom}-01`
-      : period === "ytd"
-        ? ytdStart
-        : period === "mtd"
-          ? mtdStart
-          : null;
-  // Only a custom range has an upper bound — the presets all run to today.
-  const periodEnd = period === "custom" ? lastDayOfMonth(customTo!) : null;
+      : period === "year"
+        ? `${activeYear}-01-01`
+        : period === "ytd"
+          ? ytdStart
+          : period === "mtd"
+            ? mtdStart
+            : null;
+  // A custom range and a selected year are the only bounded periods — the
+  // presets all run to today.
+  const periodEnd =
+    period === "custom"
+      ? lastDayOfMonth(customTo!)
+      : period === "year"
+        ? `${activeYear}-12-31`
+        : null;
 
-  // Benefit allocation summed over the selected window. Months are
-  // first-of-month YYYY-MM-DD strings and every period bound is a month
-  // boundary, so the same string compares work.
+  // Benefit allocation summed over the selected window, and again per
+  // calendar year for the by-year breakdown. Months are first-of-month
+  // YYYY-MM-DD strings and every period bound is a month boundary, so the
+  // same string compares work.
   const benefitByJob = new Map<string, number>();
+  const benefitByJobYear = new Map<string, Map<number, number>>();
   for (const r of benefitRows) {
     const month = (r.month as string).slice(0, 10);
+    const jobId = r.job_id as string;
+    const amount = Number(r.amount ?? 0);
+    const year = yearOf(month);
+    if (year != null) {
+      let perYear = benefitByJobYear.get(jobId);
+      if (!perYear) benefitByJobYear.set(jobId, (perYear = new Map()));
+      perYear.set(year, (perYear.get(year) ?? 0) + amount);
+    }
     if (periodStart && month < periodStart) continue;
     if (periodEnd && month > periodEnd) continue;
-    const jobId = r.job_id as string;
-    benefitByJob.set(
-      jobId,
-      (benefitByJob.get(jobId) ?? 0) + Number(r.amount ?? 0),
-    );
+    benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + amount);
   }
 
   // Debits (positive amounts) are payroll allocations posted to the job;
@@ -184,11 +221,25 @@ export default async function CapitalizedLaborPage({
   // the signature a capitalization entry leaves when its credit line is
   // tagged to the job. Tracking them separately is what lets the page show
   // what may have already been capitalized vs. what still awaits review.
-  interface JobAgg {
-    periodDebits: number;
-    periodCredits: number; // stored positive
-    inPeriod: boolean;
+  interface Sums {
+    debits: number;
+    credits: number; // stored positive
     entryIds: Set<string>;
+  }
+  const newSums = (): Sums => ({ debits: 0, credits: 0, entryIds: new Set() });
+  const addLine = (s: Sums, amount: number, txnId: string) => {
+    if (amount >= 0) s.debits += amount;
+    else s.credits += -amount;
+    s.entryIds.add(txnId);
+  };
+
+  interface JobAgg {
+    /** Sums over the selected period — what the table and stat tiles show. */
+    period: Sums;
+    inPeriod: boolean;
+    /** The same sums split by calendar year, for the by-year breakdown. */
+    byYear: Map<number, Sums>;
+    /** Latest entry date within the selected period. */
     latestDate: string | null;
   }
   const aggByJob = new Map<string, JobAgg>();
@@ -197,27 +248,31 @@ export default async function CapitalizedLaborPage({
     let agg = aggByJob.get(jobId);
     if (!agg) {
       agg = {
-        periodDebits: 0,
-        periodCredits: 0,
+        period: newSums(),
         inPeriod: false,
-        entryIds: new Set(),
+        byYear: new Map(),
         latestDate: null,
       };
       aggByJob.set(jobId, agg);
     }
     const amount = Number(l.amount ?? 0);
+    const txnId = l.qb_txn_id as string;
     const date = (l.txn_date as string | null) ?? null;
+    const year = yearOf(date);
+    if (year != null) {
+      let yearSums = agg.byYear.get(year);
+      if (!yearSums) agg.byYear.set(year, (yearSums = newSums()));
+      addLine(yearSums, amount, txnId);
+    }
     const inPeriod =
       (!periodStart || (date && date >= periodStart)) &&
       (!periodEnd || (date && date <= periodEnd));
     if (inPeriod) {
-      if (amount >= 0) agg.periodDebits += amount;
-      else agg.periodCredits += -amount;
+      addLine(agg.period, amount, txnId);
       agg.inPeriod = true;
-    }
-    agg.entryIds.add(l.qb_txn_id as string);
-    if (date && (!agg.latestDate || date > agg.latestDate)) {
-      agg.latestDate = date;
+      if (date && (!agg.latestDate || date > agg.latestDate)) {
+        agg.latestDate = date;
+      }
     }
   }
 
@@ -227,6 +282,8 @@ export default async function CapitalizedLaborPage({
     periodDebits: number;
     periodCredits: number;
     periodNet: number;
+    byYear: Map<number, Sums>;
+    benefitByYear: Map<number, number> | null;
   })[] = [];
   for (const j of (jobData ?? []) as unknown as JobRow[]) {
     const agg = aggByJob.get(j.id);
@@ -238,22 +295,26 @@ export default async function CapitalizedLaborPage({
       qbCompanyName: j.realm_id ? companyByRealm.get(j.realm_id) : null,
     });
     if (!bucket) continue;
-    const net = agg.periodDebits - agg.periodCredits;
+    const net = agg.period.debits - agg.period.credits;
     candidates.push({
       id: j.id,
       name: j.name,
       companyName: (j.realm_id && companyByRealm.get(j.realm_id)) || null,
       customerName: j.customer?.display_name ?? null,
       bucket,
-      grossAmount: agg.inPeriod ? agg.periodDebits : null,
-      capitalizedAmount: agg.inPeriod ? agg.periodCredits : null,
+      grossAmount: agg.inPeriod ? agg.period.debits : null,
+      capitalizedAmount: agg.inPeriod ? agg.period.credits : null,
       amount: agg.inPeriod ? net : null,
       benefitAllocation: benefitByJob.get(j.id) ?? null,
-      periodDebits: agg.inPeriod ? agg.periodDebits : 0,
-      periodCredits: agg.inPeriod ? agg.periodCredits : 0,
+      periodDebits: agg.inPeriod ? agg.period.debits : 0,
+      periodCredits: agg.inPeriod ? agg.period.credits : 0,
       periodNet: agg.inPeriod ? net : 0,
-      entryCount: agg.entryIds.size,
+      // Entries and the latest entry date follow the period like the amounts
+      // do, so a year selection reads as that year alone.
+      entryCount: agg.period.entryIds.size,
       latestDate: agg.latestDate,
+      byYear: agg.byYear,
+      benefitByYear: benefitByJobYear.get(j.id) ?? null,
     });
   }
 
@@ -270,6 +331,65 @@ export default async function CapitalizedLaborPage({
   const intercompany = candidates.filter((c) => c.bucket === "intercompany");
   const rows = activeTab === "all" ? candidates : activeTab === "nonbillable" ? nonBillable : intercompany;
 
+  // By-year breakdown of the visible (tab-filtered) candidates. Unlike the
+  // table, it always spans the whole history — it's what the period pills
+  // pick from, so it can't be filtered by the period itself.
+  interface YearRow {
+    year: number;
+    jobs: number;
+    entries: number;
+    debits: number;
+    credits: number;
+    net: number;
+    benefits: number;
+  }
+  const yearRows: YearRow[] = years.map((year) => {
+    const row: YearRow = {
+      year,
+      jobs: 0,
+      entries: 0,
+      debits: 0,
+      credits: 0,
+      net: 0,
+      benefits: 0,
+    };
+    for (const c of rows) {
+      const sums = c.byYear.get(year);
+      const benefits = c.benefitByYear?.get(year) ?? 0;
+      if (sums) {
+        row.jobs += 1;
+        row.entries += sums.entryIds.size;
+        row.debits += sums.debits;
+        row.credits += sums.credits;
+      }
+      row.benefits += benefits;
+    }
+    row.net = row.debits - row.credits;
+    return row;
+  });
+  const yearTotals = yearRows.reduce<YearRow>(
+    (t, r) => ({
+      year: 0,
+      // A job active in several years counts once per year above, so the
+      // total counts distinct jobs instead of summing the year rows.
+      jobs: t.jobs,
+      entries: t.entries + r.entries,
+      debits: t.debits + r.debits,
+      credits: t.credits + r.credits,
+      net: t.net + r.net,
+      benefits: t.benefits + r.benefits,
+    }),
+    {
+      year: 0,
+      jobs: rows.filter((c) => c.byYear.size > 0).length,
+      entries: 0,
+      debits: 0,
+      credits: 0,
+      net: 0,
+      benefits: 0,
+    },
+  );
+
   const sumNet = (list: { periodNet: number }[]) =>
     list.reduce((s, c) => s + c.periodNet, 0);
   const grossTotal = candidates.reduce((s, c) => s + c.periodDebits, 0);
@@ -285,7 +405,9 @@ export default async function CapitalizedLaborPage({
       ? customFrom === customTo
         ? monthLabel(customFrom!)
         : `${monthLabel(customFrom!)} – ${monthLabel(customTo!)}`
-      : PERIODS.find((p) => p.key === period)!.label.toLowerCase();
+      : period === "year"
+        ? String(activeYear)
+        : PERIODS.find((p) => p.key === period)!.label.toLowerCase();
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -303,6 +425,17 @@ export default async function CapitalizedLaborPage({
           </Link>
         ))}
         <span className="mx-1 h-5 w-px bg-line" />
+        {/* Calendar years, back to the start of the imported history. */}
+        {years.map((year) => (
+          <Link
+            key={year}
+            href={href({ year })}
+            className={tabCls(period === "year" && activeYear === year)}
+          >
+            {year}
+          </Link>
+        ))}
+        <span className="mx-1 h-5 w-px bg-line" />
         {/* Custom month range; submitting drops the preset and filters the
             amounts to from..to. */}
         <form
@@ -317,7 +450,7 @@ export default async function CapitalizedLaborPage({
             type="month"
             name="from"
             defaultValue={customFrom ?? ""}
-            min={MIN_MONTH}
+            min={minMonth}
             max={nowMonth}
             className="rounded-md border border-line bg-white px-2 py-1 text-sm text-ink-900"
           />
@@ -326,7 +459,7 @@ export default async function CapitalizedLaborPage({
             type="month"
             name="to"
             defaultValue={customTo ?? ""}
-            min={MIN_MONTH}
+            min={minMonth}
             max={nowMonth}
             className="rounded-md border border-line bg-white px-2 py-1 text-sm text-ink-900"
           />
@@ -338,7 +471,7 @@ export default async function CapitalizedLaborPage({
 
       <PageHeader
         title="Capitalized Labor"
-        subtitle="Labor posted by journal entry to non-billable (EQP) or intercompany jobs — payroll allocations that may belong in a capital account rather than job cost. Credits already posted against those labor accounts count as capitalized; the net is what still awaits review. Click a job to see the entries, and see the methodology summary at the bottom of the page."
+        subtitle={`Labor posted by journal entry to non-billable (EQP) or intercompany jobs — payroll allocations that may belong in a capital account rather than job cost, covering imported history back to Jan 1, ${years[0]}. Credits already posted against those labor accounts count as capitalized; the net is what still awaits review. Pick a year to see it on its own, click a job to see the entries, and see the methodology summary at the bottom of the page.`}
         action={
           <div className="flex gap-2">
             <a
@@ -391,9 +524,9 @@ export default async function CapitalizedLaborPage({
           icon={Building2}
         />
         <StatTile
-          label="Journal entries"
+          label={`Journal entries (${periodLabel})`}
           value={entryCount(candidates)}
-          hint="all time, across candidate jobs"
+          hint="distinct entries across candidate jobs"
           icon={ScrollText}
         />
         <StatTile
@@ -421,6 +554,82 @@ export default async function CapitalizedLaborPage({
           {CAP_LABOR_BUCKET_LABELS.intercompany} ({intercompany.length})
         </Link>
       </div>
+
+      {/* Calendar-year split of the same candidates the table lists — the
+          amounts every year pill selects, side by side. */}
+      {yearTotals.entries > 0 && (
+        <Card className="mb-6" pad={false}>
+          <div className="px-6 pt-5">
+            <CardTitle>
+              By year{activeTab === "all" ? "" : ` — ${CAP_LABOR_BUCKET_LABELS[activeTab]}`}
+            </CardTitle>
+          </div>
+          <Table
+            head={
+              <tr>
+                <Th>Year</Th>
+                <Th right>Jobs</Th>
+                <Th right>Entries</Th>
+                <Th right>Labor posted</Th>
+                <Th right>Already capitalized</Th>
+                <Th right>Awaiting review</Th>
+                <Th right>Benefit allocation</Th>
+              </tr>
+            }
+          >
+            {yearRows.map((r) => {
+              const selected = period === "year" && activeYear === r.year;
+              return (
+                <tr
+                  key={r.year}
+                  className={`transition-colors ${selected ? "bg-brand-50/60" : "hover:bg-surface/60"}`}
+                >
+                  <td className="px-4 py-3 font-medium text-ink-900">
+                    <Link
+                      href={href({ year: selected ? undefined : r.year, period: selected ? "all" : "year" })}
+                      className="hover:text-brand-700"
+                      title={selected ? "Clear the year filter" : `Show ${r.year} only`}
+                    >
+                      {r.year}
+                    </Link>
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                    {r.jobs || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                    {r.entries || "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                    {r.debits ? money(r.debits) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                    {r.credits ? money(r.credits) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right font-medium tabular-nums text-ink-900">
+                    {r.debits || r.credits ? money(r.net) : "—"}
+                  </td>
+                  <td className="px-4 py-3 text-right tabular-nums text-ink-600">
+                    {r.benefits ? money(r.benefits) : "—"}
+                  </td>
+                </tr>
+              );
+            })}
+            <tr className="border-t-2 border-line font-semibold text-ink-900">
+              <td className="px-4 py-3">
+                <Link href={href({ period: "all" })} className="hover:text-brand-700">
+                  All years
+                </Link>
+              </td>
+              <td className="px-4 py-3 text-right tabular-nums">{yearTotals.jobs}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{yearTotals.entries}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.debits)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.credits)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.net)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.benefits)}</td>
+            </tr>
+          </Table>
+        </Card>
+      )}
 
       {/* clip off so the sticky header can escape the card while scrolling */}
       <Card pad={false} clip={false}>
@@ -481,7 +690,8 @@ export default async function CapitalizedLaborPage({
               Superior Marine Ways are excluded — those allocations are
               capitalized wages, already handled. Unlike the Jobs dashboard,
               there is no recent-activity cutoff — old entries still need
-              review.
+              review, so the page covers every imported journal line back to
+              Jan 1, {years[0]}, split by calendar year.
             </p>
           </div>
           <div>
