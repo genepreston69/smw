@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
+import { refreshBenefitAllocation } from "@/lib/benefitAllocation";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -47,6 +48,11 @@ export async function setAccountCategory(
     .update({ category: parsed.data.category })
     .eq("id", parsed.data.accountId);
   if (error) return { ok: false, error: error.message };
+
+  // Categories are how the allocation finds its Employee Benefits, Salaries
+  // & Wages, and Direct Labor accounts, so recategorizing moves the cached
+  // per-job numbers (migration 0025).
+  await refreshBenefitAllocation();
 
   revalidatePath("/financials/accounts");
   revalidatePath("/financials/statement");

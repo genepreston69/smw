@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { syncCustomersAndJobs, syncJobCosts } from "@/lib/quickbooks";
+import { refreshBenefitAllocation } from "@/lib/benefitAllocation";
 
 // Entity queries across several companies take a while; the general-ledger
 // import runs separately (one request per company via /api/qb/sync-ledger)
@@ -31,6 +32,9 @@ export async function POST() {
   try {
     const result = await syncCustomersAndJobs();
     const costs = await syncJobCosts();
+    // Job labor drives the allocation's pro-rata split, so the cache is
+    // stale the moment costs change (migration 0025).
+    await refreshBenefitAllocation();
     return NextResponse.json({
       ok: true,
       ...result,

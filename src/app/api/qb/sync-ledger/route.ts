@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { syncGeneralLedger } from "@/lib/quickbooks";
+import { refreshBenefitAllocation } from "@/lib/benefitAllocation";
 
 // General-ledger import for ONE company per request. Importing every
 // company's ledger in a single invocation exceeds Vercel's function window
@@ -37,6 +38,9 @@ export async function POST(request: Request) {
 
   try {
     const result = await syncGeneralLedger(realmId);
+    // The ledger is where the benefits/salaries/labor pools come from, so
+    // the cached allocation is rebuilt from the new lines (migration 0025).
+    await refreshBenefitAllocation();
     return NextResponse.json({
       ok: true,
       glAccounts: result.accounts,
