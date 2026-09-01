@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { csvResponse, toCsv } from "@/lib/csv";
-import { capLaborBucket, CAP_LABOR_BUCKET_LABELS } from "@/lib/capitalizedLabor";
+import {
+  capLaborBucket,
+  CAP_LABOR_BUCKET_LABELS,
+  yearOf,
+} from "@/lib/capitalizedLabor";
 import { shortDate } from "@/lib/format";
 
 // Line-level export of capitalized-labor candidates: every journal-entry
@@ -79,6 +83,7 @@ export async function GET() {
       "QB Company",
       "Customer",
       "Type",
+      "Year",
       "Date",
       "Journal Entry",
       "Account",
@@ -96,6 +101,9 @@ export async function GET() {
           job.realm_id ? (companyByRealm.get(job.realm_id) ?? job.realm_id) : "",
           job.customer?.display_name,
           CAP_LABOR_BUCKET_LABELS[bucket],
+          // Calendar year, so the export pivots by year the same way the
+          // dashboard's by-year breakdown splits the totals.
+          l.txn_date ? String(yearOf(l.txn_date as string) ?? "") : "",
           l.txn_date ? shortDate(l.txn_date as string) : "",
           (l.qb_doc_number as string | null) ?? `#${l.qb_txn_id}`,
           l.category as string | null,
