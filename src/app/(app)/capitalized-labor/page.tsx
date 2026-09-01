@@ -15,6 +15,7 @@ import { money } from "@/lib/format";
 import {
   capLaborBucket,
   capLaborYears,
+  CAP_LABOR_FIRST_YEAR,
   CAP_LABOR_BUCKET_LABELS,
   yearOf,
   type CapLaborBucket,
@@ -70,58 +71,9 @@ export default async function CapitalizedLaborPage({
   const activeTab: CapLaborBucket | "all" =
     tab === "nonbillable" || tab === "intercompany" ? tab : "all";
 
-  const { supabase } = await requireUser();
-  // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
-  // cap; .order("id") tie-breaks for stable pages.
-  const [jobData, { data: connRows }, lineRows, benefitRows] = await Promise.all([
-    fetchAllRows((from, to) =>
-      supabase
-        .from("jobs")
-        .select(
-          "id, name, realm_id, customer:customers(display_name, company_name)",
-        )
-        .order("name")
-        .order("id")
-        .range(from, to),
-    ),
-    supabase.from("qb_connection_status").select("realm_id, company_name"),
-    fetchAllRows((from, to) =>
-      supabase
-        .from("job_costs")
-        .select("id, job_id, qb_txn_id, txn_date, amount")
-        .eq("qb_txn_type", "JournalEntry")
-        .eq("cost_type", "labor")
-        .order("id")
-        .range(from, to),
-    ),
-    // Month-grain employee-benefit allocation per job (migration 0022) —
-    // the same figure as the Jobs dashboard's Benefit allocation column,
-    // at month grain so this page's custom range can sum any window.
-    fetchAllRows((from, to) =>
-      supabase
-        .from("job_benefit_allocation_months")
-        .select("job_id, month, amount")
-        .order("job_id")
-        .order("month")
-        .range(from, to),
-    ),
-  ]);
-
-  const companyByRealm = new Map(
-    (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
-  );
-  const showCompany = companyByRealm.size > 1;
-
-  // Calendar years the page breaks out: 2023 (the start of the imported
-  // history) through the current year, extended back if anything older was
-  // imported. The oldest line drives that, so the years are read off the data.
-  let earliestDate: string | null = null;
-  for (const l of lineRows) {
-    const d = (l.txn_date as string | null) ?? null;
-    if (d && (!earliestDate || d < earliestDate)) earliestDate = d;
-  }
-  const years = capLaborYears(earliestDate);
-  const minMonth = `${years[0]}-01`;
+  // The month picker floors at the start of the imported history; the year
+  // pills below can reach further back if older rows turn up in the data.
+  const minMonth = `${CAP_LABOR_FIRST_YEAR}-01`;
 
   // Unlike Financials, the in-progress month is selectable here — the page
   // has a month-to-date preset, so the range picker allows it too.
@@ -137,11 +89,15 @@ export default async function CapitalizedLaborPage({
     if (customFrom > customTo) [customFrom, customTo] = [customTo, customFrom];
   }
   // A calendar year is selected as period=2023 — one of the year pills, or a
-  // row of the by-year breakdown. Years outside the imported history fall
-  // back to all time.
+  // row of the by-year breakdown. Anything past the current year, or older
+  // than bookkeeping itself, falls back to all time.
+  const currentYear = new Date().getUTCFullYear();
   const yearParam =
     !customFrom && YEAR_PARAM.test(periodParam ?? "") ? Number(periodParam) : null;
-  const activeYear = yearParam != null && years.includes(yearParam) ? yearParam : null;
+  const activeYear =
+    yearParam != null && yearParam >= 2000 && yearParam <= currentYear
+      ? yearParam
+      : null;
   const period: Period = customFrom
     ? "custom"
     : activeYear != null
@@ -195,26 +151,78 @@ export default async function CapitalizedLaborPage({
         ? `${activeYear}-12-31`
         : null;
 
-  // Benefit allocation summed over the selected window, and again per
-  // calendar year for the by-year breakdown. Months are first-of-month
-  // YYYY-MM-DD strings and every period bound is a month boundary, so the
-  // same string compares work.
+  const { supabase } = await requireUser();
+  // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
+  // cap; .order("id") tie-breaks for stable pages.
+  const [jobData, { data: connRows }, lineRows, { data: benefitData, error: benefitError }] =
+    await Promise.all([
+      fetchAllRows((from, to) =>
+        supabase
+          .from("jobs")
+          .select(
+            "id, name, realm_id, customer:customers(display_name, company_name)",
+          )
+          .order("name")
+          .order("id")
+          .range(from, to),
+      ),
+      supabase.from("qb_connection_status").select("realm_id, company_name"),
+      fetchAllRows((from, to) =>
+        supabase
+          .from("job_costs")
+          .select("id, job_id, qb_txn_id, txn_date, amount")
+          .eq("qb_txn_type", "JournalEntry")
+          .eq("cost_type", "labor")
+          .order("id")
+          .range(from, to),
+      ),
+      // Employee-benefit allocation per job — the same figure as the Jobs
+      // dashboard's column — summed over the selected window and split by
+      // calendar year, both from one statement (migration 0024). Reading the
+      // month-grain view row by row instead re-ran the whole allocation once
+      // per page of results, which blew the statement timeout.
+      supabase.rpc("job_benefit_allocation_summary", {
+        p_from: periodStart,
+        p_to: periodEnd,
+      }),
+    ]);
+
+  const companyByRealm = new Map(
+    (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
+  );
+  const showCompany = companyByRealm.size > 1;
+
+  // The summary comes back as compact tuples: [job, year, amount] for every
+  // year of history, and [job, amount] for the selected window.
+  const summary = (benefitData ?? {}) as {
+    years?: [string, number, number][];
+    period?: [string, number][];
+  };
   const benefitByJob = new Map<string, number>();
-  const benefitByJobYear = new Map<string, Map<number, number>>();
-  for (const r of benefitRows) {
-    const month = (r.month as string).slice(0, 10);
-    const jobId = r.job_id as string;
-    const amount = Number(r.amount ?? 0);
-    const year = yearOf(month);
-    if (year != null) {
-      let perYear = benefitByJobYear.get(jobId);
-      if (!perYear) benefitByJobYear.set(jobId, (perYear = new Map()));
-      perYear.set(year, (perYear.get(year) ?? 0) + amount);
-    }
-    if (periodStart && month < periodStart) continue;
-    if (periodEnd && month > periodEnd) continue;
-    benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + amount);
+  for (const [jobId, amount] of summary.period ?? []) {
+    benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + Number(amount ?? 0));
   }
+  const benefitByJobYear = new Map<string, Map<number, number>>();
+  let earliestBenefitYear: number | null = null;
+  for (const [jobId, year, amount] of summary.years ?? []) {
+    let perYear = benefitByJobYear.get(jobId);
+    if (!perYear) benefitByJobYear.set(jobId, (perYear = new Map()));
+    perYear.set(year, (perYear.get(year) ?? 0) + Number(amount ?? 0));
+    if (earliestBenefitYear == null || year < earliestBenefitYear) {
+      earliestBenefitYear = year;
+    }
+  }
+
+  // Calendar years the page breaks out: the start of the imported history
+  // (2023) through the current year, reaching further back if anything older
+  // turns up in the data.
+  let earliestDate: string | null =
+    earliestBenefitYear != null ? `${earliestBenefitYear}-01-01` : null;
+  for (const l of lineRows) {
+    const d = (l.txn_date as string | null) ?? null;
+    if (d && (!earliestDate || d < earliestDate)) earliestDate = d;
+  }
+  const years = capLaborYears(earliestDate);
 
   // Debits (positive amounts) are payroll allocations posted to the job;
   // credits (negative amounts) are labor moved back off the labor accounts —
@@ -491,6 +499,14 @@ export default async function CapitalizedLaborPage({
           </div>
         }
       />
+
+      {benefitError && (
+        // Never let a failed allocation read read as "no benefits allocated".
+        <p className="mb-6 rounded-lg border border-warn-700/25 bg-warn-50 px-4 py-3 text-sm text-warn-700">
+          Benefit allocation couldn&rsquo;t be loaded, so those columns are
+          blank: {benefitError.message}
+        </p>
+      )}
 
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatTile
