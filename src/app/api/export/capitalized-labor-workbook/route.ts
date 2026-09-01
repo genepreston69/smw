@@ -26,7 +26,7 @@ export async function GET() {
   }
 
   // Paged reads so the workbook includes every row past Supabase's 1000-row cap.
-  const [jobs, { data: connRows }, lines, benefitRows] = await Promise.all([
+  const [jobs, { data: connRows }, lines, { data: benefitData }] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -50,35 +50,28 @@ export async function GET() {
         .order("id")
         .range(from, to),
     ),
-    // Month-grain employee-benefit allocation per job (migration 0022),
-    // matching the dashboard's Benefit allocation column. Month grain so the
-    // By Year sheet can split it by calendar year; summing every month gives
-    // the same all-time figure as job_benefit_allocation_totals.
-    fetchAllRows((from, to) =>
-      supabase
-        .from("job_benefit_allocation_months")
-        .select("job_id, month, amount")
-        .order("job_id")
-        .order("month")
-        .range(from, to),
-    ),
+    // Employee-benefit allocation per job and calendar year, in one
+    // statement (migration 0024) — same figure as the dashboard's Benefit
+    // allocation column, and summing a job's years gives its all-time
+    // total. Reading the month-grain view row by row instead re-ran the
+    // whole allocation once per page of results.
+    supabase.rpc("job_benefit_allocation_summary"),
   ]);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),
   );
+  // Compact [job, year, amount] tuples, covering every year of history.
+  const benefitYears =
+    ((benefitData ?? {}) as { years?: [string, number, number][] }).years ?? [];
   const benefitByJob = new Map<string, number>();
   const benefitByJobYear = new Map<string, Map<number, number>>();
-  for (const r of benefitRows) {
-    const jobId = r.job_id as string;
-    const amount = Number(r.amount ?? 0);
+  for (const [jobId, year, raw] of benefitYears) {
+    const amount = Number(raw ?? 0);
     benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + amount);
-    const year = yearOf((r.month as string).slice(0, 10));
-    if (year != null) {
-      let perYear = benefitByJobYear.get(jobId);
-      if (!perYear) benefitByJobYear.set(jobId, (perYear = new Map()));
-      perYear.set(year, (perYear.get(year) ?? 0) + amount);
-    }
+    let perYear = benefitByJobYear.get(jobId);
+    if (!perYear) benefitByJobYear.set(jobId, (perYear = new Map()));
+    perYear.set(year, (perYear.get(year) ?? 0) + amount);
   }
 
   interface JobRow {
