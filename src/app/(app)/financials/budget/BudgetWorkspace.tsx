@@ -1,33 +1,20 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Landmark } from "lucide-react";
+import { Download, Landmark } from "lucide-react";
 import { moneyWhole } from "@/lib/format";
-import {
-  buildCategoryStatement,
-  buildEliminations,
-  serializeEliminations,
-  type CategoryStatement,
-  type PivotCell,
-  type PivotTotals,
-  type RealmRevenueSlice,
-  type StatementEliminations,
-} from "@/lib/financials";
+import type { PivotCell, RealmRevenueSlice } from "@/lib/financials";
 import {
   MONTH_NAMES,
-  actualCells,
-  budgetColKey,
+  assembleBudget,
   budgetColLabel,
-  growBaselineCells,
-  growEliminationSlice,
-  initiativeCells,
+  budgetExportHref,
   type BudgetAssumption,
   type BudgetColDim,
   type BudgetInitiative,
   type BudgetView,
-  type MonthToCol,
 } from "@/lib/budget";
-import { Card, EmptyState, StatTile } from "@/components/ui";
+import { Card, EmptyState, PageHeader, StatTile, buttonCls } from "@/components/ui";
 import { StatementTable } from "../statement/StatementTable";
 import { AssumptionsEditor } from "./AssumptionsEditor";
 import { VarianceTable } from "./VarianceTable";
@@ -42,6 +29,11 @@ import { VarianceTable } from "./VarianceTable";
  * buildCategoryStatement), so the numbers are identical to a fresh load.
  */
 export function BudgetWorkspace({
+  title,
+  subtitle,
+  headerLinks,
+  filters,
+  company,
   year,
   colDim,
   view,
@@ -61,6 +53,14 @@ export function BudgetWorkspace({
   baselineHint,
   assumptionsAction,
 }: {
+  title: string;
+  subtitle: string;
+  /** Extra header buttons after Export Excel (server-rendered links). */
+  headerLinks: React.ReactNode;
+  /** The Company / View / Columns filter card (server-rendered links). */
+  filters: React.ReactNode;
+  /** Selected company: realm id or "all". */
+  company: string;
   year: number;
   colDim: BudgetColDim;
   view: BudgetView;
@@ -93,84 +93,55 @@ export function BudgetWorkspace({
     [categoryEntries],
   );
 
-  const { statement, eliminations, variance } = useMemo(() => {
-    const budgetCells = (toCol: MonthToCol): PivotCell[] =>
-      companies.flatMap((c, idx) => [
-        ...growBaselineCells(baselineByRealm[idx] ?? [], assumptions[c.realmId], toCol),
-        ...initiativeCells(
-          approved.filter((i) => i.realm_id === c.realmId),
-          toCol,
-        ),
-      ]);
-    const budgetSlices = (toCol: MonthToCol): RealmRevenueSlice[] =>
-      wantEliminations
-        ? companies.map((c, idx) =>
-            growEliminationSlice(
-              { realmId: c.realmId, companyName: c.name, cells: eliminationCellsByRealm[idx] ?? [] },
-              assumptions[c.realmId],
-              toCol,
-            ),
-          )
-        : [];
-    const eliminationsFor = (
-      slices: RealmRevenueSlice[],
-      s: CategoryStatement,
-    ): StatementEliminations | null => {
-      if (!wantEliminations) return null;
-      const net: PivotTotals = {
-        bycol: new Map(Object.entries(s.netIncome.cells)),
-        total: s.netIncome.total,
-      };
-      const raw = buildEliminations(slices, net);
-      return raw ? serializeEliminations(raw) : null;
-    };
-
-    const toCol: MonthToCol = (m) => budgetColKey(year, m, colDim);
-    const statement = buildCategoryStatement(budgetCells(toCol), categoryByAccount);
-    const eliminations = eliminationsFor(budgetSlices(toCol), statement);
-
-    // Budget vs Actual: full-year budget, YTD budget, and YTD actual as three
-    // columns of one statement, so every row lines up.
-    let variance: { statement: CategoryStatement; eliminations: StatementEliminations | null } | null =
-      null;
-    if (view === "variance" && actuals) {
-      const fy: MonthToCol = () => "fy";
-      const ytd: MonthToCol = (m) => (m <= closedThrough ? "budget" : null);
-      const vStatement = buildCategoryStatement(
-        [...budgetCells(fy), ...budgetCells(ytd), ...actualCells(actuals, "actual", closedThrough)],
+  const { statement, eliminations, variance } = useMemo(
+    () =>
+      assembleBudget({
+        year,
+        colDim,
+        view,
+        closedThrough,
+        companies,
+        assumptions,
+        baselineByRealm,
+        eliminationCellsByRealm,
+        actuals,
+        actualEliminationSlices,
+        approved,
         categoryByAccount,
-      );
-      variance = {
-        statement: vStatement,
-        eliminations: eliminationsFor(
-          [
-            ...budgetSlices(fy),
-            ...budgetSlices(ytd),
-            ...actualEliminationSlices.map((s) => ({
-              ...s,
-              cells: actualCells(s.cells, "actual", closedThrough),
-            })),
-          ],
-          vStatement,
-        ),
-      };
-    }
-    return { statement, eliminations, variance };
-  }, [
-    assumptions,
-    companies,
-    baselineByRealm,
-    eliminationCellsByRealm,
-    actuals,
-    actualEliminationSlices,
-    approved,
-    categoryByAccount,
-    wantEliminations,
-    year,
-    colDim,
+        wantEliminations,
+      }),
+    [
+      assumptions,
+      companies,
+      baselineByRealm,
+      eliminationCellsByRealm,
+      actuals,
+      actualEliminationSlices,
+      approved,
+      categoryByAccount,
+      wantEliminations,
+      year,
+      colDim,
+      view,
+      closedThrough,
+    ],
+  );
+
+  // The export carries the growth % on screen (saved or not), so the file
+  // matches what the user is looking at.
+  const exportHref = budgetExportHref({
+    company,
+    cols: colDim,
     view,
-    closedThrough,
-  ]);
+    assumptions: companies.map(
+      (c) =>
+        assumptions[c.realmId] ?? {
+          realm_id: c.realmId,
+          revenue_growth_pct: 0,
+          expense_growth_pct: 0,
+        },
+    ),
+  });
 
   const colLabels = Object.fromEntries(
     statement.colKeys.map((k) => [k, budgetColLabel(colDim, k)]),
@@ -179,6 +150,21 @@ export function BudgetWorkspace({
 
   return (
     <>
+      <PageHeader
+        title={title}
+        subtitle={subtitle}
+        action={
+          <div className="flex items-center gap-2">
+            <a href={exportHref} className={buttonCls("secondary")}>
+              <Download size={15} strokeWidth={2} />
+              Export Excel
+            </a>
+            {headerLinks}
+          </div>
+        }
+      />
+      {filters}
+
       <AssumptionsEditor
         budgetYear={year}
         action={assumptionsAction}
