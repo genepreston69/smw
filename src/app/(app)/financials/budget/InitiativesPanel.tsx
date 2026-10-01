@@ -53,7 +53,7 @@ export function InitiativesPanel({
   accountsByRealm: Record<string, InitiativeAccount[]>;
 }) {
   const router = useRouter();
-  const [editing, setEditing] = useState<BudgetInitiative | "new" | null>(null);
+  const [editing, setEditing] = useState<BudgetInitiative | null>(null);
   const [open, setOpen] = useState<ReadonlySet<string>>(new Set());
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
@@ -75,24 +75,15 @@ export function InitiativesPanel({
 
   return (
     <div className="mt-4 rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)]">
-      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/70 px-4 py-2.5">
+      <div className="border-b border-line/70 px-4 py-2.5">
         <h2 className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
           New initiatives
         </h2>
-        <button
-          type="button"
-          onClick={() => setEditing("new")}
-          disabled={companies.length === 0}
-          className={buttonCls("primary", "sm")}
-        >
-          <Plus size={14} strokeWidth={2} />
-          New Initiative
-        </button>
       </div>
       {error && <p className="px-4 pt-2 text-sm text-bad-600">{error}</p>}
       {sorted.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-ink-600">
-          No initiatives yet. Use New Initiative to add expected revenue and
+          No initiatives yet. Use New Initiative (top right of the growth assumptions) to add expected revenue and
           expenses for a company; it joins the budget once approved.
         </p>
       ) : (
@@ -246,7 +237,7 @@ export function InitiativesPanel({
       {editing && (
         <InitiativeDialog
           budgetYear={budgetYear}
-          initial={editing === "new" ? null : editing}
+          initial={editing}
           companies={companies}
           accountsByRealm={accountsByRealm}
           onClose={() => setEditing(null)}
@@ -257,6 +248,49 @@ export function InitiativesPanel({
         />
       )}
     </div>
+  );
+}
+
+/**
+ * The New Initiative button and its dialog, rendered in the growth
+ * assumptions header so it sits at the top of the page.
+ */
+export function NewInitiativeButton({
+  budgetYear,
+  companies,
+  accountsByRealm,
+}: {
+  budgetYear: number;
+  companies: { realmId: string; name: string }[];
+  accountsByRealm: Record<string, InitiativeAccount[]>;
+}) {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        disabled={companies.length === 0}
+        className={buttonCls("primary", "sm")}
+      >
+        <Plus size={14} strokeWidth={2} />
+        New Initiative
+      </button>
+      {open && (
+        <InitiativeDialog
+          budgetYear={budgetYear}
+          initial={null}
+          companies={companies}
+          accountsByRealm={accountsByRealm}
+          onClose={() => setOpen(false)}
+          onSaved={() => {
+            setOpen(false);
+            router.refresh();
+          }}
+        />
+      )}
+    </>
   );
 }
 

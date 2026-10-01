@@ -37,7 +37,11 @@ import {
 import { Card, EmptyState, PageHeader, StatTile, buttonCls } from "@/components/ui";
 import { StatementTable } from "../statement/StatementTable";
 import { AssumptionsEditor } from "./AssumptionsEditor";
-import { InitiativesPanel, type InitiativeAccount } from "./InitiativesPanel";
+import {
+  InitiativesPanel,
+  NewInitiativeButton,
+  type InitiativeAccount,
+} from "./InitiativesPanel";
 import { VarianceTable } from "./VarianceTable";
 
 // Calendar-year budget in the Income Statement's layout. Baseline = each
@@ -417,6 +421,13 @@ export default async function BudgetPage({
 
       <AssumptionsEditor
         budgetYear={year}
+        action={
+          <NewInitiativeButton
+            budgetYear={year}
+            companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
+            accountsByRealm={accountsByRealm}
+          />
+        }
         companies={realms.map((r) => {
           const a = assumptionByRealm.get(r);
           return {
