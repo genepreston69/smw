@@ -1,48 +1,33 @@
 import Link from "next/link";
-import { BookOpen, Landmark } from "lucide-react";
+import { BookOpen } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
-import { moneyWhole } from "@/lib/format";
 import {
-  buildCategoryStatement,
-  buildEliminations,
+  eliminationLabel,
   lastDayOfMonth,
   latestMonth,
   monthLabel,
-  serializeEliminations,
   type PivotCell,
-  type PivotTotals,
-  type RealmRevenueSlice,
 } from "@/lib/financials";
 import {
   BUDGET_COL_DIMS,
   BUDGET_VIEWS,
   BUDGET_YEAR,
-  MONTH_NAMES,
-  actualCells,
   baselineRange,
-  budgetColKey,
-  budgetColLabel,
-  growBaselineCells,
-  growEliminationSlice,
-  initiativeCells,
   initiativeTotals,
   type BudgetAssumption,
   type BudgetColDim,
   type BudgetInitiative,
   type BudgetView,
-  type MonthToCol,
 } from "@/lib/budget";
-import { Card, EmptyState, PageHeader, StatTile, buttonCls } from "@/components/ui";
-import { StatementTable } from "../statement/StatementTable";
-import { AssumptionsEditor } from "./AssumptionsEditor";
+import { PageHeader, buttonCls } from "@/components/ui";
+import { BudgetWorkspace } from "./BudgetWorkspace";
 import {
   InitiativesPanel,
   NewInitiativeButton,
   type InitiativeAccount,
 } from "./InitiativesPanel";
-import { VarianceTable } from "./VarianceTable";
 
 // Calendar-year budget in the Income Statement's layout. Baseline = each
 // account's actuals for the twelve months ending June 30 of the prior year,
@@ -244,8 +229,6 @@ export default async function BudgetPage({
     })),
   }));
   const initiatives = allInitiatives.filter((i) => realms.includes(i.realm_id));
-  const approvedByRealm = (realmId: string) =>
-    initiatives.filter((i) => i.realm_id === realmId && i.status === "approved");
 
   // Same account-name → category mapping as the Income Statement page.
   const categoryByAccount = new Map<string, string>();
@@ -256,71 +239,12 @@ export default async function BudgetPage({
     if (!categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
   }
 
-  // Budget cells for every realm under a column mapping.
-  const budgetCells = (toCol: MonthToCol): PivotCell[] =>
-    realms.flatMap((r, idx) => [
-      ...growBaselineCells(baselineByRealm[idx], assumptionByRealm.get(r), toCol),
-      ...initiativeCells(approvedByRealm(r), toCol),
-    ]);
-  const budgetSlices = (toCol: MonthToCol): RealmRevenueSlice[] =>
-    customerByRealm.map((cells, idx) =>
-      growEliminationSlice(
-        { realmId: realms[idx], companyName: companyByRealm.get(realms[idx]) ?? null, cells },
-        assumptionByRealm.get(realms[idx]),
-        toCol,
-      ),
+  // Only the customer cells an intercompany elimination will use cross to
+  // the client — the full customer × month slice is far larger.
+  const eliminationOnly = (cells: PivotCell[], realmId: string) =>
+    cells.filter(
+      (c) => eliminationLabel(companyByRealm.get(realmId) ?? null, c.row_key) !== null,
     );
-  const eliminationsFor = (
-    slices: RealmRevenueSlice[],
-    netIncome: { cells: Record<string, number>; total: number },
-  ) => {
-    if (!wantEliminations) return null;
-    const pivotNet: PivotTotals = {
-      bycol: new Map(Object.entries(netIncome.cells)),
-      total: netIncome.total,
-    };
-    const raw = buildEliminations(slices, pivotNet);
-    return raw ? serializeEliminations(raw) : null;
-  };
-
-  // Budget view: the full-year budget laid out by the chosen columns.
-  const toCol: MonthToCol = (m) => budgetColKey(year, m, colDim);
-  const statement = buildCategoryStatement(budgetCells(toCol), categoryByAccount);
-  const eliminations = eliminationsFor(budgetSlices(toCol), statement.netIncome);
-  const colLabels = Object.fromEntries(
-    statement.colKeys.map((k) => [k, budgetColLabel(colDim, k)]),
-  );
-
-  // Budget vs Actual: full-year budget, YTD budget, and YTD actual as three
-  // columns of one statement, so categories, the direct-cost split, and the
-  // benefits allocation line up row for row.
-  let variance: {
-    statement: ReturnType<typeof buildCategoryStatement>;
-    eliminations: ReturnType<typeof eliminationsFor>;
-  } | null = null;
-  if (wantActuals) {
-    const fy: MonthToCol = () => "fy";
-    const ytd: MonthToCol = (m) => (m <= closedThrough ? "budget" : null);
-    const cells = [
-      ...budgetCells(fy),
-      ...budgetCells(ytd),
-      ...actualByRealm.flatMap((c) => actualCells(c, "actual", closedThrough)),
-    ];
-    const vStatement = buildCategoryStatement(cells, categoryByAccount);
-    const slices: RealmRevenueSlice[] = [
-      ...budgetSlices(fy),
-      ...budgetSlices(ytd),
-      ...actualCustomerByRealm.map((c, idx) => ({
-        realmId: realms[idx],
-        companyName: companyByRealm.get(realms[idx]) ?? null,
-        cells: actualCells(c, "actual", closedThrough),
-      })),
-    ];
-    variance = {
-      statement: vStatement,
-      eliminations: eliminationsFor(slices, vStatement.netIncome),
-    };
-  }
 
   // Accounts offered in the New Initiative dialog, per company.
   const accountsByRealm: Record<string, InitiativeAccount[]> = {};
@@ -346,7 +270,6 @@ export default async function BudgetPage({
   const approvedNet = initiatives
     .filter((i) => i.status === "approved")
     .reduce((n, i) => n + initiativeTotals(i).net, 0);
-  const hasBaseline = baselineByRealm.some((c) => c.length > 0);
   const baselineHint = `Baseline ${monthLabel(baseline.from)} – ${monthLabel(baseline.to)}`;
 
   const pill = (active: boolean) =>
@@ -419,88 +342,45 @@ export default async function BudgetPage({
           )}
       </div>
 
-      <AssumptionsEditor
-        budgetYear={year}
-        action={
+      <BudgetWorkspace
+        year={year}
+        colDim={colDim}
+        view={view}
+        closedThrough={closedThrough}
+        companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
+        initialAssumptions={realms.map(
+          (r) =>
+            assumptionByRealm.get(r) ?? {
+              realm_id: r,
+              revenue_growth_pct: 0,
+              expense_growth_pct: 0,
+            },
+        )}
+        baselineByRealm={baselineByRealm}
+        eliminationCellsByRealm={customerByRealm.map((cells, idx) =>
+          eliminationOnly(cells, realms[idx]),
+        )}
+        actuals={wantActuals ? actualByRealm.flat() : null}
+        actualEliminationSlices={actualCustomerByRealm.map((cells, idx) => ({
+          realmId: realms[idx],
+          companyName: companyByRealm.get(realms[idx]) ?? null,
+          cells: eliminationOnly(cells, realms[idx]),
+        }))}
+        approved={initiatives.filter((i) => i.status === "approved")}
+        categoryEntries={[...categoryByAccount.entries()]}
+        wantEliminations={wantEliminations}
+        approvedNet={approvedNet}
+        proposedNet={proposedNet}
+        proposedCount={proposed.length}
+        baselineHint={baselineHint}
+        assumptionsAction={
           <NewInitiativeButton
             budgetYear={year}
             companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
             accountsByRealm={accountsByRealm}
           />
         }
-        companies={realms.map((r) => {
-          const a = assumptionByRealm.get(r);
-          return {
-            realmId: r,
-            name: companyByRealm.get(r) ?? r,
-            revenueGrowthPct: a?.revenue_growth_pct ?? 0,
-            expenseGrowthPct: a?.expense_growth_pct ?? 0,
-          };
-        })}
       />
-
-      {hasBaseline && (
-        <div
-          className={`mb-4 grid gap-4 sm:grid-cols-2 ${statement.grossProfit ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
-        >
-          <StatTile
-            label="Budgeted income"
-            value={moneyWhole(statement.income.total)}
-            hint={baselineHint}
-          />
-          {statement.grossProfit && (
-            <StatTile
-              label="Budgeted gross profit"
-              value={moneyWhole(statement.grossProfit.total)}
-              hint="Income less direct costs"
-            />
-          )}
-          <StatTile
-            label="Budgeted net income"
-            value={moneyWhole((eliminations?.adjusted ?? statement.netIncome).total)}
-            hint={
-              approvedNet !== 0
-                ? `Includes ${moneyWhole(approvedNet)} from approved initiatives`
-                : eliminations
-                  ? "After intercompany eliminations"
-                  : "Income less all expenses"
-            }
-          />
-          <StatTile
-            label="Proposed initiatives"
-            value={moneyWhole(proposedNet)}
-            hint={`${proposed.length} awaiting approval — not in budget`}
-          />
-        </div>
-      )}
-
-      <Card pad={false}>
-        {!hasBaseline ? (
-          <EmptyState icon={Landmark} title="No baseline ledger data">
-            The budget is built from {monthLabel(baseline.from)} –{" "}
-            {monthLabel(baseline.to)} actuals. Run a QuickBooks sync in Settings
-            to import the general ledger.
-          </EmptyState>
-        ) : view === "budget" ? (
-          <StatementTable
-            statement={statement}
-            eliminations={eliminations}
-            colLabels={colLabels}
-            showRowTotal={colDim !== "total"}
-          />
-        ) : variance ? (
-          <VarianceTable
-            statement={variance.statement}
-            eliminations={variance.eliminations}
-            ytdLabel={`YTD ${MONTH_NAMES[closedThrough - 1]} ${year}`}
-          />
-        ) : (
-          <EmptyState icon={Landmark} title="No actuals yet">
-            Budget vs Actual starts once January {year} closes; until then the
-            Budget view shows the full plan.
-          </EmptyState>
-        )}
-      </Card>
 
       <InitiativesPanel
         budgetYear={year}

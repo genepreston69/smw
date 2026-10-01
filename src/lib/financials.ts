@@ -479,6 +479,28 @@ export interface Eliminations {
   adjusted: PivotTotals;
 }
 
+const ELIMINATION_LABELS = [
+  "Intercompany revenue (Precision Paint)",
+  "Intercompany revenue (other sister company)",
+] as const;
+
+/** Which elimination line (if any) a company's revenue from a customer
+    belongs to. Exported so callers can pre-filter customer slices to the
+    cells buildEliminations will actually use. */
+export function eliminationLabel(
+  companyName: string | null,
+  customer: string,
+): string | null {
+  if (isEnterpriseName(customer)) return ELIMINATION_LABELS[0];
+  // Guarded by the branch above so a line can never be eliminated twice.
+  if (
+    customer.toLowerCase().includes(AGENCY_CUSTOMER_PHRASE) &&
+    !(companyName ?? "").toLowerCase().includes(BILLING_AGENT_PHRASE)
+  )
+    return ELIMINATION_LABELS[1];
+  return null;
+}
+
 export function buildEliminations(
   slices: RealmRevenueSlice[],
   netIncome: PivotTotals,
@@ -503,18 +525,8 @@ export function buildEliminations(
     if (any) lines.push({ label, totals: { bycol, total } });
   };
 
-  collect(
-    "Intercompany revenue (Precision Paint)",
-    (_s, customer) => isEnterpriseName(customer),
-  );
-  // Guarded with !isEnterpriseName so a line can never be eliminated twice.
-  collect(
-    "Intercompany revenue (other sister company)",
-    (s, customer) =>
-      !isEnterpriseName(customer) &&
-      customer.toLowerCase().includes(AGENCY_CUSTOMER_PHRASE) &&
-      !(s.companyName ?? "").toLowerCase().includes(BILLING_AGENT_PHRASE),
-  );
+  for (const label of ELIMINATION_LABELS)
+    collect(label, (slice, customer) => eliminationLabel(slice.companyName, customer) === label);
 
   if (lines.length === 0) return null;
   const bycol = new Map(netIncome.bycol);
