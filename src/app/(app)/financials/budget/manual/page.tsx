@@ -836,7 +836,7 @@ export default async function BudgetManualPage() {
             <P>
               Until January {year} has closed, Budget vs Actual shows an
               explanatory empty state and the Budget view carries the full
-              plan. The Excel export falls back to the Budget sheet in the
+              plan. The Excel export falls back to the Budget layout in the
               same situation.
             </P>
             <Callout>
@@ -999,8 +999,12 @@ export default async function BudgetManualPage() {
               head={["Sheet", "Contents"]}
               rows={[
                 [
-                  "Budget (or Budget vs Actual)",
-                  "The statement with every category expanded to its accounts as grouped outline rows (collapse them with Excel's outline buttons). Budget: amount and % pairs per column plus Total. Budget vs Actual: full-year budget, YTD budget, YTD actual, variance, variance %. A notes line records company, baseline window, growth status, and the number of approved initiatives.",
+                  "All companies (or the selected company)",
+                  "The statement exactly as on screen, with every category expanded to its accounts as grouped outline rows (collapse them with Excel's outline buttons). Budget: amount and % pairs per column plus Total. Budget vs Actual: full-year budget, YTD budget, YTD actual, variance, variance %. On All companies this tab is consolidated and ends with the intercompany eliminations. A notes line records the baseline window, growth status, and the number of approved initiatives.",
+                ],
+                [
+                  "One tab per company",
+                  "On All companies only, a tab for each company follows, named after it and laid out the same way — built exactly like that company's own view on the page: its categories, its growth %, its approved initiatives, and no intercompany eliminations (those are a consolidation adjustment). The company tabs add up to the All companies tab's Net income before eliminations.",
                 ],
                 [
                   "Assumptions",

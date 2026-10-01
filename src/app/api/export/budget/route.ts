@@ -190,58 +190,81 @@ export async function GET(request: Request) {
     }
   };
 
-  const growthNote = unsaved.length
-    ? `Includes unsaved growth changes for ${unsaved.map((c) => c.name).join(", ")}`
-    : "Saved growth assumptions";
+  const sheetNames = new Set<string>();
+  // Excel sheet names: ≤ 31 chars, none of : \ / ? * [ ], unique per workbook.
+  const sheetName = (raw: string): string => {
+    const base = raw.replace(/[:\\/?*[\]]/g, " ").replace(/\s+/g, " ").trim().slice(0, 31).trim() || "Sheet";
+    let name = base;
+    for (let n = 2; sheetNames.has(name.toLowerCase()); n++) {
+      const tag = ` (${n})`;
+      name = base.slice(0, 31 - tag.length) + tag;
+    }
+    sheetNames.add(name.toLowerCase());
+    return name;
+  };
 
-  if (view === "variance" && variance) {
-    const ytd = `YTD ${MONTH_NAMES[data.closedThrough - 1]} ${year}`;
-    writeStatement(
-      workbook.addWorksheet("Budget vs Actual"),
-      variance.statement,
-      variance.eliminations,
-      `Budget vs Actual ${year}`,
-      [
-        companyLabel,
-        `Actuals through ${MONTH_NAMES[data.closedThrough - 1]} ${year}`,
-        growthNote,
-        "Variance is favorable-positive: actual − budget for income and profit, budget − actual for costs",
-      ],
-      {
-        headers: ["Full-year budget", `${ytd} budget`, `${ytd} actual`, "Variance", "Variance %"],
-        widths: [16, 16, 16, 15, 11],
-        formats: ["#,##0.00", "#,##0.00", "#,##0.00", "#,##0.00", "0.0%"],
-        cells: (t, cost) => {
-          const fy = t.cells.fy ?? 0;
-          const b = t.cells.budget ?? 0;
-          const a = t.cells.actual ?? 0;
-          const v = cost ? b - a : a - b;
-          return [fy, b, a, v, b !== 0 ? v / Math.abs(b) : null];
+  // One statement sheet for a scope (all companies, or one company).
+  const writeScope = (
+    tab: string,
+    label: string,
+    scope: { realmId: string; name: string }[],
+    built: ReturnType<typeof assembleBudget>,
+    approvedCount: number,
+  ) => {
+    const scopeUnsaved = unsaved.filter((c) => scope.includes(c));
+    const growthNote = scopeUnsaved.length
+      ? `Includes unsaved growth changes for ${scopeUnsaved.map((c) => c.name).join(", ")}`
+      : "Saved growth assumptions";
+
+    if (view === "variance" && built.variance) {
+      const ytd = `YTD ${MONTH_NAMES[data.closedThrough - 1]} ${year}`;
+      writeStatement(
+        workbook.addWorksheet(sheetName(tab)),
+        built.variance.statement,
+        built.variance.eliminations,
+        `Budget vs Actual ${year} — ${label}`,
+        [
+          `Actuals through ${MONTH_NAMES[data.closedThrough - 1]} ${year}`,
+          growthNote,
+          "Variance is favorable-positive: actual − budget for income and profit, budget − actual for costs",
+        ],
+        {
+          headers: ["Full-year budget", `${ytd} budget`, `${ytd} actual`, "Variance", "Variance %"],
+          widths: [16, 16, 16, 15, 11],
+          formats: ["#,##0.00", "#,##0.00", "#,##0.00", "#,##0.00", "0.0%"],
+          cells: (t, cost) => {
+            const fy = t.cells.fy ?? 0;
+            const b = t.cells.budget ?? 0;
+            const a = t.cells.actual ?? 0;
+            const v = cost ? b - a : a - b;
+            return [fy, b, a, v, b !== 0 ? v / Math.abs(b) : null];
+          },
         },
-      },
-    );
-  } else {
+      );
+      return;
+    }
+
     // Budget view (also the fallback for Budget vs Actual before any month
     // of the budget year has closed).
+    const s = built.statement;
     const showRowTotal = colDim !== "total";
-    const keys = statement.colKeys;
+    const keys = s.colKeys;
     const incomeFor = (k: string | null) =>
-      k === null ? statement.income.total : (statement.income.cells[k] ?? 0);
+      k === null ? s.income.total : (s.income.cells[k] ?? 0);
     const pair = (v: number | null, k: string | null) => {
       const d = incomeFor(k);
       return [v, v !== null && d !== 0 ? v / d : null];
     };
     const n = keys.length + (showRowTotal ? 1 : 0);
     writeStatement(
-      workbook.addWorksheet("Budget"),
-      statement,
-      eliminations,
-      `Budget ${year}`,
+      workbook.addWorksheet(sheetName(tab)),
+      s,
+      built.eliminations,
+      `Budget ${year} — ${label}`,
       [
-        companyLabel,
         `Baseline ${baselineLabel} actuals mapped onto ${year}`,
         growthNote,
-        approved.length ? `Includes ${approved.length} approved initiative(s)` : "",
+        approvedCount ? `Includes ${approvedCount} approved initiative(s)` : "",
         "% columns show each amount as a percent of the same column's total income",
       ],
       {
@@ -257,11 +280,52 @@ export async function GET(request: Request) {
         ],
       },
     );
+  };
+
+  // First tab: the selection exactly as on screen (consolidated, with
+  // eliminations, when All companies is selected).
+  writeScope(companyLabel, companyLabel, companies, { statement, eliminations, variance }, approved.length);
+
+  // On All companies, one tab per company after it — each built exactly like
+  // that company's own view on the page: its categories, its approved
+  // initiatives, its growth %, and no intercompany eliminations (they are a
+  // consolidation adjustment).
+  if (company === "all") {
+    companies.forEach((c, idx) => {
+      const categories = new Map<string, string>();
+      for (const a of data.accountRows) {
+        if (!a.category || a.realm_id !== c.realmId) continue;
+        const key = a.fully_qualified_name ?? a.name;
+        if (!categories.has(key)) categories.set(key, a.category);
+      }
+      const companyApproved = approved.filter((i) => i.realm_id === c.realmId);
+      writeScope(
+        c.name,
+        c.name,
+        [c],
+        assembleBudget({
+          year,
+          colDim,
+          view,
+          closedThrough: data.closedThrough,
+          companies: [c],
+          assumptions,
+          baselineByRealm: [data.baselineByRealm[idx] ?? []],
+          eliminationCellsByRealm: [],
+          actuals: data.actualsByRealm ? (data.actualsByRealm[idx] ?? []) : null,
+          actualEliminationSlices: [],
+          approved: companyApproved,
+          categoryByAccount: categories,
+          wantEliminations: false,
+        }),
+        companyApproved.length,
+      );
+    });
   }
 
   /* ---- Sheet 2: growth assumptions -------------------------------- */
 
-  const aSheet = workbook.addWorksheet("Assumptions");
+  const aSheet = workbook.addWorksheet(sheetName("Assumptions"));
   aSheet.addRow([`Growth assumptions — ${year} budget`]).font = { bold: true, size: 13 };
   aSheet.addRow([
     `Applied to ${baselineLabel} actuals: revenue accounts by the revenue %, all expense accounts (direct costs included) by the expense %`,
@@ -286,7 +350,7 @@ export async function GET(request: Request) {
 
   /* ---- Sheet 3: initiatives --------------------------------------- */
 
-  const iSheet = workbook.addWorksheet("Initiatives");
+  const iSheet = workbook.addWorksheet(sheetName("Initiatives"));
   iSheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
   iSheet.addRow([`New initiatives — ${year}`]).font = { bold: true, size: 13 };
   iSheet.addRow([

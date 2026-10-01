@@ -44,6 +44,8 @@ export interface LoadedBudget {
   eliminationCellsByRealm: PivotCell[][];
   /** YTD actual account cells, all realms, or null when not loaded. */
   actuals: PivotCell[] | null;
+  /** The same YTD actual cells split per realm (realms order), or null. */
+  actualsByRealm: PivotCell[][] | null;
   actualEliminationSlices: RealmRevenueSlice[];
   accountRows: BudgetAccount[];
   /** Saved assumptions per realm (missing realms default to 0%). */
@@ -217,6 +219,7 @@ export async function loadBudget(
       ? baselineLedger.customers.map((cells, idx) => eliminationOnly(cells, realms[idx]))
       : [],
     actuals: wantActuals ? actualLedger.accounts.flat() : null,
+    actualsByRealm: wantActuals ? actualLedger.accounts : null,
     actualEliminationSlices: wantEliminations
       ? actualLedger.customers.map((cells, idx) => ({
           realmId: realms[idx],
