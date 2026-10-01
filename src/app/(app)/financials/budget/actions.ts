@@ -59,10 +59,10 @@ export async function saveAssumption(
   );
   if (error) return fail(error);
 
-  // No revalidatePath: the page re-prices the budget client-side as the
-  // assumption is typed, and re-rendering the server page (a full ledger
-  // read) on every auto-save would be wasted work. The page is dynamic, so
-  // the next load reads the saved value.
+  // No revalidatePath: the page already re-prices the budget client-side as
+  // the assumption is typed, so re-rendering the server page (a full ledger
+  // read) on save would be wasted work. The page is dynamic, so the next
+  // load reads the saved value.
   return { ok: true };
 }
 

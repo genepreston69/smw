@@ -37,7 +37,7 @@ import { VarianceTable } from "./VarianceTable";
  * per-company baseline cells, the intercompany customer cells, YTD actuals,
  * approved initiatives, and the saved growth assumptions — and the budget
  * statement is assembled here, so editing a growth % re-prices every row
- * immediately while the new value auto-saves in the background. Same
+ * immediately; AssumptionsEditor then asks to save or revert. Same
  * helpers and statement builder as before (src/lib/budget.ts,
  * buildCategoryStatement), so the numbers are identical to a fresh load.
  */
