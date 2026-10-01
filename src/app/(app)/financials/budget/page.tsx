@@ -5,7 +5,6 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { moneyWhole } from "@/lib/format";
 import {
-  SCOPE_CLASSIFICATIONS,
   buildCategoryStatement,
   buildEliminations,
   lastDayOfMonth,
@@ -48,8 +47,6 @@ import { VarianceTable } from "./VarianceTable";
 // their accounts' categories; proposed ones are listed but excluded until
 // approved. The Budget vs Actual view compares year-to-date budget with
 // ledger actuals once budget-year months close.
-
-type RpcPage = { data: PivotCell[] | null; error: { message: string } | null };
 
 export default async function BudgetPage({
   searchParams,
@@ -102,63 +99,65 @@ export default async function BudgetPage({
   const closedThrough =
     latest < `${year}-01` ? 0 : latest >= `${year}-12` ? 12 : Number(latest.slice(5, 7));
 
-  const pivot = (
-    realmId: string,
+  // One budget_ledger_summary call per window (migration 0027): a single
+  // ledger scan returning account × month and revenue customer × month cells
+  // for every realm as one JSON row. Paged gl_pivot calls re-ran the whole
+  // aggregation per 1000-row page, per company, and timed the page out.
+  // Cells come back split per realm (in `realms` order) in gl_pivot's shape.
+  const ledger = async (
     from: string,
     to: string,
-    rowDim: "account" | "customer",
-    classifications: string[] | null,
-  ) =>
-    fetchAllRows((fromRow, toRow) =>
-      supabase
-        .rpc("gl_pivot", {
-          p_start: `${from}-01`,
-          p_end: lastDayOfMonth(to),
-          p_row_dim: rowDim,
-          p_col_dim: "month",
-          p_realm_id: realmId,
-          p_classifications: classifications,
-        })
-        .order("row_key")
-        .order("col_key")
-        .order("classification")
-        .order("account_type")
-        .range(fromRow, toRow) as unknown as PromiseLike<RpcPage>,
-    );
+    withCustomers: boolean,
+  ): Promise<{ accounts: PivotCell[][]; customers: PivotCell[][] }> => {
+    const { data, error } = await supabase.rpc("budget_ledger_summary", {
+      p_start: `${from}-01`,
+      p_end: lastDayOfMonth(to),
+      p_realm_ids: realms,
+      p_customers: withCustomers,
+    });
+    if (error) throw new Error(error.message);
+    const summary = (data ?? { accounts: [], customers: [] }) as {
+      accounts: [string, string, string | null, string, string, number | string][];
+      customers: [string, string, string, number | string][];
+    };
+    const idx = new Map(realms.map((r, i) => [r, i]));
+    const accounts: PivotCell[][] = realms.map(() => []);
+    const customers: PivotCell[][] = realms.map(() => []);
+    for (const [realm, classification, accountType, account, month, amount] of summary.accounts)
+      accounts[idx.get(realm)!]?.push({
+        classification,
+        account_type: accountType,
+        row_key: account,
+        col_key: month,
+        amount,
+        line_count: 0,
+      });
+    for (const [realm, customer, month, amount] of summary.customers)
+      customers[idx.get(realm)!]?.push({
+        classification: "Revenue",
+        account_type: null,
+        row_key: customer,
+        col_key: month,
+        amount,
+        line_count: 0,
+      });
+    return { accounts, customers };
+  };
 
   const wantEliminations = company === "all";
   const wantActuals = view === "variance" && closedThrough > 0;
   const actualTo = `${year}-${String(closedThrough).padStart(2, "0")}`;
+  const noLedger = { accounts: [] as PivotCell[][], customers: [] as PivotCell[][] };
 
   const [
-    baselineByRealm,
-    customerByRealm,
-    actualByRealm,
-    actualCustomerByRealm,
+    baselineLedger,
+    actualLedger,
     accountRows,
     assumptionRows,
     initiativeRows,
   ] = await Promise.all([
-    Promise.all(
-      realms.map((r) =>
-        pivot(r, baseline.from, baseline.to, "account", SCOPE_CLASSIFICATIONS.pl),
-      ),
-    ),
-    Promise.all(
-      (wantEliminations ? realms : []).map((r) =>
-        pivot(r, baseline.from, baseline.to, "customer", SCOPE_CLASSIFICATIONS.income),
-      ),
-    ),
-    Promise.all(
-      (wantActuals ? realms : []).map((r) =>
-        pivot(r, `${year}-01`, actualTo, "account", SCOPE_CLASSIFICATIONS.pl),
-      ),
-    ),
-    Promise.all(
-      (wantActuals && wantEliminations ? realms : []).map((r) =>
-        pivot(r, `${year}-01`, actualTo, "customer", SCOPE_CLASSIFICATIONS.income),
-      ),
-    ),
+    ledger(baseline.from, baseline.to, wantEliminations),
+    wantActuals ? ledger(`${year}-01`, actualTo, wantEliminations) : noLedger,
     fetchAllRows((fromRow, toRow) =>
       supabase
         .from("gl_accounts")
@@ -188,6 +187,10 @@ export default async function BudgetPage({
       .eq("budget_year", year)
       .order("created_at"),
   ]);
+  const baselineByRealm = baselineLedger.accounts;
+  const customerByRealm = wantEliminations ? baselineLedger.customers : [];
+  const actualByRealm = actualLedger.accounts;
+  const actualCustomerByRealm = wantEliminations ? actualLedger.customers : [];
 
   const assumptionByRealm = new Map<string, BudgetAssumption>(
     ((assumptionRows.data ?? []) as BudgetAssumption[]).map((a) => [
