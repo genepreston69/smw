@@ -20,17 +20,21 @@ interface CompanyAssumption {
 export function AssumptionsEditor({
   budgetYear,
   companies,
+  action,
 }: {
   budgetYear: number;
   companies: CompanyAssumption[];
+  /** Header control on the right (the New Initiative button). */
+  action?: React.ReactNode;
 }) {
   if (companies.length === 0) return null;
   return (
     <div className="mb-4 rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)]">
-      <div className="border-b border-line/70 px-4 py-2.5">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line/70 px-4 py-2.5">
         <h2 className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
           Growth assumptions
         </h2>
+        {action}
       </div>
       <div className="divide-y divide-line/70">
         {companies.map((c) => (
