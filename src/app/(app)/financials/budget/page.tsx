@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpen } from "lucide-react";
+import { BookOpen, HelpCircle } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { monthLabel } from "@/lib/financials";
@@ -175,10 +175,20 @@ export default async function BudgetPage({
         title={`Budget ${year}`}
         subtitle={`Calendar ${year} budget built from ${monthLabel(baseline.from)} – ${monthLabel(baseline.to)} actuals, grown by each company's assumptions, plus approved new initiatives. Click a category to expand its accounts.`}
         headerLinks={
-          <Link href="/financials/statement" className={buttonCls("secondary")}>
-            <BookOpen size={15} strokeWidth={2} />
-            Income Statement
-          </Link>
+          <>
+            <Link href="/financials/statement" className={buttonCls("secondary")}>
+              <BookOpen size={15} strokeWidth={2} />
+              Income Statement
+            </Link>
+            <Link
+              href="/financials/budget/manual"
+              title="Printable user manual for the Budget module"
+              className={buttonCls("secondary")}
+            >
+              <HelpCircle size={15} strokeWidth={2} />
+              User manual
+            </Link>
+          </>
         }
         filters={filters}
         company={company}
