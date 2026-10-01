@@ -192,6 +192,15 @@ export default async function CapitalizedLaborPage({
   );
   const showCompany = companyByRealm.size > 1;
 
+  // A failed allocation read renders as a banner, not a 500, which means it
+  // leaves no trace in the platform logs unless it is written there.
+  if (benefitError) {
+    console.error(
+      `Capitalized Labor: benefit allocation read failed: ${benefitError.message}` +
+        ` (code ${benefitError.code ?? "none"})`,
+    );
+  }
+
   // The summary comes back as compact tuples: [job, year, amount] for every
   // year of history, and [job, amount] for the selected window.
   const summary = (benefitData ?? {}) as {
