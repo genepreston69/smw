@@ -3,9 +3,16 @@ import { requireUser } from "@/lib/auth";
 import { money, shortDate } from "@/lib/format";
 import { QbSyncButtons } from "@/components/QbSyncButton";
 import { QbDisconnectButton } from "@/components/QbDisconnectButton";
+import { QbSyncSchedule } from "@/components/QbSyncSchedule";
 import { RoleSelect } from "@/components/RoleSelect";
 import { Alert, Card, CardTitle, PageHeader, Table, Th, buttonCls } from "@/components/ui";
-import type { ApprovalThreshold, Profile } from "@/lib/types";
+import { SYNC_HOUR, SYNC_TIMEZONE } from "@/lib/qbSyncSchedule";
+import type {
+  ApprovalThreshold,
+  Profile,
+  QbSyncRun,
+  QbSyncStep,
+} from "@/lib/types";
 
 export default async function SettingsPage({
   searchParams,
@@ -28,6 +35,25 @@ export default async function SettingsPage({
         .select("id, email, full_name, role")
         .order("email"),
     ]);
+
+  // Nightly sync status: RLS restricts qb_sync_runs/qb_sync_steps to admins,
+  // so non-admins get nothing back and the card is hidden for them.
+  const { data: runRow } = isAdmin
+    ? await supabase
+        .from("qb_sync_runs")
+        .select("id, trigger, local_date, timezone, status, started_at, finished_at")
+        .order("started_at", { ascending: false })
+        .limit(1)
+        .maybeSingle()
+    : { data: null };
+  const lastRun = (runRow ?? null) as QbSyncRun | null;
+  const { data: stepRows } = lastRun
+    ? await supabase
+        .from("qb_sync_steps")
+        .select("*")
+        .eq("run_id", lastRun.id)
+        .order("position")
+    : { data: null };
 
   const connections = (connRows ?? []) as Array<{
     realm_id: string;
@@ -129,6 +155,16 @@ export default async function SettingsPage({
             </a>
           </p>
         </Card>
+
+        {/* Nightly QuickBooks sync */}
+        {isAdmin && connections.length > 0 && (
+          <QbSyncSchedule
+            run={lastRun}
+            steps={(stepRows ?? []) as QbSyncStep[]}
+            timezone={SYNC_TIMEZONE}
+            hour={SYNC_HOUR}
+          />
+        )}
 
         {/* Approval thresholds */}
         <Card>

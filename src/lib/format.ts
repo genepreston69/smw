@@ -49,3 +49,22 @@ export const STATUS_STYLES: Record<string, string> = {
   rejected: "bg-red-50 text-red-700 border-red-200",
   changes_requested: "bg-amber-50 text-amber-700 border-amber-200",
 };
+
+/**
+ * Date + time in an explicit IANA timezone. Server components otherwise render
+ * timestamps in the server's timezone (UTC on Vercel), which reads wrong for
+ * anything scheduled in local time.
+ */
+export function dateTimeIn(
+  d: string | null | undefined,
+  timeZone: string,
+): string {
+  if (!d) return "—";
+  return new Date(d).toLocaleString("en-US", {
+    timeZone,
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
