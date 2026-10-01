@@ -16,6 +16,7 @@ import {
   BookOpen,
   Rows3,
   Scale,
+  Wallet,
   Settings,
   Ship,
   ChevronDown,
@@ -70,6 +71,12 @@ const SECTIONS: NavSection[] = [
         href: "/financials/statement",
         label: "Income Statement",
         icon: Rows3,
+        adminOnly: true,
+      },
+      {
+        href: "/financials/budget",
+        label: "Budget",
+        icon: Wallet,
         adminOnly: true,
       },
       {
