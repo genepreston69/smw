@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Download, Landmark } from "lucide-react";
+import { Building2, Download, Landmark } from "lucide-react";
 import { moneyWhole } from "@/lib/format";
 import type { PivotCell, RealmRevenueSlice } from "@/lib/financials";
 import {
@@ -151,6 +151,22 @@ export function BudgetWorkspace({
     assumptions: companies.map((c) => assumptions[c.realmId] ?? zeroAssumption(c.realmId)),
   });
 
+  // Company workbook: on All companies, one company's budget as its own file
+  // — the same workbook that company's own view exports, carrying its rates
+  // on screen. A download link rather than navigation, so an error response
+  // can't replace the page and lose unsaved growth edits.
+  const exportCompany = (realmId: string) => {
+    const a = document.createElement("a");
+    a.href = budgetExportHref({
+      company: realmId,
+      cols: colDim,
+      view,
+      assumptions: [assumptions[realmId] ?? zeroAssumption(realmId)],
+    });
+    a.download = "";
+    a.click();
+  };
+
   const colLabels = Object.fromEntries(
     statement.colKeys.map((k) => [k, budgetColLabel(colDim, k)]),
   );
@@ -167,6 +183,35 @@ export function BudgetWorkspace({
               <Download size={15} strokeWidth={2} />
               Export Excel
             </a>
+            {company === "all" && companies.length > 1 && (
+              <label
+                className={`${buttonCls("secondary")} relative cursor-pointer`}
+                title="Download one company's budget as its own Excel workbook"
+              >
+                <Building2 size={15} strokeWidth={2} />
+                Export a company…
+                {/* Invisible select over the button: picking a company
+                    downloads its workbook, and the controlled value snaps
+                    back so the same company can be picked again. */}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) exportCompany(e.target.value);
+                  }}
+                  aria-label="Export one company's budget to Excel"
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                >
+                  <option value="" disabled>
+                    Choose a company
+                  </option>
+                  {companies.map((c) => (
+                    <option key={c.realmId} value={c.realmId}>
+                      {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {headerLinks}
           </div>
         }

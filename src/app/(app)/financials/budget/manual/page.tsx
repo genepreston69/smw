@@ -248,6 +248,8 @@ export default async function BudgetManualPage() {
                   <strong>Header.</strong> The title <em>Budget {year}</em>,
                   a one-line description of how the budget is built, and the
                   action buttons: <strong>Export Excel</strong>,{" "}
+                  <strong>Export a company…</strong> (on All companies: one
+                  company&rsquo;s budget as its own workbook),{" "}
                   <strong>Income Statement</strong> (jumps to the actuals the
                   budget mirrors), and <strong>User manual</strong> (this
                   page).
@@ -1075,6 +1077,22 @@ export default async function BudgetManualPage() {
                 ],
               ]}
             />
+            <H3>Exporting one company</H3>
+            <P>
+              To give each company its own budget file, stay on{" "}
+              <strong>All companies</strong> and pick the company from{" "}
+              <strong>Export a company…</strong> in the header. It downloads{" "}
+              <em>budget-{year}-&lt;company-name&gt;-…xlsx</em>: the same
+              workbook you would get by selecting that company and clicking
+              Export Excel. That means its own statement tab, its own
+              Assumptions column, and only its initiatives. It follows the
+              current View and Columns filters and carries that
+              company&rsquo;s growth rates as shown on screen, saved or not.
+              Its statement is identical to that company&rsquo;s tab in the
+              All companies workbook. Repeat for each company to produce one
+              file per company. With a single company selected, Export Excel
+              already downloads that company&rsquo;s workbook.
+            </P>
             <H3>Exporting initiatives by month</H3>
             <P>
               To get initiatives on their own, without the rest of the

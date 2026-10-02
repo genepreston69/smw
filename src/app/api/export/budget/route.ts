@@ -457,7 +457,13 @@ export async function GET(request: Request) {
 
   const buffer = await workbook.xlsx.writeBuffer();
   const suffix = view === "variance" && variance ? "vs-actual" : `by-${colDim}`;
-  const companySlug = company === "all" ? "all-companies" : company;
+  // Named after the company, so per-company workbooks are told apart at a
+  // glance (the realm id is the fallback for a name with no letters/digits).
+  const companySlug =
+    company === "all"
+      ? "all-companies"
+      : companyLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+        company;
   return new Response(Buffer.from(buffer), {
     headers: {
       "Content-Type":
