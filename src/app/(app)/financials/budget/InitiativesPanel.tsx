@@ -2,10 +2,13 @@
 
 import { Fragment, useMemo, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
-import { ChevronRight, Plus, X } from "lucide-react";
+import { ChevronRight, Download, Plus, X } from "lucide-react";
 import { moneyWhole } from "@/lib/format";
 import {
+  INITIATIVE_STATUS_LABEL,
   MONTH_NAMES,
+  initiativeMonthCount,
+  initiativePeriodLabel,
   initiativeTotals,
   type BudgetInitiative,
   type InitiativeStatus,
@@ -29,25 +32,28 @@ const STATUS_STYLE: Record<InitiativeStatus, string> = {
   approved: "bg-emerald-50 text-emerald-700 border-emerald-200",
   rejected: "bg-red-50 text-red-700 border-red-200",
 };
-const STATUS_LABEL: Record<InitiativeStatus, string> = {
-  proposed: "Proposed — not in budget",
-  approved: "Approved — in budget",
-  rejected: "Rejected",
-};
+
+/** Initiatives by month in Excel: one initiative, or all in the company view. */
+const initiativeExportHref = (q: { id: string } | { company: string }) =>
+  `/api/export/budget-initiatives?${new URLSearchParams(q)}`;
 
 /**
  * New initiatives per company. Proposed initiatives are listed here but
  * excluded from the budget; approving one folds its account amounts into the
- * budget statement above. Approved amounts are locked (migration 0026's guard
- * trigger) — return the initiative to proposed to edit it.
+ * budget statement above, spread evenly over its start..end months. Approved
+ * amounts and months are locked (guard triggers, migrations 0026/0029) —
+ * return the initiative to proposed to edit it.
  */
 export function InitiativesPanel({
   budgetYear,
+  company,
   initiatives,
   companies,
   accountsByRealm,
 }: {
   budgetYear: number;
+  /** Company filter on the page (realm id or "all"), for Export by month. */
+  company: string;
   initiatives: BudgetInitiative[];
   companies: { realmId: string; name: string }[];
   accountsByRealm: Record<string, InitiativeAccount[]>;
@@ -75,10 +81,20 @@ export function InitiativesPanel({
 
   return (
     <div className="mt-4 rounded-xl border border-line bg-white shadow-[0_1px_2px_rgba(13,36,56,0.05)]">
-      <div className="border-b border-line/70 px-4 py-2.5">
+      <div className="flex items-center justify-between gap-3 border-b border-line/70 px-4 py-2">
         <h2 className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
           New initiatives
         </h2>
+        {sorted.length > 0 && (
+          <a
+            href={initiativeExportHref({ company })}
+            title="Every initiative below spread by month, led by what the approved ones add to the budget"
+            className={buttonCls("secondary", "sm")}
+          >
+            <Download size={14} strokeWidth={2} />
+            Export by month
+          </a>
+        )}
       </div>
       {error && <p className="px-4 pt-2 text-sm text-bad-600">{error}</p>}
       {sorted.length === 0 ? (
@@ -92,7 +108,7 @@ export function InitiativesPanel({
             <tr>
               <Th>Initiative</Th>
               <Th>Company</Th>
-              <Th>Starts</Th>
+              <Th>Period</Th>
               <Th>Status</Th>
               <Th right>Revenue</Th>
               <Th right>Expense</Th>
@@ -130,14 +146,14 @@ export function InitiativesPanel({
                   <td className="px-4 py-2 text-ink-600">
                     {companyName.get(i.realm_id) ?? i.realm_id}
                   </td>
-                  <td className="px-4 py-2 text-ink-600">
-                    {MONTH_NAMES[i.start_month - 1]} {budgetYear}
+                  <td className="px-4 py-2 whitespace-nowrap text-ink-600">
+                    {initiativePeriodLabel(i, budgetYear)}
                   </td>
                   <td className="px-4 py-2">
                     <span
                       className={`inline-block rounded-full border px-2 py-0.5 text-xs font-medium whitespace-nowrap ${STATUS_STYLE[i.status]}`}
                     >
-                      {STATUS_LABEL[i.status]}
+                      {INITIATIVE_STATUS_LABEL[i.status]}
                     </span>
                     {i.status === "approved" && i.approved_by_name && (
                       <span className="mt-0.5 block text-xs text-ink-400">
@@ -154,6 +170,14 @@ export function InitiativesPanel({
                   </td>
                   <td className="px-4 py-2">
                     <div className="flex justify-end gap-1.5 whitespace-nowrap">
+                      <a
+                        href={initiativeExportHref({ id: i.id })}
+                        title="Export this initiative by month to Excel"
+                        aria-label={`Export ${i.name} by month to Excel`}
+                        className={buttonCls("secondary", "sm")}
+                      >
+                        <Download size={14} strokeWidth={2} />
+                      </a>
                       {i.status === "proposed" && (
                         <>
                           <button
@@ -221,7 +245,12 @@ export function InitiativesPanel({
                               {l.account_name}{" "}
                               <span className="text-ink-400">({l.classification})</span>
                             </span>
-                            <span className="tabular-nums">{moneyWhole(l.annual_amount)}</span>
+                            <span className="tabular-nums">
+                              <span className="text-ink-400">
+                                {moneyWhole(l.annual_amount / initiativeMonthCount(i))}/mo ·{" "}
+                              </span>
+                              {moneyWhole(l.annual_amount)}
+                            </span>
                           </li>
                         ))}
                       </ul>
@@ -313,6 +342,8 @@ function InitiativeDialog({
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [startMonth, setStartMonth] = useState(initial?.start_month ?? 1);
+  const [endMonth, setEndMonth] = useState(initial?.end_month ?? 12);
+  const runMonths = initiativeMonthCount({ start_month: startMonth, end_month: endMonth });
   const [amounts, setAmounts] = useState<Record<string, string>>(() =>
     Object.fromEntries(
       (initial?.lines ?? []).map((l) => [l.account_name, String(l.annual_amount)]),
@@ -366,6 +397,7 @@ function InitiativeDialog({
         name,
         description,
         startMonth,
+        endMonth,
         lines,
       });
       if (result.ok) onSaved();
@@ -388,7 +420,7 @@ function InitiativeDialog({
       <Fragment key={classification}>
         <tr className="bg-surface/50">
           <td
-            colSpan={2}
+            colSpan={3}
             className="px-4 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
           >
             {classification === "Revenue" ? "Expected revenue" : "Expected expense"}
@@ -401,6 +433,9 @@ function InitiativeDialog({
               {a.category && (
                 <span className="ml-2 text-xs text-ink-400">{a.category}</span>
               )}
+            </td>
+            <td className="px-4 py-1.5 text-right text-[0.8rem] tabular-nums text-ink-400">
+              {Number(amounts[a.name]) ? moneyWhole(Number(amounts[a.name]) / runMonths) : ""}
             </td>
             <td className="px-4 py-1.5 text-right">
               <input
@@ -449,8 +484,8 @@ function InitiativeDialog({
           </button>
         </div>
 
-        <div className="grid gap-3 border-b border-line px-5 py-4 sm:grid-cols-2">
-          <label className="block sm:col-span-2">
+        <div className="grid gap-3 border-b border-line px-5 py-4 sm:grid-cols-4">
+          <label className="block sm:col-span-4">
             {label("Name")}
             <input
               type="text"
@@ -461,7 +496,7 @@ function InitiativeDialog({
               autoFocus
             />
           </label>
-          <label className="block">
+          <label className="block sm:col-span-2">
             {label("Company")}
             <select
               value={realmId}
@@ -482,7 +517,12 @@ function InitiativeDialog({
             {label("Starts")}
             <select
               value={startMonth}
-              onChange={(e) => setStartMonth(Number(e.target.value))}
+              onChange={(e) => {
+                const start = Number(e.target.value);
+                setStartMonth(start);
+                // Keep the end month if it still follows the start, else run to December.
+                if (endMonth < start) setEndMonth(12);
+              }}
               className={fieldCls}
             >
               {MONTH_NAMES.map((m, idx) => (
@@ -492,7 +532,23 @@ function InitiativeDialog({
               ))}
             </select>
           </label>
-          <label className="block sm:col-span-2">
+          <label className="block">
+            {label("Ends")}
+            <select
+              value={endMonth}
+              onChange={(e) => setEndMonth(Number(e.target.value))}
+              className={fieldCls}
+            >
+              {MONTH_NAMES.map((m, idx) =>
+                idx + 1 < startMonth ? null : (
+                  <option key={m} value={idx + 1}>
+                    {m} {budgetYear}
+                  </option>
+                ),
+              )}
+            </select>
+          </label>
+          <label className="block sm:col-span-4">
             {label("Description (optional)")}
             <textarea
               value={description}
@@ -513,8 +569,10 @@ function InitiativeDialog({
             className={fieldCls}
           />
           <p className="mt-1.5 text-xs text-ink-400">
-            Enter the expected amount for {budgetYear} in each account; it is
-            spread evenly from the start month through December.
+            Enter the expected amount for {budgetYear} in each account;{" "}
+            {runMonths === 1
+              ? `it all lands in ${MONTH_NAMES[startMonth - 1]} ${budgetYear}.`
+              : `it is spread evenly over the ${runMonths} months from ${MONTH_NAMES[startMonth - 1]} through ${MONTH_NAMES[endMonth - 1]}.`}
           </p>
         </div>
 
@@ -528,6 +586,7 @@ function InitiativeDialog({
               head={
                 <tr>
                   <Th>Account</Th>
+                  <Th right>Per month</Th>
                   <Th right>{budgetYear} amount</Th>
                 </tr>
               }

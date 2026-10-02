@@ -13,26 +13,32 @@ import {
   BUDGET_COL_DIMS,
   BUDGET_VIEWS,
   BUDGET_YEAR,
+  INITIATIVE_STATUS_LABEL,
   MONTH_NAMES,
   assembleBudget,
   assumptionsFromParams,
   baselineRange,
   budgetColLabel,
   growthCategories,
+  initiativePeriodLabel,
   initiativeTotals,
   sameAssumption,
   type BudgetColDim,
   type BudgetView,
 } from "@/lib/budget";
 import { loadBudget } from "@/lib/budgetServer";
+import {
+  sortInitiativesForExport,
+  writeInitiativesByMonth,
+} from "@/lib/budgetInitiativeSheet";
 
 // Excel export of /financials/budget: same query params as the page plus the
 // growth rates on screen, saved or not (budgetExportHref's `growth` and
 // `cgrowth` params), the same inputs (loadBudget) and the same assembly
 // (assembleBudget) — so the file always matches the screen. Overrides only
 // shape the file; nothing is saved. Sheets: the budget statement (or Budget
-// vs Actual), the growth assumptions used, and every initiative with its
-// account lines.
+// vs Actual), the growth assumptions used, every initiative with its account
+// lines, and the initiatives spread by month.
 export async function GET(request: Request) {
   const supabase = await createClient();
   const {
@@ -384,34 +390,27 @@ export async function GET(request: Request) {
   iSheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
   iSheet.addRow([`New initiatives — ${year}`]).font = { bold: true, size: 13 };
   iSheet.addRow([
-    "Only approved initiatives are included in the budget; amounts spread evenly from the start month through December",
+    "Only approved initiatives are included in the budget; amounts spread evenly from the start month through the end month (see Initiatives by month)",
   ]);
   iSheet.addRow([]);
   iSheet.addRow([
     "Initiative / account",
     "Company",
     "Status",
-    "Starts",
+    "Period",
     "Approved by",
     "Revenue",
     "Expense",
     "Net",
   ]).font = { bold: true };
   iSheet.views = [{ state: "frozen", ySplit: 4 }];
-  const order = ["approved", "proposed", "rejected"];
-  for (const i of [...data.initiatives].sort(
-    (a, b) => order.indexOf(a.status) - order.indexOf(b.status),
-  )) {
+  for (const i of sortInitiativesForExport(data.initiatives)) {
     const t = initiativeTotals(i);
     iSheet.addRow([
       i.name,
       companyByRealm.get(i.realm_id) ?? i.realm_id,
-      i.status === "approved"
-        ? "Approved — in budget"
-        : i.status === "proposed"
-          ? "Proposed — not in budget"
-          : "Rejected",
-      `${MONTH_NAMES[i.start_month - 1]} ${year}`,
+      INITIATIVE_STATUS_LABEL[i.status],
+      initiativePeriodLabel(i, year),
       i.approved_by_name ?? "",
       t.revenue,
       t.expense,
@@ -436,12 +435,25 @@ export async function GET(request: Request) {
   iSheet.getColumn(1).width = 42;
   iSheet.getColumn(2).width = 24;
   iSheet.getColumn(3).width = 24;
-  iSheet.getColumn(4).width = 10;
+  iSheet.getColumn(4).width = 18;
   iSheet.getColumn(5).width = 20;
   for (const c of [6, 7, 8]) {
     iSheet.getColumn(c).width = 15;
     iSheet.getColumn(c).numFmt = "#,##0.00";
   }
+
+  /* ---- Sheet 4: initiatives by month ------------------------------ */
+
+  writeInitiativesByMonth(
+    workbook.addWorksheet(sheetName("Initiatives by month")),
+    data.initiatives,
+    {
+      year,
+      title: `New initiatives ${year} by month — ${companyLabel}`,
+      companyName: (r) => companyByRealm.get(r) ?? r,
+      summary: true,
+    },
+  );
 
   const buffer = await workbook.xlsx.writeBuffer();
   const suffix = view === "variance" && variance ? "vs-actual" : `by-${colDim}`;

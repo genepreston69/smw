@@ -86,32 +86,38 @@ export async function saveAssumption(
   return { ok: true };
 }
 
-const initiativeSchema = z.object({
-  id: z.string().uuid().nullable(),
-  budgetYear: z.number().int(),
-  realmId: z.string().min(1, "Choose a company"),
-  name: z.string().trim().min(1, "Name the initiative").max(120),
-  description: z
-    .string()
-    .trim()
-    .max(2000)
-    .transform((v) => v || null),
-  startMonth: z.number().int().min(1).max(12),
-  lines: z
-    .array(
-      z.object({
-        accountName: z.string().min(1),
-        classification: z.enum(["Revenue", "Expense"]),
-        annualAmount: z.number().finite(),
-      }),
-    )
-    .transform((ls) => ls.filter((l) => l.annualAmount !== 0))
-    .refine((ls) => ls.length > 0, "Enter an amount for at least one account")
-    .refine(
-      (ls) => new Set(ls.map((l) => l.accountName)).size === ls.length,
-      "Each account can appear only once",
-    ),
-});
+const initiativeSchema = z
+  .object({
+    id: z.string().uuid().nullable(),
+    budgetYear: z.number().int(),
+    realmId: z.string().min(1, "Choose a company"),
+    name: z.string().trim().min(1, "Name the initiative").max(120),
+    description: z
+      .string()
+      .trim()
+      .max(2000)
+      .transform((v) => v || null),
+    startMonth: z.number().int().min(1).max(12),
+    endMonth: z.number().int().min(1).max(12),
+    lines: z
+      .array(
+        z.object({
+          accountName: z.string().min(1),
+          classification: z.enum(["Revenue", "Expense"]),
+          annualAmount: z.number().finite(),
+        }),
+      )
+      .transform((ls) => ls.filter((l) => l.annualAmount !== 0))
+      .refine((ls) => ls.length > 0, "Enter an amount for at least one account")
+      .refine(
+        (ls) => new Set(ls.map((l) => l.accountName)).size === ls.length,
+        "Each account can appear only once",
+      ),
+  })
+  .refine(
+    (d) => d.endMonth >= d.startMonth,
+    "The end month can't be before the start month",
+  );
 
 /** Create or update a proposed initiative and replace its account lines. */
 export async function saveInitiative(
@@ -131,6 +137,7 @@ export async function saveInitiative(
     name: d.name,
     description: d.description,
     start_month: d.startMonth,
+    end_month: d.endMonth,
   };
 
   if (id) {
@@ -181,7 +188,13 @@ export async function saveInitiative(
     entity_id: id,
     action: d.id ? "updated" : "created",
     actor_id: profile.id,
-    details: { name: d.name, realm_id: d.realmId, lines: d.lines.length },
+    details: {
+      name: d.name,
+      realm_id: d.realmId,
+      start_month: d.startMonth,
+      end_month: d.endMonth,
+      lines: d.lines.length,
+    },
   });
 
   revalidatePath("/financials/budget");

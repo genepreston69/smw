@@ -132,7 +132,7 @@ export async function loadBudget(
     accountRows,
     assumptionRows,
     categoryRateRows,
-    initiativeRows,
+    initiatives,
   ] = await Promise.all([
       ledger(baseline.from, baseline.to, wantEliminations),
       wantActuals ? ledger(`${year}-01`, actualTo, wantEliminations) : noLedger,
@@ -165,13 +165,7 @@ export async function loadBudget(
           growth_pct: number | string;
         }[]
       >,
-      db
-        .from("budget_initiatives")
-        .select(
-          "id, realm_id, name, description, start_month, status, created_at, approved_at, approved_by, budget_initiative_lines (account_name, classification, annual_amount)",
-        )
-        .eq("budget_year", year)
-        .order("created_at"),
+      loadInitiatives(db, year, realms),
     ]);
 
   type AssumptionRow = { realm_id: string; revenue_growth_pct: number | string; expense_growth_pct: number | string };
@@ -189,45 +183,6 @@ export async function loadBudget(
       category_growth,
     };
   });
-
-  type InitiativeRow = Omit<BudgetInitiative, "lines" | "approved_by_name"> & {
-    approved_by: string | null;
-    budget_initiative_lines: {
-      account_name: string;
-      classification: "Revenue" | "Expense";
-      annual_amount: number | string;
-    }[];
-  };
-  const rawInitiatives = ((initiativeRows.data ?? []) as InitiativeRow[]).filter((i) =>
-    realms.includes(i.realm_id),
-  );
-  const approverIds = [
-    ...new Set(rawInitiatives.map((i) => i.approved_by).filter((v): v is string => !!v)),
-  ];
-  const { data: approverRows } = approverIds.length
-    ? await db.from("profiles").select("id, full_name, email").in("id", approverIds)
-    : { data: [] };
-  const approverName = new Map(
-    ((approverRows ?? []) as { id: string; full_name: string | null; email: string }[]).map(
-      (p) => [p.id, p.full_name || p.email],
-    ),
-  );
-  const initiatives: BudgetInitiative[] = rawInitiatives.map((i) => ({
-    id: i.id,
-    realm_id: i.realm_id,
-    name: i.name,
-    description: i.description,
-    start_month: i.start_month,
-    status: i.status,
-    created_at: i.created_at,
-    approved_at: i.approved_at,
-    approved_by_name: i.approved_by ? (approverName.get(i.approved_by) ?? null) : null,
-    lines: i.budget_initiative_lines.map((l) => ({
-      account_name: l.account_name,
-      classification: l.classification,
-      annual_amount: Number(l.annual_amount),
-    })),
-  }));
 
   // Same account-name → category mapping as the Income Statement page.
   const categoryByAccount = new Map<string, string>();
@@ -274,4 +229,64 @@ export async function loadBudget(
     categoryByAccount,
     realmCategories,
   };
+}
+
+/**
+ * A budget year's initiatives for the given realms, every status, with their
+ * account lines and approver names. Shared by loadBudget and the initiatives
+ * export (/api/export/budget-initiatives), which needs no ledger read.
+ */
+export async function loadInitiatives(
+  db: SupabaseClient,
+  year: number,
+  realms: readonly string[],
+): Promise<BudgetInitiative[]> {
+  const { data, error } = await db
+    .from("budget_initiatives")
+    .select(
+      "id, realm_id, name, description, start_month, end_month, status, created_at, approved_at, approved_by, budget_initiative_lines (account_name, classification, annual_amount)",
+    )
+    .eq("budget_year", year)
+    .order("created_at");
+  if (error) throw new Error(error.message);
+
+  type InitiativeRow = Omit<BudgetInitiative, "lines" | "approved_by_name"> & {
+    approved_by: string | null;
+    budget_initiative_lines: {
+      account_name: string;
+      classification: "Revenue" | "Expense";
+      annual_amount: number | string;
+    }[];
+  };
+  const rawInitiatives = ((data ?? []) as InitiativeRow[]).filter((i) =>
+    realms.includes(i.realm_id),
+  );
+  const approverIds = [
+    ...new Set(rawInitiatives.map((i) => i.approved_by).filter((v): v is string => !!v)),
+  ];
+  const { data: approverRows } = approverIds.length
+    ? await db.from("profiles").select("id, full_name, email").in("id", approverIds)
+    : { data: [] };
+  const approverName = new Map(
+    ((approverRows ?? []) as { id: string; full_name: string | null; email: string }[]).map(
+      (p) => [p.id, p.full_name || p.email],
+    ),
+  );
+  return rawInitiatives.map((i) => ({
+    id: i.id,
+    realm_id: i.realm_id,
+    name: i.name,
+    description: i.description,
+    start_month: i.start_month,
+    end_month: i.end_month,
+    status: i.status,
+    created_at: i.created_at,
+    approved_at: i.approved_at,
+    approved_by_name: i.approved_by ? (approverName.get(i.approved_by) ?? null) : null,
+    lines: i.budget_initiative_lines.map((l) => ({
+      account_name: l.account_name,
+      classification: l.classification,
+      annual_amount: Number(l.annual_amount),
+    })),
+  }));
 }

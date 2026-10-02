@@ -224,6 +224,7 @@ export default async function BudgetPage({
 
       <InitiativesPanel
         budgetYear={year}
+        company={company}
         initiatives={initiatives}
         companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
         accountsByRealm={accountsByRealm}
@@ -236,8 +237,8 @@ export default async function BudgetPage({
         its category&rsquo;s rate for its company; a category left blank, and
         any uncategorized account, grows at the company&rsquo;s revenue or
         expense default. New initiatives
-        spread each account&rsquo;s annual amount evenly from the start month
-        through December and are folded into those accounts&rsquo; categories
+        spread each account&rsquo;s amount evenly from their start month
+        through their end month and are folded into those accounts&rsquo; categories
         only once approved; proposed and rejected initiatives never touch the
         budget totals. Categories, the direct-cost split, the Employee Benefits
         allocation{wantEliminations ? ", and intercompany eliminations (grown by each company's overall revenue growth)" : ""}{" "}
