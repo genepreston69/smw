@@ -248,8 +248,8 @@ export default async function BudgetManualPage() {
                   <strong>Header.</strong> The title <em>Budget {year}</em>,
                   a one-line description of how the budget is built, and the
                   action buttons: <strong>Export Excel</strong>,{" "}
-                  <strong>Export a category…</strong> (one category&rsquo;s
-                  budget as its own workbook),{" "}
+                  <strong>Export a company…</strong> (on All companies: one
+                  company&rsquo;s budget as its own workbook),{" "}
                   <strong>Income Statement</strong> (jumps to the actuals the
                   budget mirrors), and <strong>User manual</strong> (this
                   page).
@@ -1077,41 +1077,22 @@ export default async function BudgetManualPage() {
                 ],
               ]}
             />
-            <H3>Exporting one category</H3>
+            <H3>Exporting one company</H3>
             <P>
-              To hand a category&rsquo;s budget to the person who owns it —
-              Transportation to the transportation manager, say — pick it
-              from <strong>Export a category…</strong> in the header. It
-              downloads{" "}
-              <em>budget-{year}-&lt;category&gt;-&lt;company&gt;-…xlsx</em>:
-              the same workbook as <strong>Export Excel</strong>, honoring
-              the same filters and on-screen growth rates, narrowed to that
-              one category. The list holds every category on the selected
-              companies&rsquo; revenue and expense accounts; a label used on
-              both income and expense accounts is one entry, and its file
-              shows both with a <em>Net</em> line.
+              To give each company its own budget file, stay on{" "}
+              <strong>All companies</strong> and pick the company from{" "}
+              <strong>Export a company…</strong> in the header. It downloads{" "}
+              <em>budget-{year}-&lt;company-name&gt;-…xlsx</em>: the same
+              workbook you would get by selecting that company and clicking
+              Export Excel. That means its own statement tab, its own
+              Assumptions column, and only its initiatives. It follows the
+              current View and Columns filters and carries that
+              company&rsquo;s growth rates as shown on screen, saved or not.
+              Its statement is identical to that company&rsquo;s tab in the
+              All companies workbook. Repeat for each company to produce one
+              file per company. With a single company selected, Export Excel
+              already downloads that company&rsquo;s workbook.
             </P>
-            <MTable
-              head={["Sheet", "Contents"]}
-              rows={[
-                [
-                  "All companies (or the selected company), then one tab per company",
-                  "Only the category's rows, cut from the same statement as the screen, so every amount matches it. Sections the category has no accounts in are left out, and a company with no accounts in it gets no tab. % columns still divide by the whole budget's income, as on screen. Intercompany eliminations are left out, because they belong to customers, not to an account category. For Employee Benefits, the share the statement moves into Direct Costs comes along, so the category totals its full cost.",
-                ],
-                [
-                  "Build-up",
-                  `How each account's full-year budget is derived, per company: ${baseFrom} – ${baseTo} actual, the growth % applied, grown baseline, approved initiatives, and the ${year} budget. Each company's lines add up to its category total on that company's tab.`,
-                ],
-                [
-                  "Assumptions",
-                  "The company defaults and the category's own rate for each company.",
-                ],
-                [
-                  "Initiatives / Initiatives by month",
-                  "Only initiatives with lines on the category's accounts, showing just those lines (in any status, as in the full workbook).",
-                ],
-              ]}
-            />
             <H3>Exporting initiatives by month</H3>
             <P>
               To get initiatives on their own, without the rest of the

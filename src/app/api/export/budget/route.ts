@@ -19,14 +19,11 @@ import {
   assumptionsFromParams,
   baselineRange,
   budgetColLabel,
-  categoryBuildUp,
-  categorySlice,
   growthCategories,
   initiativePeriodLabel,
   initiativeTotals,
   sameAssumption,
   type BudgetColDim,
-  type BudgetInitiative,
   type BudgetView,
 } from "@/lib/budget";
 import { loadBudget } from "@/lib/budgetServer";
@@ -42,11 +39,6 @@ import {
 // shape the file; nothing is saved. Sheets: the budget statement (or Budget
 // vs Actual), the growth assumptions used, every initiative with its account
 // lines, and the initiatives spread by month.
-//
-// With `category=<label>` it is the category workbook: every sheet narrowed
-// to that one account category (its rows sliced out of the same assembled
-// statement by categorySlice, so they match the screen), plus a Build-up
-// sheet showing how each account's full-year budget is derived.
 export async function GET(request: Request) {
   const supabase = await createClient();
   const {
@@ -94,17 +86,6 @@ export async function GET(request: Request) {
 
   const data = await loadBudget(db, { year, company, realms, companyByRealm, view });
 
-  // Category workbook: the label must be a category on these companies'
-  // revenue or expense accounts.
-  const categoryRows = growthCategories(data.accountRows, realms);
-  const category = sp.get("category");
-  if (category !== null && !categoryRows.some((r) => r.category === category)) {
-    return NextResponse.json(
-      { error: `No accounts in category "${category}" for the selected company` },
-      { status: 404 },
-    );
-  }
-
   // Growth rates from the screen; a company whose rates are missing or
   // malformed keeps its saved ones.
   const saved = new Map(data.assumptions.map((a) => [a.realm_id, a]));
@@ -112,24 +93,6 @@ export async function GET(request: Request) {
 
   const companies = realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }));
   const approved = data.initiatives.filter((i) => i.status === "approved");
-
-  // The initiatives the file lists: all of them, or in a category workbook
-  // only those with lines on the category's accounts (by each company's own
-  // categories), carrying just those lines. The statement still assembles
-  // from every approved initiative — categorySlice picks the rows out.
-  const initiatives: BudgetInitiative[] =
-    category === null
-      ? data.initiatives
-      : data.initiatives
-          .map((i) => {
-            const categories = data.realmCategories[realms.indexOf(i.realm_id)];
-            return {
-              ...i,
-              lines: i.lines.filter((l) => categories?.get(l.account_name) === category),
-            };
-          })
-          .filter((i) => i.lines.length > 0);
-  const approvedListed = initiatives.filter((i) => i.status === "approved");
   const { statement, eliminations, variance } = assembleBudget({
     year,
     colDim,
@@ -181,9 +144,7 @@ export async function GET(request: Request) {
     sheet.addRow([title]).font = { bold: true, size: 13 };
     sheet.addRow([notes.filter(Boolean).join(" · ")]);
     sheet.addRow([]);
-    sheet.addRow([category === null ? "Category" : "Account", ...cols.headers]).font = {
-      bold: true,
-    };
+    sheet.addRow(["Category", ...cols.headers]).font = { bold: true };
     sheet.views = [{ state: "frozen", ySplit: 4, xSplit: 1 }];
     sheet.getColumn(1).width = 42;
     cols.widths.forEach((w, i) => {
@@ -207,33 +168,15 @@ export async function GET(request: Request) {
       };
     };
 
-    // A category slice shows only the sections it has rows in, then a net
-    // line when it has both income and costs, or a total when its costs span
-    // Direct Costs and Operating Expenses (the Employee Benefits allocation).
-    const costs = s.directCosts.groups.length + s.expenses.groups.length;
-    if (category === null || s.income.groups.length > 0) section(s.income, false);
+    section(s.income, false);
     if (s.directCosts.groups.length > 0) section(s.directCosts, true);
     if (s.grossProfit)
       sheet.addRow(["Gross profit", ...cols.cells(s.grossProfit, false)]).font = { bold: true };
-    if (category === null || s.expenses.groups.length > 0) section(s.expenses, true);
-    if (category === null)
-      sheet.addRow([
-        elim ? "Net income before eliminations" : "Net income",
-        ...cols.cells(s.netIncome, false),
-      ]).font = { bold: true };
-    else if (s.income.groups.length > 0 && costs > 0)
-      sheet.addRow([`Net — ${category}`, ...cols.cells(s.netIncome, false)]).font = {
-        bold: true,
-      };
-    else if (s.directCosts.groups.length > 0 && s.expenses.groups.length > 0) {
-      const total: StatementTotals = {
-        cells: Object.fromEntries(
-          Object.entries(s.netIncome.cells).map(([k, v]) => [k, -v]),
-        ),
-        total: -s.netIncome.total,
-      };
-      sheet.addRow([`Total — ${category}`, ...cols.cells(total, true)]).font = { bold: true };
-    }
+    section(s.expenses, true);
+    sheet.addRow([
+      elim ? "Net income before eliminations" : "Net income",
+      ...cols.cells(s.netIncome, false),
+    ]).font = { bold: true };
     if (elim) {
       sheet.addRow(["Intercompany eliminations"]).font = { bold: true };
       for (const line of elim.lines) sheet.addRow([line.label, ...cols.cells(line, false)]);
@@ -256,49 +199,27 @@ export async function GET(request: Request) {
     return name;
   };
 
-  // In a category workbook: the category's rows of a statement (null when it
-  // has none there), and its eliminations dropped — they are keyed by
-  // customer, so no account category owns them.
-  const narrow = (s: CategoryStatement) => (category === null ? s : categorySlice(s, category));
-  const narrowElim = (e: StatementEliminations | null) => (category === null ? e : null);
-  const titled = (t: string) => (category === null ? t : `${category} — ${t}`);
-  const categoryNote = category === null ? "" : `Accounts in the ${category} category only`;
-
-  // One statement sheet for a scope (all companies, or one company). A
-  // category workbook skips a company with no rows in the category unless
-  // `always` (the first tab), which then says so.
+  // One statement sheet for a scope (all companies, or one company).
   const writeScope = (
     tab: string,
     label: string,
     scope: { realmId: string; name: string }[],
     built: ReturnType<typeof assembleBudget>,
     approvedCount: number,
-    always: boolean,
   ) => {
     const scopeUnsaved = unsaved.filter((c) => scope.includes(c));
     const growthNote = scopeUnsaved.length
       ? `Includes unsaved growth changes for ${scopeUnsaved.map((c) => c.name).join(", ")}`
       : "Saved growth assumptions";
-    const empty = (title: string) => {
-      if (!always) return;
-      const sheet = workbook.addWorksheet(sheetName(tab));
-      sheet.addRow([title]).font = { bold: true, size: 13 };
-      sheet.addRow([`Nothing is budgeted in the ${category} category for ${label}.`]);
-      sheet.getColumn(1).width = 42;
-    };
 
     if (view === "variance" && built.variance) {
       const ytd = `YTD ${MONTH_NAMES[data.closedThrough - 1]} ${year}`;
-      const title = titled(`Budget vs Actual ${year} — ${label}`);
-      const vs = narrow(built.variance.statement);
-      if (!vs) return empty(title);
       writeStatement(
         workbook.addWorksheet(sheetName(tab)),
-        vs,
-        narrowElim(built.variance.eliminations),
-        title,
+        built.variance.statement,
+        built.variance.eliminations,
+        `Budget vs Actual ${year} — ${label}`,
         [
-          categoryNote,
           `Actuals through ${MONTH_NAMES[data.closedThrough - 1]} ${year}`,
           growthNote,
           "Variance is favorable-positive: actual − budget for income and profit, budget − actual for costs",
@@ -320,16 +241,12 @@ export async function GET(request: Request) {
     }
 
     // Budget view (also the fallback for Budget vs Actual before any month
-    // of the budget year has closed). % columns divide by the whole
-    // statement's income, so a category's % match the screen's.
-    const full = built.statement;
-    const title = titled(`Budget ${year} — ${label}`);
-    const s = narrow(full);
-    if (!s) return empty(title);
+    // of the budget year has closed).
+    const s = built.statement;
     const showRowTotal = colDim !== "total";
     const keys = s.colKeys;
     const incomeFor = (k: string | null) =>
-      k === null ? full.income.total : (full.income.cells[k] ?? 0);
+      k === null ? s.income.total : (s.income.cells[k] ?? 0);
     const pair = (v: number | null, k: string | null) => {
       const d = incomeFor(k);
       return [v, v !== null && d !== 0 ? v / d : null];
@@ -338,16 +255,13 @@ export async function GET(request: Request) {
     writeStatement(
       workbook.addWorksheet(sheetName(tab)),
       s,
-      narrowElim(built.eliminations),
-      title,
+      built.eliminations,
+      `Budget ${year} — ${label}`,
       [
-        categoryNote,
         `Baseline ${baselineLabel} actuals mapped onto ${year}`,
         growthNote,
         approvedCount ? `Includes ${approvedCount} approved initiative(s)` : "",
-        category === null
-          ? "% columns show each amount as a percent of the same column's total income"
-          : "% columns show each amount as a percent of the same column's total income across all categories",
+        "% columns show each amount as a percent of the same column's total income",
       ],
       {
         headers: [
@@ -366,14 +280,7 @@ export async function GET(request: Request) {
 
   // First tab: the selection exactly as on screen (consolidated, with
   // eliminations, when All companies is selected).
-  writeScope(
-    companyLabel,
-    companyLabel,
-    companies,
-    { statement, eliminations, variance },
-    approvedListed.length,
-    true,
-  );
+  writeScope(companyLabel, companyLabel, companies, { statement, eliminations, variance }, approved.length);
 
   // On All companies, one tab per company after it — each built exactly like
   // that company's own view on the page: its categories, its approved
@@ -383,7 +290,6 @@ export async function GET(request: Request) {
     companies.forEach((c, idx) => {
       const categories = data.realmCategories[idx] ?? new Map<string, string>();
       const companyApproved = approved.filter((i) => i.realm_id === c.realmId);
-      const listedCount = approvedListed.filter((i) => i.realm_id === c.realmId).length;
       writeScope(
         c.name,
         c.name,
@@ -404,87 +310,8 @@ export async function GET(request: Request) {
           categoryByAccount: categories,
           wantEliminations: false,
         }),
-        listedCount,
-        false,
+        companyApproved.length,
       );
-    });
-  }
-
-  /* ---- Category workbook: build-up -------------------------------- */
-
-  // How each account's full-year budget is derived, per company. Ties to the
-  // full-year total on each company's own tab (before the Employee Benefits
-  // allocation, which only moves cost between statement sections).
-  if (category !== null) {
-    const lines = categoryBuildUp({
-      category,
-      companies,
-      assumptions,
-      baselineByRealm: data.baselineByRealm,
-      realmCategories: data.realmCategories,
-      approved,
-    });
-    const bSheet = workbook.addWorksheet(sheetName("Build-up"));
-    bSheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
-    bSheet.addRow([`${category} — how the ${year} budget is built — ${companyLabel}`]).font = {
-      bold: true,
-      size: 13,
-    };
-    bSheet.addRow([
-      `Full-year budget per account = ${baselineLabel} actual × (1 + growth %) + approved initiatives. Growth is the ${category} rate for each company, or its revenue / expense default when the category has no rate of its own.`,
-    ]);
-    bSheet.addRow([]);
-    bSheet.addRow([
-      "Company / account",
-      `Baseline ${baselineLabel}`,
-      "Growth %",
-      "Grown baseline",
-      "Approved initiatives",
-      `${year} budget`,
-    ]).font = { bold: true };
-    bSheet.views = [{ state: "frozen", ySplit: 4, xSplit: 1 }];
-    type Amounts = Pick<(typeof lines)[number], "baseline" | "grown" | "initiatives" | "budget">;
-    const total = (rows: Amounts[]): Amounts => ({
-      baseline: rows.reduce((n, r) => n + r.baseline, 0),
-      grown: rows.reduce((n, r) => n + r.grown, 0),
-      initiatives: rows.reduce((n, r) => n + r.initiatives, 0),
-      budget: rows.reduce((n, r) => n + r.budget, 0),
-    });
-    const amounts = (a: Amounts, pct: number | null) => [
-      a.baseline,
-      pct,
-      a.grown,
-      a.initiatives,
-      a.budget,
-    ];
-    for (const [cls, label] of [
-      ["Revenue", "Income"],
-      ["Expense", "Expenses"],
-    ] as const) {
-      const section = lines.filter((l) => l.classification === cls);
-      if (section.length === 0) continue;
-      bSheet.addRow([label]).font = { bold: true };
-      for (const c of companies) {
-        const rows = section.filter((l) => l.realmId === c.realmId);
-        if (rows.length === 0) continue;
-        const head = bSheet.addRow([c.name, ...amounts(total(rows), rows[0].growthPct / 100)]);
-        head.getCell(1).alignment = { indent: 1 };
-        for (const r of rows) {
-          const row = bSheet.addRow([r.account, ...amounts(r, r.growthPct / 100)]);
-          row.outlineLevel = 1;
-          row.getCell(1).alignment = { indent: 2 };
-        }
-      }
-      bSheet.addRow([`Total ${label.toLowerCase()}`, ...amounts(total(section), null)]).font = {
-        bold: true,
-      };
-    }
-    if (lines.length === 0) bSheet.addRow([`Nothing is budgeted in the ${category} category.`]);
-    bSheet.getColumn(1).width = 46;
-    [18, 10, 16, 18, 16].forEach((w, i) => {
-      const col = bSheet.getColumn(2 + i);
-      col.width = w;
-      col.numFmt = i === 1 ? "0.0%" : "#,##0.00";
     });
   }
 
@@ -494,7 +321,7 @@ export async function GET(request: Request) {
   // the rate actually applied; a category with no rate of its own shows its
   // company default in grey italics.
   const aSheet = workbook.addWorksheet(sheetName("Assumptions"));
-  aSheet.addRow([titled(`Growth assumptions — ${year} budget`)]).font = { bold: true, size: 13 };
+  aSheet.addRow([`Growth assumptions — ${year} budget`]).font = { bold: true, size: 13 };
   aSheet.addRow([
     `Applied to ${baselineLabel} actuals: each account grows at its category's rate for its company. Grey italics = no rate of its own, so the company default applies (as it does to uncategorized accounts). — = the company has no accounts in that category.`,
   ]);
@@ -510,7 +337,7 @@ export async function GET(request: Request) {
     ["All expenses", "expense_growth_pct"],
   ] as const)
     aSheet.addRow([label, ...companies.map((c) => assumptions[c.realmId][field] / 100)]);
-  const rows = categoryRows.filter((r) => category === null || r.category === category);
+  const rows = growthCategories(data.accountRows, realms);
   for (const [label, filter] of [
     ["Income categories", (r: (typeof rows)[number]) => r.classification === "Revenue"],
     ["Direct cost categories", (r: (typeof rows)[number]) => r.direct],
@@ -561,14 +388,9 @@ export async function GET(request: Request) {
 
   const iSheet = workbook.addWorksheet(sheetName("Initiatives"));
   iSheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
-  iSheet.addRow([titled(`New initiatives — ${year}`)]).font = { bold: true, size: 13 };
+  iSheet.addRow([`New initiatives — ${year}`]).font = { bold: true, size: 13 };
   iSheet.addRow([
-    [
-      category === null ? "" : `Only lines on ${category} accounts are shown`,
-      "Only approved initiatives are included in the budget; amounts spread evenly from the start month through the end month (see Initiatives by month)",
-    ]
-      .filter(Boolean)
-      .join(" · "),
+    "Only approved initiatives are included in the budget; amounts spread evenly from the start month through the end month (see Initiatives by month)",
   ]);
   iSheet.addRow([]);
   iSheet.addRow([
@@ -582,7 +404,7 @@ export async function GET(request: Request) {
     "Net",
   ]).font = { bold: true };
   iSheet.views = [{ state: "frozen", ySplit: 4 }];
-  for (const i of sortInitiativesForExport(initiatives)) {
+  for (const i of sortInitiativesForExport(data.initiatives)) {
     const t = initiativeTotals(i);
     iSheet.addRow([
       i.name,
@@ -609,8 +431,7 @@ export async function GET(request: Request) {
       row.getCell(1).alignment = { indent: 2 };
     }
   }
-  if (initiatives.length === 0)
-    iSheet.addRow([category === null ? "No initiatives yet" : `No initiatives touch ${category}`]);
+  if (data.initiatives.length === 0) iSheet.addRow(["No initiatives yet"]);
   iSheet.getColumn(1).width = 42;
   iSheet.getColumn(2).width = 24;
   iSheet.getColumn(3).width = 24;
@@ -625,28 +446,29 @@ export async function GET(request: Request) {
 
   writeInitiativesByMonth(
     workbook.addWorksheet(sheetName("Initiatives by month")),
-    initiatives,
+    data.initiatives,
     {
       year,
-      title: titled(`New initiatives ${year} by month — ${companyLabel}`),
+      title: `New initiatives ${year} by month — ${companyLabel}`,
       companyName: (r) => companyByRealm.get(r) ?? r,
       summary: true,
-      empty: category === null ? undefined : `No initiatives touch ${category}`,
     },
   );
 
   const buffer = await workbook.xlsx.writeBuffer();
   const suffix = view === "variance" && variance ? "vs-actual" : `by-${colDim}`;
-  const companySlug = company === "all" ? "all-companies" : company;
-  const categorySlug =
-    category === null
-      ? ""
-      : `${category.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "category"}-`;
+  // Named after the company, so per-company workbooks are told apart at a
+  // glance (the realm id is the fallback for a name with no letters/digits).
+  const companySlug =
+    company === "all"
+      ? "all-companies"
+      : companyLabel.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") ||
+        company;
   return new Response(Buffer.from(buffer), {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="budget-${year}-${categorySlug}${companySlug}-${suffix}.xlsx"`,
+      "Content-Disposition": `attachment; filename="budget-${year}-${companySlug}-${suffix}.xlsx"`,
     },
   });
 }

@@ -40,8 +40,6 @@ export function writeInitiativesByMonth(
     title: string;
     companyName: (realmId: string) => string;
     summary: boolean;
-    /** Shown when there are no initiatives (default "No initiatives yet"). */
-    empty?: string;
   },
 ) {
   const { year } = opts;
@@ -139,5 +137,5 @@ export function writeInitiativesByMonth(
     );
     sheet.addRow([]);
   }
-  if (initiatives.length === 0) sheet.addRow([opts.empty ?? "No initiatives yet"]);
+  if (initiatives.length === 0) sheet.addRow(["No initiatives yet"]);
 }

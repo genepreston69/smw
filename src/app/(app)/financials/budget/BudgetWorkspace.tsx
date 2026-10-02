@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Download, FileSpreadsheet, Landmark } from "lucide-react";
+import { Building2, Download, Landmark } from "lucide-react";
 import { moneyWhole } from "@/lib/format";
 import type { PivotCell, RealmRevenueSlice } from "@/lib/financials";
 import {
@@ -144,26 +144,25 @@ export function BudgetWorkspace({
 
   // The export carries the growth rates on screen (saved or not), so the
   // file matches what the user is looking at.
-  const exportState = {
+  const exportHref = budgetExportHref({
     company,
     cols: colDim,
     view,
     assumptions: companies.map((c) => assumptions[c.realmId] ?? zeroAssumption(c.realmId)),
-  };
-  const exportHref = budgetExportHref(exportState);
+  });
 
-  // Category workbook: one account category's budget as its own file. A label
-  // used on both income and expense accounts is one entry (and one file).
-  const categoryLabels = useMemo(
-    () =>
-      [...new Set(growthCategories.map((c) => c.category))].sort((a, b) => a.localeCompare(b)),
-    [growthCategories],
-  );
-  const exportCategory = (category: string) => {
-    // A download link rather than navigation, so an error response can't
-    // replace the page and lose unsaved growth edits.
+  // Company workbook: on All companies, one company's budget as its own file
+  // — the same workbook that company's own view exports, carrying its rates
+  // on screen. A download link rather than navigation, so an error response
+  // can't replace the page and lose unsaved growth edits.
+  const exportCompany = (realmId: string) => {
     const a = document.createElement("a");
-    a.href = budgetExportHref({ ...exportState, category });
+    a.href = budgetExportHref({
+      company: realmId,
+      cols: colDim,
+      view,
+      assumptions: [assumptions[realmId] ?? zeroAssumption(realmId)],
+    });
     a.download = "";
     a.click();
   };
@@ -184,29 +183,30 @@ export function BudgetWorkspace({
               <Download size={15} strokeWidth={2} />
               Export Excel
             </a>
-            {categoryLabels.length > 0 && (
+            {company === "all" && companies.length > 1 && (
               <label
                 className={`${buttonCls("secondary")} relative cursor-pointer`}
-                title="Download one category's budget as its own Excel workbook"
+                title="Download one company's budget as its own Excel workbook"
               >
-                <FileSpreadsheet size={15} strokeWidth={2} />
-                Export a category…
-                {/* Invisible select over the button: picking a category
-                    downloads it, and the controlled value snaps back. */}
+                <Building2 size={15} strokeWidth={2} />
+                Export a company…
+                {/* Invisible select over the button: picking a company
+                    downloads its workbook, and the controlled value snaps
+                    back so the same company can be picked again. */}
                 <select
                   value=""
                   onChange={(e) => {
-                    if (e.target.value) exportCategory(e.target.value);
+                    if (e.target.value) exportCompany(e.target.value);
                   }}
-                  aria-label="Export one category to Excel"
+                  aria-label="Export one company's budget to Excel"
                   className="absolute inset-0 cursor-pointer opacity-0"
                 >
                   <option value="" disabled>
-                    Choose a category
+                    Choose a company
                   </option>
-                  {categoryLabels.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
+                  {companies.map((c) => (
+                    <option key={c.realmId} value={c.realmId}>
+                      {c.name}
                     </option>
                   ))}
                 </select>
