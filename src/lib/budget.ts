@@ -2,7 +2,7 @@
 // twelve-month baseline of ledger actuals, grown by per-company growth
 // assumptions — a rate per account category, falling back to the company's
 // revenue / expense rate (migrations 0026, 0028) — plus approved new
-// initiatives (migration 0026).
+// initiatives (migrations 0026, 0029).
 //
 // Everything here is pure: the page fetches gl_pivot cells and the budget
 // tables, and these helpers re-key them into synthetic PivotCells that feed
@@ -40,6 +40,12 @@ export const BUDGET_VIEWS: { key: BudgetView; label: string }[] = [
 ];
 
 export type InitiativeStatus = "proposed" | "approved" | "rejected";
+
+export const INITIATIVE_STATUS_LABEL: Record<InitiativeStatus, string> = {
+  proposed: "Proposed — not in budget",
+  approved: "Approved — in budget",
+  rejected: "Rejected",
+};
 
 export const MONTH_NAMES = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
@@ -166,12 +172,44 @@ export interface BudgetInitiative {
   realm_id: string;
   name: string;
   description: string | null;
+  /** First and last budget-year month (1–12) the amounts are spread over. */
   start_month: number;
+  end_month: number;
   status: InitiativeStatus;
   created_at: string;
   approved_at: string | null;
   approved_by_name: string | null;
   lines: BudgetInitiativeLine[];
+}
+
+/** Number of budget months an initiative runs (start through end, inclusive). */
+export const initiativeMonthCount = (i: Pick<BudgetInitiative, "start_month" | "end_month">) =>
+  i.end_month - i.start_month + 1;
+
+/** "Jul – Dec 2027", or "Jul 2027" for a one-month run. */
+export function initiativePeriodLabel(
+  i: Pick<BudgetInitiative, "start_month" | "end_month">,
+  year: number,
+): string {
+  const from = MONTH_NAMES[i.start_month - 1];
+  const to = MONTH_NAMES[i.end_month - 1];
+  return i.start_month === i.end_month ? `${from} ${year}` : `${from} – ${to} ${year}`;
+}
+
+/**
+ * One initiative line spread over the budget year: twelve amounts (Jan–Dec),
+ * the line's amount divided evenly over the initiative's run and 0 outside it.
+ * The single source of the spread — the budget (initiativeCells) and the
+ * initiative exports both use it, so the file matches the budget.
+ */
+export function spreadInitiativeLine(
+  i: Pick<BudgetInitiative, "start_month" | "end_month">,
+  amount: number,
+): number[] {
+  const perMonth = amount / initiativeMonthCount(i);
+  return Array.from({ length: 12 }, (_, idx) =>
+    idx + 1 >= i.start_month && idx + 1 <= i.end_month ? perMonth : 0,
+  );
 }
 
 /** Revenue and expense totals for one initiative (natural-signed amounts). */
@@ -273,9 +311,10 @@ export function revenueGrowthFactor(
 }
 
 /**
- * Approved initiatives as account cells: each line's annual amount spread
- * evenly from the initiative's start month through December. Callers pass
- * only the initiatives that should be in the budget (approved ones).
+ * Approved initiatives as account cells: each line's amount spread evenly
+ * from the initiative's start month through its end month
+ * (spreadInitiativeLine). Callers pass only the initiatives that should be in
+ * the budget (approved ones).
  */
 export function initiativeCells(
   initiatives: BudgetInitiative[],
@@ -283,10 +322,9 @@ export function initiativeCells(
 ): PivotCell[] {
   const out: PivotCell[] = [];
   for (const i of initiatives) {
-    const months = 13 - i.start_month;
     for (const l of i.lines) {
-      const perMonth = l.annual_amount / months;
-      for (let m = i.start_month; m <= 12; m++) {
+      const months = spreadInitiativeLine(i, l.annual_amount);
+      for (let m = i.start_month; m <= i.end_month; m++) {
         const col = toCol(m);
         if (col === null) continue;
         out.push({
@@ -294,7 +332,7 @@ export function initiativeCells(
           account_type: null,
           row_key: l.account_name,
           col_key: col,
-          amount: perMonth,
+          amount: months[m - 1],
           line_count: 0,
         });
       }

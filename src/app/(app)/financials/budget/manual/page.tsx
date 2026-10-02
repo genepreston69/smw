@@ -15,7 +15,8 @@ export const metadata = {
    content — the authoritative behavior lives in src/lib/budget.ts
    (assembleBudget and friends), src/lib/budgetServer.ts (loadBudget), the
    page components in this folder, the Excel export at
-   /api/export/budget, and migrations 0026 / 0027. Keep this page in sync
+   /api/export/budget and /api/export/budget-initiatives, and migrations
+   0026–0029. Keep this page in sync
    when those change. Year and baseline labels are read from the real
    constants so the text can never drift from the screen.
 --------------------------------------------------------------------------- */
@@ -152,7 +153,7 @@ export default async function BudgetManualPage() {
               <br />
               &nbsp;&nbsp;→ × (1 + growth %) per company and category (blank category → revenue / expense default)
               <br />
-              &nbsp;&nbsp;+ approved new initiatives (spread from start month → Dec)
+              &nbsp;&nbsp;+ approved new initiatives (spread from start month → end month)
               <br />
               &nbsp;&nbsp;= Budget {year}, in the Income Statement&rsquo;s layout
               <br />
@@ -217,7 +218,7 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "New initiatives",
-                  `Expected ${year} revenue and expense, by account, for something that is not in last year's history — a new crew, a new product line, a new lease. Spread evenly from a start month through December.`,
+                  `Expected ${year} revenue and expense, by account, for something that is not in last year's history — a new crew, a new product line, a new lease. Spread evenly from a start month through an end month.`,
                   "You create them with New Initiative; they join the budget only once approved.",
                 ],
                 [
@@ -300,7 +301,10 @@ export default async function BudgetManualPage() {
                   the selected companies — proposed first, then approved, then
                   rejected — with its totals, status, and action buttons.
                   Click an initiative&rsquo;s name to expand its description
-                  and account lines. See{" "}
+                  and account lines, each with its monthly amount. The{" "}
+                  <strong>Export by month</strong> button (and the download
+                  icon on each row) exports initiatives month by month to
+                  Excel. See{" "}
                   <a href="#initiatives" className="text-brand-600 hover:underline">
                     section 8
                   </a>
@@ -563,9 +567,9 @@ export default async function BudgetManualPage() {
               A new initiative is anything you expect in {year} that history
               cannot predict: a new barge-building line, a second paint crew,
               a new facility lease, a one-time equipment overhaul. Each
-              initiative belongs to one company, starts in a chosen month,
-              and carries an expected <strong>annual</strong> amount per
-              account.
+              initiative belongs to one company, runs from a chosen start
+              month through a chosen end month, and carries an expected{" "}
+              {year} amount per account.
             </P>
             <H3>Creating an initiative</H3>
             <Steps
@@ -584,9 +588,12 @@ export default async function BudgetManualPage() {
                   amounts already typed are cleared.
                 </>,
                 <>
-                  Pick the <strong>Starts</strong> month. Amounts are spread
-                  evenly from this month through December {year}. January
-                  means a full twelve-month spread; July means six months.
+                  Pick the <strong>Starts</strong> and <strong>Ends</strong>{" "}
+                  months. Amounts are spread evenly over that run, start and
+                  end months included, and nothing lands outside it. January
+                  to December is a full twelve-month spread; July to December
+                  is six months; July to September is three. Ends defaults to
+                  December and can never be before Starts.
                 </>,
                 <>
                   Optionally add a <strong>Description</strong> (up to 2000
@@ -598,8 +605,9 @@ export default async function BudgetManualPage() {
                   <strong>Expected expense</strong>, type the {year} amount in
                   each relevant account. Use the filter box to find accounts
                   by name or category; accounts you have already filled in
-                  stay visible while filtering. The footer totals Revenue,
-                  Expense, and Net as you type.
+                  stay visible while filtering. The <em>Per month</em> column
+                  shows what each month of the run will carry, and the footer
+                  totals Revenue, Expense, and Net as you type.
                 </>,
                 <>
                   Click <strong>Save as proposed</strong>. The initiative
@@ -608,7 +616,7 @@ export default async function BudgetManualPage() {
                 </>,
               ]}
             />
-            <Shot caption="The initiative dialog. Each account gets the expected full-year amount; the footer totals update as you type.">
+            <Shot caption="The initiative dialog. Each account gets the expected amount for the run; Per month shows the monthly spread and the footer totals update as you type.">
               <MockInitiativeDialog />
             </Shot>
             <H3>Rules enforced on save</H3>
@@ -620,9 +628,9 @@ export default async function BudgetManualPage() {
                   simply not stored.
                 </>,
                 <>
-                  Amounts are whole-year figures. The system divides by the
-                  number of months from the start month to December — you do
-                  not enter a monthly figure.
+                  Amounts are totals for the whole run. The system divides by
+                  the number of months from the start month to the end month
+                  — you do not enter a monthly figure.
                 </>,
                 <>
                   Negative amounts are allowed (e.g. an initiative that reduces
@@ -710,7 +718,9 @@ export default async function BudgetManualPage() {
               drift quietly. The database refuses any change to an approved
               (or rejected) initiative&rsquo;s account lines — the message
               reads <em>&ldquo;Initiative is approved; return it to proposed
-              before editing its amounts&rdquo;</em>. To change it, click{" "}
+              before editing its amounts&rdquo;</em> — and to its start and
+              end months, since they decide which months carry the money.
+              To change it, click{" "}
               <strong>Return to proposed</strong>, edit, and approve again.
               Returning to proposed clears the approver stamp and takes the
               initiative out of the budget until it is re-approved.
@@ -908,9 +918,9 @@ export default async function BudgetManualPage() {
             <H3>3. Initiatives (approved only)</H3>
             <Formulas
               rows={[
-                ["months", "13 − start month   (Jan = 12, Jul = 6, Dec = 1)"],
-                ["per month", "annual amount ÷ months"],
-                ["initiative(account, m)", "per month for every m from start month to 12; 0 before the start month"],
+                ["months", "end month − start month + 1   (Jan–Dec = 12, Jul–Dec = 6, Jul–Sep = 3)"],
+                ["per month", "amount ÷ months"],
+                ["initiative(account, m)", "per month for every m from start month to end month; 0 outside that run"],
               ]}
             />
             <H3>4. Budget cell and columns</H3>
@@ -993,10 +1003,12 @@ export default async function BudgetManualPage() {
             </P>
             <P>
               Now approve an initiative <em>&ldquo;Second shift&rdquo;</em>{" "}
-              starting <strong>July</strong> with $120,000 of 400 Fabrication
-              Revenue and $60,000 of 710 Labor Cost for the year. July to
+              running <strong>July through December</strong> with $120,000 of
+              400 Fabrication Revenue and $60,000 of 710 Labor Cost. July to
               December is six months, so each month from July on gets
-              $20,000 of revenue and $10,000 of labor; January is untouched:
+              $20,000 of revenue and $10,000 of labor; January is untouched.
+              (Had it ended in September, the same amounts would land as
+              $40,000 and $20,000 in each of July, August, and September.)
             </P>
             <MTable
               head={["Account", `Jul ${year}`, `Jan ${year}`, `${year} total`]}
@@ -1055,10 +1067,29 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "Initiatives",
-                  "Every initiative for the selected companies — approved first — with company, status, start month, approver, revenue, expense, and net, expanding to its account lines.",
+                  "Every initiative for the selected companies — approved first — with company, status, period (start – end month), approver, revenue, expense, and net, expanding to its account lines.",
+                ],
+                [
+                  "Initiatives by month",
+                  "The same initiatives with one column per month (Jan–Dec) plus Total. It opens with an In budget block — what the approved initiatives add to the budget each month (revenue, expense, net) — then each initiative's revenue and expense accounts, section totals, and net by month. Months outside an initiative's run are blank.",
                 ],
               ]}
             />
+            <H3>Exporting initiatives by month</H3>
+            <P>
+              To get initiatives on their own, without the rest of the
+              budget, use the New initiatives panel: <strong>Export by
+              month</strong> in its header downloads{" "}
+              <em>initiatives-{year}-&lt;company&gt;-by-month.xlsx</em> with
+              every initiative for the selected company (or all companies),
+              laid out like the <em>Initiatives by month</em> sheet above. The
+              download icon on an initiative&rsquo;s row exports just that
+              initiative —{" "}
+              <em>initiative-{year}-&lt;name&gt;-by-month.xlsx</em> — in any
+              status, so a proposed initiative can be shared for review
+              before it is approved. These files read only the initiatives,
+              not the ledger, so they download instantly.
+            </P>
             <Callout>
               Exporting never saves anything. If you export a scenario with
               unsaved growth, the Assumptions sheet says so — share it as a
@@ -1168,7 +1199,7 @@ export default async function BudgetManualPage() {
                 <>
                   <strong>Collect initiatives as proposed.</strong> Have each
                   leader enter their initiatives with a clear description and
-                  realistic start month. Leave them proposed. The{" "}
+                  realistic start and end months. Leave them proposed. The{" "}
                   <em>Proposed initiatives</em> tile becomes the agenda for the
                   approval meeting.
                 </>,
@@ -1552,13 +1583,16 @@ function MockInitiativeDialog() {
       {t}
     </span>
   );
-  const row = (name: string, cat: string, amt: string) => (
+  const row = (name: string, cat: string, amt: string, perMonth: string) => (
     <div className="flex items-center justify-between px-3 py-1 text-xs">
       <span className="text-ink-900">
         {name} <span className="ml-1 text-ink-400">{cat}</span>
       </span>
-      <span className="inline-block w-28 rounded-md border border-line bg-white px-2 py-0.5 text-right tabular-nums text-ink-900">
-        {amt}
+      <span className="flex items-center gap-3">
+        <span className="tabular-nums text-ink-400">{perMonth}</span>
+        <span className="inline-block w-28 rounded-md border border-line bg-white px-2 py-0.5 text-right tabular-nums text-ink-900">
+          {amt}
+        </span>
       </span>
     </div>
   );
@@ -1567,12 +1601,12 @@ function MockInitiativeDialog() {
       <div className="border-b border-line px-4 py-2 text-sm font-semibold text-ink-900">
         New initiative
       </div>
-      <div className="grid gap-2 border-b border-line px-4 py-3 sm:grid-cols-2">
-        <div className="sm:col-span-2">
+      <div className="grid gap-2 border-b border-line px-4 py-3 sm:grid-cols-4">
+        <div className="sm:col-span-4">
           {label("Name")}
           <span className={field}>Second paint crew</span>
         </div>
-        <div>
+        <div className="sm:col-span-2">
           {label("Company")}
           <span className={field}>Precision Paint</span>
         </div>
@@ -1580,20 +1614,24 @@ function MockInitiativeDialog() {
           {label("Starts")}
           <span className={field}>Jul {BUDGET_YEAR}</span>
         </div>
+        <div>
+          {label("Ends")}
+          <span className={field}>Dec {BUDGET_YEAR}</span>
+        </div>
       </div>
       <div className="border-b border-line/70 px-4 py-1.5 text-[0.65rem] text-ink-400">
         Enter the expected amount for {BUDGET_YEAR} in each account; it is
-        spread evenly from the start month through December.
+        spread evenly over the 6 months from Jul through Dec.
       </div>
       <div className="bg-surface/50 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
         Expected revenue
       </div>
-      {row("400 Painting Revenue", "Sales", "240,000")}
+      {row("400 Painting Revenue", "Sales", "240,000", "$40,000")}
       <div className="bg-surface/50 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
         Expected expense
       </div>
-      {row("710 Labor Cost", "Direct Costs", "120,000")}
-      {row("720 Materials", "Direct Costs", "45,000")}
+      {row("710 Labor Cost", "Direct Costs", "120,000", "$20,000")}
+      {row("720 Materials", "Direct Costs", "45,000", "$7,500")}
       <div className="flex items-center justify-between border-t border-line px-4 py-2 text-xs text-ink-600">
         <span>
           Revenue <span className="font-medium text-ink-900">$240,000</span> ·
