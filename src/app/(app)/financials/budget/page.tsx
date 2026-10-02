@@ -8,6 +8,7 @@ import {
   BUDGET_VIEWS,
   BUDGET_YEAR,
   baselineRange,
+  growthCategories,
   initiativeTotals,
   type BudgetColDim,
   type BudgetView,
@@ -24,7 +25,8 @@ import {
 // Calendar-year budget in the Income Statement's layout. Baseline = each
 // account's actuals for the twelve months ending June 30 of the prior year,
 // mapped month-for-month onto the budget year and grown by each company's
-// revenue / expense growth assumptions. Approved new initiatives fold into
+// growth assumptions — a rate per category, falling back to the company's
+// revenue / expense default. Approved new initiatives fold into
 // their accounts' categories; proposed ones are listed but excluded until
 // approved. The Budget vs Actual view compares year-to-date budget with
 // ledger actuals once budget-year months close.
@@ -204,6 +206,8 @@ export default async function BudgetPage({
         actualEliminationSlices={data.actualEliminationSlices}
         approved={initiatives.filter((i) => i.status === "approved")}
         categoryEntries={[...data.categoryByAccount.entries()]}
+        realmCategoryEntries={data.realmCategories.map((m) => [...m.entries()])}
+        growthCategories={growthCategories(accountRows, realms)}
         wantEliminations={wantEliminations}
         approvedNet={approvedNet}
         proposedNet={proposedNet}
@@ -228,14 +232,15 @@ export default async function BudgetPage({
       <p className="mt-3 text-xs text-ink-400">
         Each {year} month starts from the same calendar month of the baseline
         ({monthLabel(baseline.from)} → Jul {year}, {monthLabel(`${year - 1}-01`)}{" "}
-        → Jan {year}), so seasonality carries forward. Revenue accounts grow by
-        the company&rsquo;s revenue growth %, and all expense accounts —
-        direct costs included — by its expense growth %. New initiatives
+        → Jan {year}), so seasonality carries forward. Each account grows at
+        its category&rsquo;s rate for its company; a category left blank, and
+        any uncategorized account, grows at the company&rsquo;s revenue or
+        expense default. New initiatives
         spread each account&rsquo;s annual amount evenly from the start month
         through December and are folded into those accounts&rsquo; categories
         only once approved; proposed and rejected initiatives never touch the
         budget totals. Categories, the direct-cost split, the Employee Benefits
-        allocation{wantEliminations ? ", and intercompany eliminations (grown by revenue growth)" : ""}{" "}
+        allocation{wantEliminations ? ", and intercompany eliminations (grown by each company's overall revenue growth)" : ""}{" "}
         work exactly as on the{" "}
         <Link href="/financials/statement" className="underline">
           Income Statement

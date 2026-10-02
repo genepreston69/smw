@@ -9,10 +9,12 @@ import {
   assembleBudget,
   budgetColLabel,
   budgetExportHref,
+  zeroAssumption,
   type BudgetAssumption,
   type BudgetColDim,
   type BudgetInitiative,
   type BudgetView,
+  type GrowthCategory,
 } from "@/lib/budget";
 import { Card, EmptyState, PageHeader, StatTile, buttonCls } from "@/components/ui";
 import { StatementTable } from "../statement/StatementTable";
@@ -21,8 +23,9 @@ import { VarianceTable } from "./VarianceTable";
 
 /**
  * The live part of the Budget page. The server hands over the raw inputs —
- * per-company baseline cells, the intercompany customer cells, YTD actuals,
- * approved initiatives, and the saved growth assumptions — and the budget
+ * per-company baseline cells and account categories, the intercompany
+ * customer cells, YTD actuals, approved initiatives, and the saved growth
+ * assumptions — and the budget
  * statement is assembled here, so editing a growth % re-prices every row
  * immediately; AssumptionsEditor then asks to save or revert. Same
  * helpers and statement builder as before (src/lib/budget.ts,
@@ -46,6 +49,8 @@ export function BudgetWorkspace({
   actualEliminationSlices,
   approved,
   categoryEntries,
+  realmCategoryEntries,
+  growthCategories,
   wantEliminations,
   approvedNet,
   proposedNet,
@@ -77,6 +82,10 @@ export function BudgetWorkspace({
   actualEliminationSlices: RealmRevenueSlice[];
   approved: BudgetInitiative[];
   categoryEntries: [string, string][];
+  /** Each company's own account → category entries (companies order). */
+  realmCategoryEntries: [string, string][][];
+  /** Rows of the growth assumptions grid. */
+  growthCategories: GrowthCategory[];
   wantEliminations: boolean;
   approvedNet: number;
   proposedNet: number;
@@ -92,6 +101,10 @@ export function BudgetWorkspace({
     () => new Map(categoryEntries),
     [categoryEntries],
   );
+  const realmCategories = useMemo(
+    () => realmCategoryEntries.map((entries) => new Map(entries)),
+    [realmCategoryEntries],
+  );
 
   const { statement, eliminations, variance } = useMemo(
     () =>
@@ -103,6 +116,7 @@ export function BudgetWorkspace({
         companies,
         assumptions,
         baselineByRealm,
+        realmCategories,
         eliminationCellsByRealm,
         actuals,
         actualEliminationSlices,
@@ -114,6 +128,7 @@ export function BudgetWorkspace({
       assumptions,
       companies,
       baselineByRealm,
+      realmCategories,
       eliminationCellsByRealm,
       actuals,
       actualEliminationSlices,
@@ -127,20 +142,13 @@ export function BudgetWorkspace({
     ],
   );
 
-  // The export carries the growth % on screen (saved or not), so the file
-  // matches what the user is looking at.
+  // The export carries the growth rates on screen (saved or not), so the
+  // file matches what the user is looking at.
   const exportHref = budgetExportHref({
     company,
     cols: colDim,
     view,
-    assumptions: companies.map(
-      (c) =>
-        assumptions[c.realmId] ?? {
-          realm_id: c.realmId,
-          revenue_growth_pct: 0,
-          expense_growth_pct: 0,
-        },
-    ),
+    assumptions: companies.map((c) => assumptions[c.realmId] ?? zeroAssumption(c.realmId)),
   });
 
   const colLabels = Object.fromEntries(
@@ -168,25 +176,13 @@ export function BudgetWorkspace({
       <AssumptionsEditor
         budgetYear={year}
         action={assumptionsAction}
-        companies={companies.map((c) => {
-          const a = assumptions[c.realmId];
-          return {
-            realmId: c.realmId,
-            name: c.name,
-            revenueGrowthPct: a?.revenue_growth_pct ?? 0,
-            expenseGrowthPct: a?.expense_growth_pct ?? 0,
-          };
-        })}
-        onChange={(realmId, revenueGrowthPct, expenseGrowthPct) =>
-          setAssumptions((prev) => ({
-            ...prev,
-            [realmId]: {
-              realm_id: realmId,
-              revenue_growth_pct: revenueGrowthPct,
-              expense_growth_pct: expenseGrowthPct,
-            },
-          }))
-        }
+        companies={companies}
+        initial={companies.map(
+          (c) =>
+            initialAssumptions.find((a) => a.realm_id === c.realmId) ?? zeroAssumption(c.realmId),
+        )}
+        categories={growthCategories}
+        onChange={(a) => setAssumptions((prev) => ({ ...prev, [a.realm_id]: a }))}
       />
 
       {hasBaseline && (

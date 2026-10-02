@@ -1,6 +1,8 @@
 // Budget (/financials/budget): a calendar-year budget built from a trailing-
-// twelve-month baseline of ledger actuals, grown by per-company revenue and
-// expense assumptions, plus approved new initiatives (migration 0026).
+// twelve-month baseline of ledger actuals, grown by per-company growth
+// assumptions — a rate per account category, falling back to the company's
+// revenue / expense rate (migrations 0026, 0028) — plus approved new
+// initiatives (migration 0026).
 //
 // Everything here is pure: the page fetches gl_pivot cells and the budget
 // tables, and these helpers re-key them into synthetic PivotCells that feed
@@ -11,6 +13,7 @@
 import {
   buildCategoryStatement,
   buildEliminations,
+  isDirectCostCategory,
   serializeEliminations,
   type CategoryStatement,
   type PivotCell,
@@ -48,10 +51,108 @@ export function baselineRange(year: number): { from: string; to: string } {
   return { from: `${year - 2}-07`, to: `${year - 1}-06` };
 }
 
+export type GrowthClass = "Revenue" | "Expense";
+
+/** Category growth % by classification, then category label (exactly as
+    gl_accounts.category groups the statement). */
+export type CategoryGrowth = Record<GrowthClass, Record<string, number>>;
+
+export const emptyCategoryGrowth = (): CategoryGrowth => ({ Revenue: {}, Expense: {} });
+
 export interface BudgetAssumption {
   realm_id: string;
+  /** Default for revenue accounts whose category has no rate of its own. */
   revenue_growth_pct: number;
+  /** Default for expense accounts whose category has no rate of its own. */
   expense_growth_pct: number;
+  category_growth: CategoryGrowth;
+}
+
+/** A company's assumption with nothing set: every rate 0%. */
+export const zeroAssumption = (realmId: string): BudgetAssumption => ({
+  realm_id: realmId,
+  revenue_growth_pct: 0,
+  expense_growth_pct: 0,
+  category_growth: emptyCategoryGrowth(),
+});
+
+const growthClass = (classification: string | null): GrowthClass =>
+  classification === "Revenue" ? "Revenue" : "Expense";
+
+/**
+ * Growth % for one account: its category's rate for the company when one is
+ * set, else the company's revenue or expense default. Uncategorized accounts
+ * always take the default.
+ */
+export function growthPct(
+  a: BudgetAssumption | undefined,
+  classification: string | null,
+  category: string | undefined,
+): number {
+  if (!a) return 0;
+  const cls = growthClass(classification);
+  const rates = a.category_growth[cls];
+  if (category !== undefined && Object.hasOwn(rates, category)) return rates[category];
+  return cls === "Revenue" ? a.revenue_growth_pct : a.expense_growth_pct;
+}
+
+/** True when two assumptions apply exactly the same rates. */
+export function sameAssumption(a: BudgetAssumption, b: BudgetAssumption): boolean {
+  if (a.revenue_growth_pct !== b.revenue_growth_pct) return false;
+  if (a.expense_growth_pct !== b.expense_growth_pct) return false;
+  return (["Revenue", "Expense"] as const).every((cls) => {
+    const x = a.category_growth[cls];
+    const y = b.category_growth[cls];
+    const keys = Object.keys(x);
+    return (
+      keys.length === Object.keys(y).length &&
+      keys.every((k) => Object.hasOwn(y, k) && x[k] === y[k])
+    );
+  });
+}
+
+/** One category row of the growth assumptions grid. */
+export interface GrowthCategory {
+  classification: GrowthClass;
+  category: string;
+  /** An expense category the statement shows under Direct Costs. */
+  direct: boolean;
+  /** Companies with at least one account in this category. */
+  realms: string[];
+}
+
+/**
+ * Categories that can carry a growth rate: every (classification, category)
+ * on the given companies' revenue and expense accounts. Ordered like the
+ * statement — income, then direct costs, then other expenses — and by name
+ * within each.
+ */
+export function growthCategories(
+  accounts: { realm_id: string; classification: string; category: string | null }[],
+  realms: readonly string[],
+): GrowthCategory[] {
+  const byKey = new Map<string, GrowthCategory>();
+  for (const a of accounts) {
+    if (!a.category || !realms.includes(a.realm_id)) continue;
+    if (a.classification !== "Revenue" && a.classification !== "Expense") continue;
+    const key = `${a.classification}:${a.category}`;
+    let row = byKey.get(key);
+    if (!row) {
+      row = {
+        classification: a.classification,
+        category: a.category,
+        direct: a.classification === "Expense" && isDirectCostCategory(a.category),
+        realms: [],
+      };
+      byKey.set(key, row);
+    }
+    if (!row.realms.includes(a.realm_id)) row.realms.push(a.realm_id);
+  }
+  const rank = (r: GrowthCategory) =>
+    r.classification === "Revenue" ? 0 : r.direct ? 1 : 2;
+  return [...byKey.values()]
+    .map((r) => ({ ...r, realms: realms.filter((x) => r.realms.includes(x)) }))
+    .sort((x, y) => rank(x) - rank(y) || x.category.localeCompare(y.category));
 }
 
 export interface BudgetInitiativeLine {
@@ -111,39 +212,64 @@ export function budgetColLabel(colDim: BudgetColDim, key: string): string {
 /** Maps a budget month (1–12) to the output column key; null drops the month. */
 export type MonthToCol = (month: number) => string | null;
 
-const growthFactor = (
-  a: BudgetAssumption | undefined,
-  classification: string | null,
-): number => {
-  if (!a) return 1;
-  const pct =
-    classification === "Revenue" ? a.revenue_growth_pct : a.expense_growth_pct;
-  return 1 + pct / 100;
-};
-
-/**
- * Baseline cells (gl_pivot, row_dim account, col_dim month, one realm) grown
- * by that realm's assumptions and moved onto the budget year: each baseline
- * month lands on the same calendar month of the budget year (Jul 2025 → Jul
- * 2027, Jan 2026 → Jan 2027), so seasonality carries forward.
- */
-export function growBaselineCells(
+/** Moves baseline month cells onto the budget columns, scaled per cell:
+    each baseline month lands on the same calendar month of the budget year
+    (Jul 2025 → Jul 2027, Jan 2026 → Jan 2027), so seasonality carries
+    forward. */
+function shiftCells(
   cells: PivotCell[],
-  assumption: BudgetAssumption | undefined,
   toCol: MonthToCol,
+  factor: (c: PivotCell) => number,
 ): PivotCell[] {
   const out: PivotCell[] = [];
   for (const c of cells) {
     const month = Number(c.col_key.slice(5, 7));
     const col = toCol(month);
     if (col === null) continue;
-    out.push({
-      ...c,
-      col_key: col,
-      amount: Number(c.amount) * growthFactor(assumption, c.classification),
-    });
+    out.push({ ...c, col_key: col, amount: Number(c.amount) * factor(c) });
   }
   return out;
+}
+
+/**
+ * Baseline account cells (row_dim account, col_dim month, one realm) grown
+ * by that realm's assumptions — each account at its category's rate, looked
+ * up in the realm's own account → category map — and moved onto the budget
+ * year.
+ */
+export function growBaselineCells(
+  cells: PivotCell[],
+  assumption: BudgetAssumption | undefined,
+  categoryByAccount: ReadonlyMap<string, string>,
+  toCol: MonthToCol,
+): PivotCell[] {
+  return shiftCells(
+    cells,
+    toCol,
+    (c) => 1 + growthPct(assumption, c.classification, categoryByAccount.get(c.row_key)) / 100,
+  );
+}
+
+/**
+ * A realm's overall revenue growth factor: grown baseline revenue ÷ baseline
+ * revenue. Equals 1 + its default revenue % when no revenue category has a
+ * rate of its own; falls back to that when the baseline has no revenue.
+ */
+export function revenueGrowthFactor(
+  cells: PivotCell[],
+  assumption: BudgetAssumption | undefined,
+  categoryByAccount: ReadonlyMap<string, string>,
+): number {
+  let base = 0;
+  let grown = 0;
+  for (const c of cells) {
+    if (c.classification !== "Revenue") continue;
+    const v = Number(c.amount);
+    base += v;
+    grown += v * (1 + growthPct(assumption, "Revenue", categoryByAccount.get(c.row_key)) / 100);
+  }
+  if (Math.abs(base) < 0.005) return 1 + (assumption?.revenue_growth_pct ?? 0) / 100;
+  return grown / base;
 }
 
 /**
@@ -179,15 +305,17 @@ export function initiativeCells(
 
 /**
  * Budgeted revenue-by-customer slices for the intercompany eliminations:
- * the realm's baseline customer cells grown by its revenue growth, moved onto
- * the budget columns. Initiatives carry no customer, so they never eliminate.
+ * the realm's baseline customer cells, moved onto the budget columns. Customer
+ * cells carry no account, so no category rate applies; they grow by the
+ * realm's overall revenue growth (revenueGrowthFactor). Initiatives carry no
+ * customer, so they never eliminate.
  */
 export function growEliminationSlice(
   slice: RealmRevenueSlice,
-  assumption: BudgetAssumption | undefined,
+  factor: number,
   toCol: MonthToCol,
 ): RealmRevenueSlice {
-  return { ...slice, cells: growBaselineCells(slice.cells, assumption, toCol) };
+  return { ...slice, cells: shiftCells(slice.cells, toCol, () => factor) };
 }
 
 /** Re-key actual gl_pivot month cells (budget year) onto one column, keeping
@@ -213,6 +341,10 @@ export interface BudgetInputs {
   assumptions: Record<string, BudgetAssumption>;
   /** Baseline account × month cells, one array per company (companies order). */
   baselineByRealm: PivotCell[][];
+  /** Each company's own account → category map (companies order): growth
+      rates follow the company's categories, while categoryByAccount below
+      only decides where a row shows on a consolidated statement. */
+  realmCategories: ReadonlyMap<string, string>[];
   /** Baseline customer × month cells that feed an elimination, per company. */
   eliminationCellsByRealm: PivotCell[][];
   /** YTD actual account × month cells, all companies (null = not loaded). */
@@ -239,20 +371,32 @@ export interface AssembledBudget {
  * so the file always matches the screen.
  */
 export function assembleBudget(i: BudgetInputs): AssembledBudget {
+  const noCategories: ReadonlyMap<string, string> = new Map();
+  const categoriesOf = (idx: number) => i.realmCategories[idx] ?? noCategories;
   const budgetCells = (toCol: MonthToCol): PivotCell[] =>
     i.companies.flatMap((c, idx) => [
-      ...growBaselineCells(i.baselineByRealm[idx] ?? [], i.assumptions[c.realmId], toCol),
+      ...growBaselineCells(
+        i.baselineByRealm[idx] ?? [],
+        i.assumptions[c.realmId],
+        categoriesOf(idx),
+        toCol,
+      ),
       ...initiativeCells(
         i.approved.filter((x) => x.realm_id === c.realmId),
         toCol,
       ),
     ]);
+  const revenueFactors = i.wantEliminations
+    ? i.companies.map((c, idx) =>
+        revenueGrowthFactor(i.baselineByRealm[idx] ?? [], i.assumptions[c.realmId], categoriesOf(idx)),
+      )
+    : [];
   const budgetSlices = (toCol: MonthToCol): RealmRevenueSlice[] =>
     i.wantEliminations
       ? i.companies.map((c, idx) =>
           growEliminationSlice(
             { realmId: c.realmId, companyName: c.name, cells: i.eliminationCellsByRealm[idx] ?? [] },
-            i.assumptions[c.realmId],
+            revenueFactors[idx],
             toCol,
           ),
         )
@@ -310,8 +454,11 @@ export function closedMonthsOf(year: number, latestMonth: string): number {
 }
 
 /**
- * Export URL for the budget workbook. Carries the current growth % for each
- * company — saved or not — so the file matches what's on screen.
+ * Export URL for the budget workbook. Carries every company's rates on screen
+ * — saved or not — so the file matches what's on screen: its defaults as
+ * `growth=<realm>:<revenue>:<expense>` and each category rate as
+ * `cgrowth=<realm>:<R|E>:<pct>:<category>` (category last, since a label may
+ * contain colons).
  */
 export function budgetExportHref(s: {
   company: string;
@@ -320,7 +467,50 @@ export function budgetExportHref(s: {
   assumptions: BudgetAssumption[];
 }): string {
   const params = new URLSearchParams({ company: s.company, cols: s.cols, view: s.view });
-  for (const a of s.assumptions)
+  for (const a of s.assumptions) {
     params.append("growth", `${a.realm_id}:${a.revenue_growth_pct}:${a.expense_growth_pct}`);
+    for (const cls of ["Revenue", "Expense"] as const)
+      for (const [category, pct] of Object.entries(a.category_growth[cls]))
+        params.append("cgrowth", `${a.realm_id}:${cls[0]}:${pct}:${category}`);
+  }
   return `/api/export/budget?${params}`;
+}
+
+const validPct = (n: number) => Number.isFinite(n) && n >= -100 && n <= 1000;
+
+/**
+ * The export's rates: the saved assumption per company, replaced wholesale
+ * by the on-screen rates from budgetExportHref's params. A company whose
+ * `growth` param is missing or malformed keeps its saved rates; malformed
+ * `cgrowth` entries are dropped (that category falls back to the default).
+ */
+export function assumptionsFromParams(
+  sp: URLSearchParams,
+  saved: readonly BudgetAssumption[],
+): Record<string, BudgetAssumption> {
+  const out: Record<string, BudgetAssumption> = Object.fromEntries(
+    saved.map((a) => [a.realm_id, a]),
+  );
+  const overridden = new Set<string>();
+  for (const g of sp.getAll("growth")) {
+    const [realm, rev, exp] = g.split(":");
+    const r = Number(rev);
+    const e = Number(exp);
+    if (!Object.hasOwn(out, realm) || !validPct(r) || !validPct(e)) continue;
+    out[realm] = {
+      realm_id: realm,
+      revenue_growth_pct: r,
+      expense_growth_pct: e,
+      category_growth: emptyCategoryGrowth(),
+    };
+    overridden.add(realm);
+  }
+  for (const g of sp.getAll("cgrowth")) {
+    const m = /^([^:]*):([RE]):([^:]*):([\s\S]+)$/.exec(g);
+    if (!m || !overridden.has(m[1])) continue;
+    const pct = Number(m[3]);
+    if (m[3].trim() === "" || !validPct(pct)) continue;
+    out[m[1]].category_growth[m[2] === "R" ? "Revenue" : "Expense"][m[4]] = pct;
+  }
+  return out;
 }

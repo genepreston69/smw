@@ -30,13 +30,31 @@ const pctField = z.coerce
   .min(-100, "Growth can't be below -100%")
   .max(1000, "Growth can't exceed 1000%");
 
-const assumptionSchema = z.object({
-  budgetYear: z.number().int(),
-  realmId: z.string().min(1),
-  revenueGrowthPct: pctField,
-  expenseGrowthPct: pctField,
-});
+const assumptionSchema = z
+  .object({
+    budgetYear: z.number().int(),
+    realmId: z.string().min(1),
+    revenueGrowthPct: pctField,
+    expenseGrowthPct: pctField,
+    // The company's complete set of category rates; a category left out
+    // grows at the default (and loses any rate it had).
+    categories: z.array(
+      z.object({
+        classification: z.enum(["Revenue", "Expense"]),
+        category: z.string().min(1).max(80),
+        growthPct: pctField,
+      }),
+    ),
+  })
+  .refine(
+    (d) =>
+      new Set(d.categories.map((c) => `${c.classification}:${c.category}`)).size ===
+      d.categories.length,
+    "A category can only have one growth rate",
+  );
 
+/** Saves one company's default revenue / expense growth and its category
+    rates together (save_budget_assumptions, migration 0028). */
 export async function saveAssumption(
   input: z.input<typeof assumptionSchema>,
 ): Promise<ActionResult> {
@@ -47,16 +65,18 @@ export async function saveAssumption(
   const d = parsed.data;
 
   const supabase = createServiceClient();
-  const { error } = await supabase.from("budget_assumptions").upsert(
-    {
-      budget_year: d.budgetYear,
-      realm_id: d.realmId,
-      revenue_growth_pct: d.revenueGrowthPct,
-      expense_growth_pct: d.expenseGrowthPct,
-      updated_by: profile.id,
-    },
-    { onConflict: "org_id,budget_year,realm_id" },
-  );
+  const { error } = await supabase.rpc("save_budget_assumptions", {
+    p_budget_year: d.budgetYear,
+    p_realm_id: d.realmId,
+    p_revenue_growth_pct: d.revenueGrowthPct,
+    p_expense_growth_pct: d.expenseGrowthPct,
+    p_categories: d.categories.map((c) => ({
+      classification: c.classification,
+      category: c.category,
+      growth_pct: c.growthPct,
+    })),
+    p_updated_by: profile.id,
+  });
   if (error) return fail(error);
 
   // No revalidatePath: the page already re-prices the budget client-side as
