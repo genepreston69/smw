@@ -11,6 +11,8 @@
 // direct-cost split, and benefits allocation.
 
 import {
+  ALLOCATED_BENEFITS_LABEL,
+  allocatedFromLabel,
   buildCategoryStatement,
   buildEliminations,
   isDirectCostCategory,
@@ -20,6 +22,9 @@ import {
   type PivotTotals,
   type RealmRevenueSlice,
   type StatementEliminations,
+  type StatementGroup,
+  type StatementSection,
+  type StatementTotals,
 } from "@/lib/financials";
 
 export const BUDGET_YEAR = 2027;
@@ -484,6 +489,146 @@ export function assembleBudget(i: BudgetInputs): AssembledBudget {
   return { statement, eliminations, variance };
 }
 
+const sumTotals = (parts: readonly StatementTotals[]): StatementTotals => {
+  const out: StatementTotals = { cells: {}, total: 0 };
+  for (const p of parts) {
+    for (const [k, v] of Object.entries(p.cells)) out.cells[k] = (out.cells[k] ?? 0) + v;
+    out.total += p.total;
+  }
+  return out;
+};
+
+/**
+ * One category's slice of an assembled statement, for the category workbook
+ * (budgetExportHref's `category`): only the groups labelled `category` —
+ * income and expense alike, since one label can be used on both — with
+ * section totals and net recomputed over them. When the statement moved part
+ * of the category into Direct Costs (the Employee Benefits allocation), that
+ * share comes along as its own Direct Costs group, so the slice still totals
+ * the category's full cost. Gross profit is dropped (one category's income
+ * less its costs is its net). Null when no row is in the category.
+ */
+export function categorySlice(
+  s: CategoryStatement,
+  category: string,
+): CategoryStatement | null {
+  const allocatedKey = allocatedFromLabel(category);
+  const keep = (sec: StatementSection): StatementSection => {
+    const groups: StatementGroup[] = [];
+    for (const g of sec.groups) {
+      if (g.label === category) groups.push(g);
+      else if (g.label === ALLOCATED_BENEFITS_LABEL) {
+        const rows = g.rows.filter((r) => r.key === allocatedKey);
+        if (rows.length > 0) groups.push({ label: g.label, rows, ...sumTotals(rows) });
+      }
+    }
+    return { label: sec.label, groups, ...sumTotals(groups) };
+  };
+  const income = keep(s.income);
+  const directCosts = keep(s.directCosts);
+  const expenses = keep(s.expenses);
+  if (income.groups.length + directCosts.groups.length + expenses.groups.length === 0)
+    return null;
+  const net = (k: string) =>
+    (income.cells[k] ?? 0) - (directCosts.cells[k] ?? 0) - (expenses.cells[k] ?? 0);
+  return {
+    colKeys: s.colKeys,
+    income,
+    directCosts,
+    grossProfit: null,
+    expenses,
+    netIncome: {
+      cells: Object.fromEntries(s.colKeys.map((k) => [k, net(k)])),
+      total: income.total - directCosts.total - expenses.total,
+    },
+  };
+}
+
+/** One account's full-year budget, built up from its inputs. */
+export interface CategoryBuildUpLine {
+  realmId: string;
+  account: string;
+  classification: GrowthClass;
+  /** Baseline actual (the twelve months of baselineRange). */
+  baseline: number;
+  /** Growth % applied to the baseline (growthPct). */
+  growthPct: number;
+  /** baseline × (1 + growth). */
+  grown: number;
+  /** Approved initiative amounts on the account. */
+  initiatives: number;
+  /** grown + initiatives: the account's full-year budget. */
+  budget: number;
+}
+
+/**
+ * How one category's full-year budget is built, per company and account:
+ * baseline actual → growth % → grown baseline → approved initiatives →
+ * budget. Same inputs and rates as assembleBudget (each company's own
+ * account → category map, growthPct, spreadInitiativeLine's full-year
+ * amounts), so a company's lines total its category on that company's own
+ * statement — before the Employee Benefits allocation, which only moves cost
+ * between statement sections. Ordered income first, then by company, then
+ * largest budget first.
+ */
+export function categoryBuildUp(i: {
+  category: string;
+  companies: { realmId: string }[];
+  assumptions: Record<string, BudgetAssumption>;
+  baselineByRealm: PivotCell[][];
+  realmCategories: ReadonlyMap<string, string>[];
+  approved: BudgetInitiative[];
+}): CategoryBuildUpLine[] {
+  const out: CategoryBuildUpLine[] = [];
+  i.companies.forEach((c, idx) => {
+    const categories = i.realmCategories[idx];
+    if (!categories) return;
+    const lines = new Map<string, CategoryBuildUpLine>();
+    const lineFor = (account: string, classification: GrowthClass) => {
+      const key = `${classification}:${account}`;
+      let line = lines.get(key);
+      if (!line) {
+        line = {
+          realmId: c.realmId,
+          account,
+          classification,
+          baseline: 0,
+          growthPct: growthPct(i.assumptions[c.realmId], classification, i.category),
+          grown: 0,
+          initiatives: 0,
+          budget: 0,
+        };
+        lines.set(key, line);
+      }
+      return line;
+    };
+    for (const cell of i.baselineByRealm[idx] ?? []) {
+      if (cell.classification !== "Revenue" && cell.classification !== "Expense") continue;
+      if (categories.get(cell.row_key) !== i.category) continue;
+      lineFor(cell.row_key, cell.classification).baseline += Number(cell.amount);
+    }
+    for (const init of i.approved) {
+      if (init.realm_id !== c.realmId) continue;
+      for (const l of init.lines)
+        if (categories.get(l.account_name) === i.category)
+          lineFor(l.account_name, l.classification).initiatives += l.annual_amount;
+    }
+    const rows = [...lines.values()];
+    for (const l of rows) {
+      l.grown = l.baseline * (1 + l.growthPct / 100);
+      l.budget = l.grown + l.initiatives;
+    }
+    out.push(
+      ...rows
+        .filter((l) => l.baseline !== 0 || l.initiatives !== 0)
+        .sort((a, b) => b.budget - a.budget),
+    );
+  });
+  const rank = (l: CategoryBuildUpLine) => (l.classification === "Revenue" ? 0 : 1);
+  // Stable sort: company order and largest-first survive within each class.
+  return out.sort((a, b) => rank(a) - rank(b));
+}
+
 /** Budget-year months already closed as of the last complete month. */
 export function closedMonthsOf(year: number, latestMonth: string): number {
   if (latestMonth < `${year}-01`) return 0;
@@ -496,15 +641,18 @@ export function closedMonthsOf(year: number, latestMonth: string): number {
  * — saved or not — so the file matches what's on screen: its defaults as
  * `growth=<realm>:<revenue>:<expense>` and each category rate as
  * `cgrowth=<realm>:<R|E>:<pct>:<category>` (category last, since a label may
- * contain colons).
+ * contain colons). With `category`, the workbook narrows to that one account
+ * category (the category workbook).
  */
 export function budgetExportHref(s: {
   company: string;
   cols: BudgetColDim;
   view: BudgetView;
   assumptions: BudgetAssumption[];
+  category?: string;
 }): string {
   const params = new URLSearchParams({ company: s.company, cols: s.cols, view: s.view });
+  if (s.category !== undefined) params.set("category", s.category);
   for (const a of s.assumptions) {
     params.append("growth", `${a.realm_id}:${a.revenue_growth_pct}:${a.expense_growth_pct}`);
     for (const cls of ["Revenue", "Expense"] as const)

@@ -587,6 +587,11 @@ const EMPLOYEE_BENEFIT_CATEGORIES = new Set(["employee benefits"]);
 
 export const ALLOCATED_BENEFITS_LABEL = "Employee Benefits (Allocated)";
 
+/** Row key, inside the ALLOCATED_BENEFITS_LABEL group, of the share moved
+    out of one employee-benefits category. */
+export const allocatedFromLabel = (category: string): string =>
+  `Allocated from ${category}`;
+
 function isSalaryWageCategory(label: string): boolean {
   return SALARY_WAGE_CATEGORIES.has(normalizeLabel(label));
 }
@@ -778,7 +783,7 @@ export function buildCategoryStatement(
       g.total -= moved.total;
 
       allocated.rows.push({
-        key: `Allocated from ${g.label}`,
+        key: allocatedFromLabel(g.label),
         cells: moved.cells,
         total: moved.total,
       });

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Download, Landmark } from "lucide-react";
+import { Download, FileSpreadsheet, Landmark } from "lucide-react";
 import { moneyWhole } from "@/lib/format";
 import type { PivotCell, RealmRevenueSlice } from "@/lib/financials";
 import {
@@ -144,12 +144,29 @@ export function BudgetWorkspace({
 
   // The export carries the growth rates on screen (saved or not), so the
   // file matches what the user is looking at.
-  const exportHref = budgetExportHref({
+  const exportState = {
     company,
     cols: colDim,
     view,
     assumptions: companies.map((c) => assumptions[c.realmId] ?? zeroAssumption(c.realmId)),
-  });
+  };
+  const exportHref = budgetExportHref(exportState);
+
+  // Category workbook: one account category's budget as its own file. A label
+  // used on both income and expense accounts is one entry (and one file).
+  const categoryLabels = useMemo(
+    () =>
+      [...new Set(growthCategories.map((c) => c.category))].sort((a, b) => a.localeCompare(b)),
+    [growthCategories],
+  );
+  const exportCategory = (category: string) => {
+    // A download link rather than navigation, so an error response can't
+    // replace the page and lose unsaved growth edits.
+    const a = document.createElement("a");
+    a.href = budgetExportHref({ ...exportState, category });
+    a.download = "";
+    a.click();
+  };
 
   const colLabels = Object.fromEntries(
     statement.colKeys.map((k) => [k, budgetColLabel(colDim, k)]),
@@ -167,6 +184,34 @@ export function BudgetWorkspace({
               <Download size={15} strokeWidth={2} />
               Export Excel
             </a>
+            {categoryLabels.length > 0 && (
+              <label
+                className={`${buttonCls("secondary")} relative cursor-pointer`}
+                title="Download one category's budget as its own Excel workbook"
+              >
+                <FileSpreadsheet size={15} strokeWidth={2} />
+                Export a category…
+                {/* Invisible select over the button: picking a category
+                    downloads it, and the controlled value snaps back. */}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) exportCategory(e.target.value);
+                  }}
+                  aria-label="Export one category to Excel"
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                >
+                  <option value="" disabled>
+                    Choose a category
+                  </option>
+                  {categoryLabels.map((c) => (
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             {headerLinks}
           </div>
         }

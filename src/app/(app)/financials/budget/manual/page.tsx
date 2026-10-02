@@ -248,6 +248,8 @@ export default async function BudgetManualPage() {
                   <strong>Header.</strong> The title <em>Budget {year}</em>,
                   a one-line description of how the budget is built, and the
                   action buttons: <strong>Export Excel</strong>,{" "}
+                  <strong>Export a category…</strong> (one category&rsquo;s
+                  budget as its own workbook),{" "}
                   <strong>Income Statement</strong> (jumps to the actuals the
                   budget mirrors), and <strong>User manual</strong> (this
                   page).
@@ -1072,6 +1074,41 @@ export default async function BudgetManualPage() {
                 [
                   "Initiatives by month",
                   "The same initiatives with one column per month (Jan–Dec) plus Total. It opens with an In budget block — what the approved initiatives add to the budget each month (revenue, expense, net) — then each initiative's revenue and expense accounts, section totals, and net by month. Months outside an initiative's run are blank.",
+                ],
+              ]}
+            />
+            <H3>Exporting one category</H3>
+            <P>
+              To hand a category&rsquo;s budget to the person who owns it —
+              Transportation to the transportation manager, say — pick it
+              from <strong>Export a category…</strong> in the header. It
+              downloads{" "}
+              <em>budget-{year}-&lt;category&gt;-&lt;company&gt;-…xlsx</em>:
+              the same workbook as <strong>Export Excel</strong>, honoring
+              the same filters and on-screen growth rates, narrowed to that
+              one category. The list holds every category on the selected
+              companies&rsquo; revenue and expense accounts; a label used on
+              both income and expense accounts is one entry, and its file
+              shows both with a <em>Net</em> line.
+            </P>
+            <MTable
+              head={["Sheet", "Contents"]}
+              rows={[
+                [
+                  "All companies (or the selected company), then one tab per company",
+                  "Only the category's rows, cut from the same statement as the screen, so every amount matches it. Sections the category has no accounts in are left out, and a company with no accounts in it gets no tab. % columns still divide by the whole budget's income, as on screen. Intercompany eliminations are left out, because they belong to customers, not to an account category. For Employee Benefits, the share the statement moves into Direct Costs comes along, so the category totals its full cost.",
+                ],
+                [
+                  "Build-up",
+                  `How each account's full-year budget is derived, per company: ${baseFrom} – ${baseTo} actual, the growth % applied, grown baseline, approved initiatives, and the ${year} budget. Each company's lines add up to its category total on that company's tab.`,
+                ],
+                [
+                  "Assumptions",
+                  "The company defaults and the category's own rate for each company.",
+                ],
+                [
+                  "Initiatives / Initiatives by month",
+                  "Only initiatives with lines on the category's accounts, showing just those lines (in any status, as in the full workbook).",
                 ],
               ]}
             />
