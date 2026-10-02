@@ -12,6 +12,7 @@ import {
 import {
   baselineRange,
   closedMonthsOf,
+  emptyCategoryGrowth,
   type BudgetAssumption,
   type BudgetInitiative,
   type BudgetView,
@@ -48,11 +49,17 @@ export interface LoadedBudget {
   actualsByRealm: PivotCell[][] | null;
   actualEliminationSlices: RealmRevenueSlice[];
   accountRows: BudgetAccount[];
-  /** Saved assumptions per realm (missing realms default to 0%). */
+  /** Saved assumptions per realm, category rates included (missing realms
+      default to 0%). */
   assumptions: BudgetAssumption[];
   /** Initiatives for the selected realms, every status. */
   initiatives: BudgetInitiative[];
+  /** Account → category for the statement's rows (first realm wins on All
+      companies, as on the Income Statement). */
   categoryByAccount: Map<string, string>;
+  /** Each realm's own account → category map (realms order); growth rates
+      and the per-company export tabs use these. */
+  realmCategories: Map<string, string>[];
 }
 
 export async function loadBudget(
@@ -119,8 +126,14 @@ export async function loadBudget(
   const actualTo = `${year}-${String(closedThrough).padStart(2, "0")}`;
   const noLedger = { accounts: [] as PivotCell[][], customers: [] as PivotCell[][] };
 
-  const [baselineLedger, actualLedger, accountRows, assumptionRows, initiativeRows] =
-    await Promise.all([
+  const [
+    baselineLedger,
+    actualLedger,
+    accountRows,
+    assumptionRows,
+    categoryRateRows,
+    initiativeRows,
+  ] = await Promise.all([
       ledger(baseline.from, baseline.to, wantEliminations),
       wantActuals ? ledger(`${year}-01`, actualTo, wantEliminations) : noLedger,
       fetchAllRows((fromRow, toRow) =>
@@ -135,6 +148,23 @@ export async function loadBudget(
         .from("budget_assumptions")
         .select("realm_id, revenue_growth_pct, expense_growth_pct")
         .eq("budget_year", year),
+      fetchAllRows((fromRow, toRow) =>
+        db
+          .from("budget_category_assumptions")
+          .select("realm_id, classification, category, growth_pct")
+          .eq("budget_year", year)
+          .order("realm_id")
+          .order("classification")
+          .order("category")
+          .range(fromRow, toRow),
+      ) as Promise<
+        {
+          realm_id: string;
+          classification: "Revenue" | "Expense";
+          category: string;
+          growth_pct: number | string;
+        }[]
+      >,
       db
         .from("budget_initiatives")
         .select(
@@ -144,14 +174,21 @@ export async function loadBudget(
         .order("created_at"),
     ]);
 
+  type AssumptionRow = { realm_id: string; revenue_growth_pct: number | string; expense_growth_pct: number | string };
   const saved = new Map(
-    ((assumptionRows.data ?? []) as BudgetAssumption[]).map((a) => [a.realm_id, a]),
+    ((assumptionRows.data ?? []) as AssumptionRow[]).map((a) => [a.realm_id, a]),
   );
-  const assumptions: BudgetAssumption[] = realms.map((r) => ({
-    realm_id: r,
-    revenue_growth_pct: Number(saved.get(r)?.revenue_growth_pct ?? 0),
-    expense_growth_pct: Number(saved.get(r)?.expense_growth_pct ?? 0),
-  }));
+  const assumptions: BudgetAssumption[] = realms.map((r) => {
+    const category_growth = emptyCategoryGrowth();
+    for (const c of categoryRateRows)
+      if (c.realm_id === r) category_growth[c.classification][c.category] = Number(c.growth_pct);
+    return {
+      realm_id: r,
+      revenue_growth_pct: Number(saved.get(r)?.revenue_growth_pct ?? 0),
+      expense_growth_pct: Number(saved.get(r)?.expense_growth_pct ?? 0),
+      category_growth,
+    };
+  });
 
   type InitiativeRow = Omit<BudgetInitiative, "lines" | "approved_by_name"> & {
     approved_by: string | null;
@@ -194,10 +231,14 @@ export async function loadBudget(
 
   // Same account-name → category mapping as the Income Statement page.
   const categoryByAccount = new Map<string, string>();
+  const realmIdx = new Map(realms.map((r, i) => [r, i]));
+  const realmCategories = realms.map(() => new Map<string, string>());
   for (const a of accountRows) {
     if (!a.category) continue;
-    if (company !== "all" && a.realm_id !== company) continue;
     const key = a.fully_qualified_name ?? a.name;
+    const own = realmCategories[realmIdx.get(a.realm_id) ?? -1];
+    if (own && !own.has(key)) own.set(key, a.category);
+    if (company !== "all" && a.realm_id !== company) continue;
     if (!categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
   }
 
@@ -231,5 +272,6 @@ export async function loadBudget(
     assumptions,
     initiatives,
     categoryByAccount,
+    realmCategories,
   };
 }

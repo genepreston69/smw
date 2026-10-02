@@ -15,21 +15,24 @@ import {
   BUDGET_YEAR,
   MONTH_NAMES,
   assembleBudget,
+  assumptionsFromParams,
   baselineRange,
   budgetColLabel,
+  growthCategories,
   initiativeTotals,
-  type BudgetAssumption,
+  sameAssumption,
   type BudgetColDim,
   type BudgetView,
 } from "@/lib/budget";
 import { loadBudget } from "@/lib/budgetServer";
 
 // Excel export of /financials/budget: same query params as the page plus the
-// growth % on screen (`growth=<realm>:<revenue>:<expense>`, saved or not), the
-// same inputs (loadBudget) and the same assembly (assembleBudget) — so the
-// file always matches the screen. Overrides only shape the file; nothing is
-// saved. Sheets: the budget statement (or Budget vs Actual), the growth
-// assumptions used, and every initiative with its account lines.
+// growth rates on screen, saved or not (budgetExportHref's `growth` and
+// `cgrowth` params), the same inputs (loadBudget) and the same assembly
+// (assembleBudget) — so the file always matches the screen. Overrides only
+// shape the file; nothing is saved. Sheets: the budget statement (or Budget
+// vs Actual), the growth assumptions used, and every initiative with its
+// account lines.
 export async function GET(request: Request) {
   const supabase = await createClient();
   const {
@@ -77,20 +80,10 @@ export async function GET(request: Request) {
 
   const data = await loadBudget(db, { year, company, realms, companyByRealm, view });
 
-  // Growth overrides from the screen; anything malformed or out of range
-  // falls back to the saved value.
+  // Growth rates from the screen; a company whose rates are missing or
+  // malformed keeps its saved ones.
   const saved = new Map(data.assumptions.map((a) => [a.realm_id, a]));
-  const assumptions: Record<string, BudgetAssumption> = Object.fromEntries(
-    data.assumptions.map((a) => [a.realm_id, a]),
-  );
-  for (const g of sp.getAll("growth")) {
-    const [realm, rev, exp] = g.split(":");
-    const r = Number(rev);
-    const e = Number(exp);
-    const ok = (n: number) => Number.isFinite(n) && n >= -100 && n <= 1000;
-    if (!saved.has(realm) || !ok(r) || !ok(e)) continue;
-    assumptions[realm] = { realm_id: realm, revenue_growth_pct: r, expense_growth_pct: e };
-  }
+  const assumptions = assumptionsFromParams(sp, data.assumptions);
 
   const companies = realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }));
   const approved = data.initiatives.filter((i) => i.status === "approved");
@@ -102,6 +95,7 @@ export async function GET(request: Request) {
     companies,
     assumptions,
     baselineByRealm: data.baselineByRealm,
+    realmCategories: data.realmCategories,
     eliminationCellsByRealm: data.eliminationCellsByRealm,
     actuals: data.actuals,
     actualEliminationSlices: data.actualEliminationSlices,
@@ -114,12 +108,8 @@ export async function GET(request: Request) {
     company === "all" ? "All companies" : (companyByRealm.get(company) ?? company);
   const baselineLabel = `${monthLabel(baseline.from)} – ${monthLabel(baseline.to)}`;
   const unsaved = companies.filter((c) => {
-    const a = assumptions[c.realmId];
     const s = saved.get(c.realmId);
-    return (
-      a.revenue_growth_pct !== s?.revenue_growth_pct ||
-      a.expense_growth_pct !== s?.expense_growth_pct
-    );
+    return !s || !sameAssumption(assumptions[c.realmId], s);
   });
 
   const workbook = new ExcelJS.Workbook();
@@ -288,16 +278,11 @@ export async function GET(request: Request) {
 
   // On All companies, one tab per company after it — each built exactly like
   // that company's own view on the page: its categories, its approved
-  // initiatives, its growth %, and no intercompany eliminations (they are a
-  // consolidation adjustment).
+  // initiatives, its growth rates, and no intercompany eliminations (they are
+  // a consolidation adjustment).
   if (company === "all") {
     companies.forEach((c, idx) => {
-      const categories = new Map<string, string>();
-      for (const a of data.accountRows) {
-        if (!a.category || a.realm_id !== c.realmId) continue;
-        const key = a.fully_qualified_name ?? a.name;
-        if (!categories.has(key)) categories.set(key, a.category);
-      }
+      const categories = data.realmCategories[idx] ?? new Map<string, string>();
       const companyApproved = approved.filter((i) => i.realm_id === c.realmId);
       writeScope(
         c.name,
@@ -311,6 +296,7 @@ export async function GET(request: Request) {
           companies: [c],
           assumptions,
           baselineByRealm: [data.baselineByRealm[idx] ?? []],
+          realmCategories: [categories],
           eliminationCellsByRealm: [],
           actuals: data.actualsByRealm ? (data.actualsByRealm[idx] ?? []) : null,
           actualEliminationSlices: [],
@@ -325,28 +311,72 @@ export async function GET(request: Request) {
 
   /* ---- Sheet 2: growth assumptions -------------------------------- */
 
+  // Laid out like the on-screen grid: categories × companies. Every cell is
+  // the rate actually applied; a category with no rate of its own shows its
+  // company default in grey italics.
   const aSheet = workbook.addWorksheet(sheetName("Assumptions"));
   aSheet.addRow([`Growth assumptions — ${year} budget`]).font = { bold: true, size: 13 };
   aSheet.addRow([
-    `Applied to ${baselineLabel} actuals: revenue accounts by the revenue %, all expense accounts (direct costs included) by the expense %`,
+    `Applied to ${baselineLabel} actuals: each account grows at its category's rate for its company. Grey italics = no rate of its own, so the company default applies (as it does to uncategorized accounts). — = the company has no accounts in that category.`,
   ]);
   aSheet.addRow([]);
-  aSheet.addRow(["Company", "Revenue growth", "Expense growth", "Status"]).font = { bold: true };
-  for (const c of companies) {
-    const a = assumptions[c.realmId];
-    aSheet.addRow([
-      c.name,
-      a.revenue_growth_pct / 100,
-      a.expense_growth_pct / 100,
-      unsaved.includes(c) ? "Unsaved (as shown on screen)" : "Saved",
-    ]);
+  aSheet.addRow(["Category", ...companies.map((c) => c.name)]).font = { bold: true };
+  aSheet.views = [{ state: "frozen", ySplit: 4, xSplit: 1 }];
+  const heading = (label: string) => {
+    aSheet.addRow([label]).font = { bold: true, color: { argb: "FF6B7785" } };
+  };
+  heading("Company defaults");
+  for (const [label, field] of [
+    ["All revenue", "revenue_growth_pct"],
+    ["All expenses", "expense_growth_pct"],
+  ] as const)
+    aSheet.addRow([label, ...companies.map((c) => assumptions[c.realmId][field] / 100)]);
+  const rows = growthCategories(data.accountRows, realms);
+  for (const [label, filter] of [
+    ["Income categories", (r: (typeof rows)[number]) => r.classification === "Revenue"],
+    ["Direct cost categories", (r: (typeof rows)[number]) => r.direct],
+    [
+      "Expense categories",
+      (r: (typeof rows)[number]) => r.classification === "Expense" && !r.direct,
+    ],
+  ] as const) {
+    const section = rows.filter(filter);
+    if (section.length === 0) continue;
+    heading(label);
+    for (const r of section) {
+      const row = aSheet.addRow([r.category]);
+      row.getCell(1).alignment = { indent: 1 };
+      companies.forEach((c, i) => {
+        const cell = row.getCell(2 + i);
+        if (!r.realms.includes(c.realmId)) {
+          cell.value = "—";
+          cell.alignment = { horizontal: "right" };
+          return;
+        }
+        const a = assumptions[c.realmId];
+        const rates = a.category_growth[r.classification];
+        const own = Object.hasOwn(rates, r.category);
+        const pct = own
+          ? rates[r.category]
+          : r.classification === "Revenue"
+            ? a.revenue_growth_pct
+            : a.expense_growth_pct;
+        cell.value = pct / 100;
+        if (!own) cell.font = { italic: true, color: { argb: "FF93A1AE" } };
+      });
+    }
   }
-  aSheet.getColumn(1).width = 36;
-  aSheet.getColumn(2).width = 16;
-  aSheet.getColumn(2).numFmt = "0.0%";
-  aSheet.getColumn(3).width = 16;
-  aSheet.getColumn(3).numFmt = "0.0%";
-  aSheet.getColumn(4).width = 28;
+  aSheet.addRow([]);
+  aSheet.addRow([
+    "Status",
+    ...companies.map((c) => (unsaved.includes(c) ? "Unsaved (as shown on screen)" : "Saved")),
+  ]).font = { bold: true };
+  aSheet.getColumn(1).width = 42;
+  companies.forEach((_, i) => {
+    const col = aSheet.getColumn(2 + i);
+    col.width = 26;
+    col.numFmt = "0.0%";
+  });
 
   /* ---- Sheet 3: initiatives --------------------------------------- */
 

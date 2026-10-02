@@ -112,7 +112,7 @@ export default async function BudgetManualPage() {
               Expenses, Net income, and (for all companies together) the
               intercompany eliminations. You do not type a budget line by
               line. Instead the system starts from a year of real actuals,
-              you apply growth assumptions per company, and you add new
+              you apply growth assumptions per company and category, and you add new
               initiatives that do not exist in history yet. The result is a
               month-by-month plan that carries your seasonality forward and
               can be compared against actuals as the year closes.
@@ -150,7 +150,7 @@ export default async function BudgetManualPage() {
               <br />
               &nbsp;&nbsp;→ mapped month-for-month onto {year}
               <br />
-              &nbsp;&nbsp;→ × (1 + growth %) per company (revenue % / expense %)
+              &nbsp;&nbsp;→ × (1 + growth %) per company and category (blank category → revenue / expense default)
               <br />
               &nbsp;&nbsp;+ approved new initiatives (spread from start month → Dec)
               <br />
@@ -212,8 +212,8 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "Growth assumptions",
-                  "Two percentages per QuickBooks company: revenue growth and expense growth. Applied to every baseline account of that company.",
-                  "You enter them in the Growth assumptions card and click Save changes.",
+                  "Per QuickBooks company, a growth % for each account category, plus a revenue and an expense default that cover categories left blank and uncategorized accounts. Each baseline account grows at the rate for its category.",
+                  "You enter them in the Growth assumptions grid and click Save changes.",
                 ],
                 [
                   "New initiatives",
@@ -263,12 +263,13 @@ export default async function BudgetManualPage() {
                   .
                 </>,
                 <>
-                  <strong>Growth assumptions card.</strong> One row per
-                  company with a <em>Revenue growth %</em> and an{" "}
-                  <em>Expense growth %</em> field, a <strong>Reset to
-                  baseline</strong> button, and the <strong>New
+                  <strong>Growth assumptions card.</strong> A grid with one
+                  column per company: two <em>Company defaults</em> rows (All
+                  revenue, All expenses), then one row per income, direct
+                  cost, and expense category. It also holds a <strong>Reset to
+                  baseline</strong> button and the <strong>New
                   Initiative</strong> button. A colored bar appears under the
-                  rows whenever you have unsaved edits. See{" "}
+                  grid whenever you have unsaved edits. See{" "}
                   <a href="#growth" className="text-brand-600 hover:underline">
                     section 7
                   </a>
@@ -312,7 +313,7 @@ export default async function BudgetManualPage() {
                 </>,
               ]}
             />
-            <Shot caption="The growth assumptions card with an unsaved change on one company. The budget below already reflects the new percentage; nothing is stored until Save changes.">
+            <Shot caption="The growth assumptions grid with an unsaved change on one company. Grey values are blank categories showing the default they inherit. The budget below already reflects the new percentage; nothing is stored until Save changes.">
               <MockAssumptions />
             </Shot>
           </Section>
@@ -445,55 +446,79 @@ export default async function BudgetManualPage() {
           {/* ------------------------------------------------------------ */}
           <Section id="growth" title="7. Growth assumptions">
             <P>
-              Growth assumptions are the primary lever of the budget: two
-              percentages per QuickBooks company that scale every baseline
-              account of that company.
+              Growth assumptions are the primary lever of the budget. For each
+              QuickBooks company you set a growth percentage per account
+              category, plus two defaults, and every baseline account of that
+              company grows at the rate for its category.
             </P>
             <MTable
               head={["Field", "What it does", "Allowed range"]}
               rows={[
                 [
-                  "Revenue growth %",
-                  "Multiplies every Revenue account of the company by (1 + %). Also grows that company's intercompany revenue, so the eliminations scale with it.",
+                  "All revenue (default)",
+                  "Multiplies by (1 + %) every Revenue account of the company whose category has no rate of its own, and every uncategorized revenue account.",
                   "−100% to 1000%, decimals allowed (e.g. 4.5).",
                 ],
                 [
-                  "Expense growth %",
-                  "Multiplies every Expense account of the company — direct costs and operating expenses alike — by (1 + %).",
+                  "All expenses (default)",
+                  "The same for Expense accounts — direct costs and operating expenses alike.",
                   "−100% to 1000%, decimals allowed.",
+                ],
+                [
+                  "Category rate",
+                  "Multiplies every account of that company in that category by (1 + %), in place of the default. Leave it blank to use the default, which the field shows in grey. 0% is a real rate: it holds the category flat even while the default grows.",
+                  "−100% to 1000%, or blank.",
                 ],
               ]}
             />
             <P>
-              A blank field or a lone minus sign is treated as 0%. Values are
-              saved per company and per budget year, so next year&rsquo;s
-              budget starts fresh.
+              The grid has one column per company in the current Company
+              filter, and one row per category found on those companies&rsquo;
+              revenue and expense accounts, grouped like the statement:{" "}
+              <em>Income categories</em>, <em>Direct cost categories</em>, and{" "}
+              <em>Expense categories</em>. A dash means that company has no
+              accounts in the category. Rates are per company, so Direct
+              Labor can grow 6% at one company and 2% at another.
+            </P>
+            <P>
+              Categories come from the Chart of Accounts. Moving an account to
+              another category there moves it to that category&rsquo;s rate.
+              A rate saved under a label that no account carries any more
+              simply has no effect.
+            </P>
+            <P>
+              A blank default field or a lone minus sign is treated as 0%; a
+              blank category field means &ldquo;use the default.&rdquo; Rates
+              are saved per company and per budget year, so next
+              year&rsquo;s budget starts fresh.
             </P>
             <H3>Editing: live preview, explicit save</H3>
             <Steps
               items={[
                 <>
-                  Type a percentage in either field. The statement, the
-                  summary tiles, and the eliminations{" "}
+                  Type a percentage in any field. The statement, the summary
+                  tiles, and the eliminations{" "}
                   <strong>re-price immediately</strong> — the field turns
                   amber to show it differs from the saved value.
                 </>,
                 <>
-                  A bar appears under the rows:{" "}
+                  A bar appears under the grid:{" "}
                   <em>&ldquo;Unsaved changes for &lt;company&gt; — the budget
                   below reflects them. Save changes or revert?&rdquo;</em>
                 </>,
                 <>
                   Click <strong>Save changes</strong> to store every edited
-                  company&rsquo;s percentages, or <strong>Revert</strong> to
-                  snap back to the saved values. Each company saves
-                  independently: if one fails validation the others still
-                  save, and the bar names the one that did not.
+                  company&rsquo;s rates — its defaults and all its category
+                  rates together — or <strong>Revert</strong> to snap back to
+                  the saved values. Each company saves independently: if one
+                  fails validation the others still save, and the bar names
+                  the one that did not.
                 </>,
                 <>
                   <strong>Reset to baseline</strong> sets every company&rsquo;s
-                  percentages to 0 so the budget equals the baseline actuals.
-                  This is itself an unsaved edit — save or revert as usual.
+                  defaults to 0 and clears every category rate, so the budget
+                  equals the baseline actuals. This is itself an unsaved edit
+                  — save or revert as usual.
                 </>,
               ]}
             />
@@ -507,12 +532,14 @@ export default async function BudgetManualPage() {
             <Ul
               items={[
                 <>
-                  Growth applies <strong>uniformly</strong> to every account in
-                  the class. It is the right tool for &ldquo;we expect 5% more
-                  volume and 3% cost inflation.&rdquo; It is the wrong tool for
-                  &ldquo;we are hiring two welders&rdquo; — that is a new
-                  initiative (next section), so it lands on specific accounts
-                  and specific months.
+                  Let the <strong>defaults</strong> carry the broad story
+                  (&ldquo;we expect 5% more volume and 3% cost
+                  inflation&rdquo;) and give a <strong>category</strong> its
+                  own rate only where it moves on its own: a negotiated wage
+                  increase on Direct Labor, a fixed lease held at 0%, a
+                  materials surcharge. Anything that lands on specific
+                  accounts or specific months — &ldquo;we are hiring two
+                  welders&rdquo; — is still a new initiative (next section).
                 </>,
                 <>
                   Revenue and expense can grow at different rates — that is
@@ -521,8 +548,10 @@ export default async function BudgetManualPage() {
                 </>,
                 <>
                   Negative growth is allowed and useful for a company winding
-                  down a line of business, but remember it also shrinks
-                  every expense account uniformly.
+                  down a line of business. A negative default also shrinks
+                  every category of that class that has no rate of its own,
+                  so give the categories that should hold steady their own
+                  rate.
                 </>,
               ]}
             />
@@ -780,8 +809,8 @@ export default async function BudgetManualPage() {
               Direct Costs&rdquo;</em> line, and an <em>Employee Benefits
               (Allocated)</em> group appears under Direct Costs. Net income is
               unchanged by the move. Because it is computed on the budgeted
-              numbers, a higher expense growth grows the allocation
-              proportionally.
+              numbers, higher growth on Employee Benefits (or on the default
+              it inherits) grows the allocation proportionally.
             </P>
             <H3>Intercompany eliminations (all companies)</H3>
             <P>
@@ -792,7 +821,11 @@ export default async function BudgetManualPage() {
               from Precision Paint / other enterprise customers, and revenue
               from the agency customer billed by anyone other than the billing
               agent — using the baseline&rsquo;s customer activity{" "}
-              <strong>grown by that company&rsquo;s revenue growth %</strong>.
+              <strong>grown by that company&rsquo;s overall revenue
+              growth</strong>: its budgeted baseline revenue ÷ its baseline
+              revenue. That equals the company&rsquo;s revenue default unless
+              income categories carry their own rates. Customer revenue is not
+              tied to an account, so no single category&rsquo;s rate applies.
               The <em>Budgeted net income</em> tile shows the after-eliminations
               figure in this view.
             </P>
@@ -866,8 +899,9 @@ export default async function BudgetManualPage() {
             <H3>2. Growth</H3>
             <Formulas
               rows={[
-                ["factor (Revenue acct)", "1 + revenue growth % ÷ 100   (per company)"],
-                ["factor (Expense acct)", "1 + expense growth % ÷ 100   (per company; direct costs included)"],
+                ["rate(account)", "the growth % set for the account's category at its company, if any"],
+                ["  … otherwise", "the company's revenue default (Revenue acct) or expense default (Expense acct, direct costs included); always the default when uncategorized"],
+                ["factor", "1 + rate ÷ 100"],
                 ["grown(account, m)", "baseline(account, m) × factor"],
               ]}
             />
@@ -901,7 +935,8 @@ export default async function BudgetManualPage() {
             <H3>6. Eliminations (all companies)</H3>
             <Formulas
               rows={[
-                ["elimination(m)", "− Σ baseline intercompany customer revenue × (1 + revenue growth %), per company"],
+                ["revenue factor", "Σ grown(revenue account) ÷ Σ baseline(revenue account) over the year, per company (1 + revenue default when the baseline has no revenue)"],
+                ["elimination(m)", "− Σ baseline intercompany customer revenue × revenue factor, per company"],
                 ["Net income after", "Net income + Σ elimination lines"],
               ]}
             />
@@ -950,6 +985,13 @@ export default async function BudgetManualPage() {
               ]}
             />
             <P>
+              Both accounts used the defaults here. Had 710 Labor Cost&rsquo;s
+              category (say <em>Direct Labor</em>) been given its own 6%,
+              labor would budget at ${fmt(508800)} for the year
+              (${fmt(480000)} × 1.06) while every other expense account stayed
+              at 3%.
+            </P>
+            <P>
               Now approve an initiative <em>&ldquo;Second shift&rdquo;</em>{" "}
               starting <strong>July</strong> with $120,000 of 400 Fabrication
               Revenue and $60,000 of 710 Labor Cost for the year. July to
@@ -992,8 +1034,9 @@ export default async function BudgetManualPage() {
               <em>budget-{year}-&lt;company&gt;-by-&lt;month|quarter|total&gt;.xlsx</em>{" "}
               (or <em>…-vs-actual.xlsx</em> in Budget vs Actual). It honors
               the current Company, View, and Columns filters{" "}
-              <strong>and the growth percentages currently on screen, saved
-              or not</strong>, so the file is always what you were looking at.
+              <strong>and the growth rates currently on screen — defaults and
+              category rates, saved or not</strong>, so the file is always
+              what you were looking at.
             </P>
             <MTable
               head={["Sheet", "Contents"]}
@@ -1004,11 +1047,11 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "One tab per company",
-                  "On All companies only, a tab for each company follows, named after it and laid out the same way — built exactly like that company's own view on the page: its categories, its growth %, its approved initiatives, and no intercompany eliminations (those are a consolidation adjustment). The company tabs add up to the All companies tab's Net income before eliminations.",
+                  "On All companies only, a tab for each company follows, named after it and laid out the same way — built exactly like that company's own view on the page: its categories, its growth rates, its approved initiatives, and no intercompany eliminations (those are a consolidation adjustment). The company tabs add up to the All companies tab's Net income before eliminations.",
                 ],
                 [
                   "Assumptions",
-                  "Each company's revenue and expense growth with a Status of Saved or Unsaved (as shown on screen).",
+                  "The growth grid as on screen: categories × companies, each cell the rate actually applied (grey italics where the company default applies, a dash where the company has no accounts in the category), and a Status row reading Saved or Unsaved (as shown on screen) per company.",
                 ],
                 [
                   "Initiatives",
@@ -1116,9 +1159,11 @@ export default async function BudgetManualPage() {
                   approved.
                 </>,
                 <>
-                  <strong>Set growth per company.</strong> Agree revenue and
-                  expense growth with each company&rsquo;s leader. Use the
-                  live preview in the meeting; save when agreed.
+                  <strong>Set growth per company.</strong> Agree the revenue
+                  and expense defaults with each company&rsquo;s leader, then
+                  give their own rates to the categories that will move
+                  differently — labor, materials, occupancy. Use the live
+                  preview in the meeting; save when agreed.
                 </>,
                 <>
                   <strong>Collect initiatives as proposed.</strong> Have each
@@ -1400,13 +1445,22 @@ function Shot({
   );
 }
 
-function MockPct({ value, changed = false }: { value: string; changed?: boolean }) {
+function MockPct({
+  value,
+  changed = false,
+  inherited = false,
+}: {
+  value: string;
+  changed?: boolean;
+  /** A blank category field showing the default it inherits. */
+  inherited?: boolean;
+}) {
   return (
     <span className="relative inline-block">
       <span
-        className={`inline-block w-20 rounded-md border py-1 pr-6 pl-2 text-right text-xs tabular-nums text-ink-900 ${
-          changed ? "border-warn-700/50 bg-amber-50" : "border-line bg-white"
-        }`}
+        className={`inline-block w-20 rounded-md border py-1 pr-6 pl-2 text-right text-xs tabular-nums ${
+          inherited ? "text-ink-400" : "text-ink-900"
+        } ${changed ? "border-warn-700/50 bg-amber-50" : "border-line bg-white"}`}
       >
         {value}
       </span>
@@ -1420,6 +1474,26 @@ function MockPct({ value, changed = false }: { value: string; changed?: boolean 
 function MockAssumptions() {
   const btn =
     "inline-flex items-center rounded-md border border-line bg-white px-2.5 py-1 text-xs font-medium text-ink-900";
+  const section = (label: string) => (
+    <tr className="bg-surface/60">
+      <td
+        colSpan={3}
+        className="px-4 pt-2 pb-1 text-[0.6rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
+      >
+        {label}
+      </td>
+    </tr>
+  );
+  const row = (label: string, a: React.ReactNode, b: React.ReactNode, strong = false) => (
+    <tr>
+      <td className={`px-4 py-1 text-xs ${strong ? "font-medium text-ink-900" : "text-ink-600"}`}>
+        {label}
+      </td>
+      <td className="px-4 py-1 text-right">{a}</td>
+      <td className="px-4 py-1 text-right">{b}</td>
+    </tr>
+  );
+  const dash = <span className="inline-block w-20 pr-6 text-right text-xs text-ink-400">—</span>;
   return (
     <div className="min-w-[36rem] rounded-xl border border-line bg-white text-sm">
       <div className="flex items-center justify-between border-b border-line/70 px-4 py-2">
@@ -1433,26 +1507,27 @@ function MockAssumptions() {
           </span>
         </span>
       </div>
-      <div className="divide-y divide-line/70">
-        <div className="flex items-center gap-6 px-4 py-2">
-          <span className="min-w-40 text-xs font-medium text-ink-900">Superior Marine</span>
-          <span className="flex items-center gap-2 text-xs text-ink-600">
-            Revenue growth <MockPct value="5" changed />
-          </span>
-          <span className="flex items-center gap-2 text-xs text-ink-600">
-            Expense growth <MockPct value="3" />
-          </span>
-        </div>
-        <div className="flex items-center gap-6 px-4 py-2">
-          <span className="min-w-40 text-xs font-medium text-ink-900">Precision Paint</span>
-          <span className="flex items-center gap-2 text-xs text-ink-600">
-            Revenue growth <MockPct value="2" />
-          </span>
-          <span className="flex items-center gap-2 text-xs text-ink-600">
-            Expense growth <MockPct value="2" />
-          </span>
-        </div>
-      </div>
+      <table className="w-full">
+        <thead>
+          <tr className="border-b border-line/70 text-xs">
+            <th className="px-4 py-1.5 text-left font-medium text-ink-400">Category</th>
+            <th className="px-4 py-1.5 text-right font-medium text-ink-600">Superior Marine</th>
+            <th className="px-4 py-1.5 text-right font-medium text-ink-600">Precision Paint</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line/50">
+          {section("Company defaults")}
+          {row("All revenue", <MockPct value="5" changed />, <MockPct value="2" />, true)}
+          {row("All expenses", <MockPct value="3" />, <MockPct value="2" />, true)}
+          {section("Income categories")}
+          {row("Fabrication", <MockPct value="5" inherited />, dash)}
+          {row("Painting", <MockPct value="8" />, <MockPct value="2" inherited />)}
+          {section("Direct cost categories")}
+          {row("Direct Labor", <MockPct value="6" />, <MockPct value="2" inherited />)}
+          {section("Expense categories")}
+          {row("Occupancy", <MockPct value="0" />, <MockPct value="0" />)}
+        </tbody>
+      </table>
       <div className="flex items-center justify-between gap-3 border-t border-warn-700/25 bg-amber-50 px-4 py-2 text-xs text-amber-800">
         <span>
           Unsaved changes for Superior Marine — the budget below reflects them.
