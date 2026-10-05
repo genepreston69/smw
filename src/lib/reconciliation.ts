@@ -38,7 +38,13 @@ export interface PlColumn {
 }
 
 export interface ParsedPlRow {
+  /** QuickBooks statement section: Income, Cost of Goods Sold, Expenses,
+      Other Income, Other Expenses. */
   section: string;
+  /** Account path as the export nests it — parent accounts, then the detail
+      account itself — the same shape as gl_accounts.fully_qualified_name. */
+  path: string[];
+  /** Display form of path ("Parent:Sub"). */
   account: string;
   cells: Record<string, number>;
   /** Sum of the month cells (not the export's own Total column). */
@@ -63,10 +69,24 @@ const MONTH_NUMBERS: Record<string, number> = {
   jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
 };
 
+// QuickBooks' own statement sections. They open a fresh section even when the
+// previous one had no "Total for …" row to close it.
+const SECTION_LABELS = new Set([
+  "income",
+  "cost of goods sold",
+  "cost of sales",
+  "expenses",
+  "expense",
+  "other income",
+  "other expenses",
+  "other expense",
+]);
+
 // Subtotal/derived rows a P&L export interleaves with its account rows.
 const COMPUTED_ROW_LABELS = new Set([
   "gross profit",
   "net operating income",
+  "net ordinary income",
   "net other income",
   "net income",
   "net earnings",
@@ -75,12 +95,26 @@ const COMPUTED_ROW_LABELS = new Set([
 const normalize = (s: string): string =>
   s.toLowerCase().replace(/\s+/g, " ").trim();
 
-/** Match key for one account: QuickBooks sub-accounts render as just their
-    own name in the P&L, while gl_pivot keys them by "Parent:Sub" path — the
-    last path segment is the common form. */
-export const accountMatchKey = (name: string): string => {
-  const parts = name.split(":");
+/** Match key for one detail account: its full "Parent:Sub" path, each
+    segment normalized. gl_pivot keys ledger accounts by
+    gl_accounts.fully_qualified_name, and the parser rebuilds the same path
+    from the export's parent-account groups. */
+export const accountMatchKey = (path: string | string[]): string =>
+  (typeof path === "string" ? path.split(":") : path)
+    .map((seg) => normalize(seg))
+    .join(":");
+
+/** The detail account's own name (last path segment), normalized — the
+    fallback match when a path can't be lined up. */
+const leafMatchKey = (path: string | string[]): string => {
+  const parts = typeof path === "string" ? path.split(":") : path;
   return normalize(parts[parts.length - 1]);
+};
+
+/** "Total for X" / "Total X" → the normalized X it closes, else null. */
+const totalTarget = (norm: string): string | null => {
+  const m = /^total\s+(?:for\s+)?(.+)$/.exec(norm);
+  return m ? m[1] : null;
 };
 
 const pad2 = (n: number): string => String(n).padStart(2, "0");
@@ -200,13 +234,26 @@ export function parsePlWorkbook(grid: GridValue[][]): ParsedPl {
     );
   }
 
-  // Account rows, grouped under the section header above them. Sections are
-  // any label-only row that isn't a subtotal; QuickBooks emits Income /
-  // Cost of Goods Sold / Expenses / Other Income / Other Expenses.
+  // Every account row is reconciled on its own — the detail account, never
+  // a rollup. QuickBooks nests a parent account's sub-accounts between a
+  // label-only header row and a "Total for <parent>" row, inside the same
+  // header/total pair for each statement section. A stack of the open groups
+  // rebuilds each row's full path: stack[0] is the section, the rest are
+  // parent accounts. A label-only row only opens a group when a matching
+  // total closes it later; otherwise it's an account with no amounts in
+  // these months and is skipped (so it can't swallow its siblings).
+  const totalTargets = new Set<string>();
+  for (let r = headerRowIdx + 1; r < grid.length; r++) {
+    const label = grid[r]?.[0];
+    if (typeof label !== "string") continue;
+    const target = totalTarget(normalize(label));
+    if (target) totalTargets.add(target);
+  }
+
   const rowByKey = new Map<string, ParsedPlRow>();
   const order: string[] = [];
   let reportedNetIncome: ParsedPl["reportedNetIncome"] = null;
-  let section = "Income";
+  let stack: string[] = [];
   for (let r = headerRowIdx + 1; r < grid.length; r++) {
     const row = grid[r] ?? [];
     const label = typeof row[0] === "string" ? row[0].trim() : "";
@@ -228,17 +275,34 @@ export function parsePlWorkbook(grid: GridValue[][]): ParsedPl {
       reportedNetIncome = { cells, total };
       continue;
     }
-    if (COMPUTED_ROW_LABELS.has(norm) || norm.startsWith("total for ")) continue;
+    if (COMPUTED_ROW_LABELS.has(norm)) continue;
+
+    // A total closes its group (and anything left open inside it).
+    const target = totalTarget(norm);
+    if (target !== null) {
+      const idx = stack.findLastIndex((g) => normalize(g) === target);
+      if (idx >= 0) {
+        stack = stack.slice(0, idx);
+        continue;
+      }
+      if (norm.startsWith("total for ")) continue;
+    }
+
     if (!hasAmount) {
-      // A label with no amounts is a section header (or a parent account
-      // whose activity lives on its child rows).
-      section = label;
+      if (SECTION_LABELS.has(norm) || stack.length === 0) stack = [label];
+      else if (totalTargets.has(norm)) stack.push(label);
       continue;
     }
 
-    // The same display name can appear twice (a parent account's own
-    // activity next to a group header of the same name); fold into one row.
-    const key = `${accountMatchKey(label)}`;
+    const section = stack[0] ?? "Income";
+    const parents = stack.slice(1);
+    // A parent account's own postings appear inside its group under the
+    // parent's own name — that row is the parent account itself.
+    const path =
+      parents.length > 0 && normalize(parents[parents.length - 1]) === norm
+        ? parents
+        : [...parents, label];
+    const key = accountMatchKey(path);
     const existing = rowByKey.get(key);
     if (existing) {
       for (const [k, v] of Object.entries(cells)) {
@@ -246,7 +310,7 @@ export function parsePlWorkbook(grid: GridValue[][]): ParsedPl {
       }
       existing.total += total;
     } else {
-      rowByKey.set(key, { section, account: label, cells, total });
+      rowByKey.set(key, { section, path, account: path.join(":"), cells, total });
       order.push(key);
     }
   }
@@ -395,10 +459,13 @@ export function buildReconciliation(
 ): ReconciliationResult {
   const monthKeys = new Set(parsed.columns.map((c) => c.key));
 
-  // Fold GL cells by account match key. gl_pivot returns one row per
-  // (classification, type, account, month); consolidated means realms and
-  // duplicate names sum together, mirroring the consolidated QB report.
+  // Fold GL cells by detail account: gl_pivot's account row key is the
+  // account's fully qualified name ("Parent:Sub"), one row per
+  // (classification, type, account, month). The app's own Chart of Accounts
+  // categories never enter the rec. Consolidated means realms sharing an
+  // account path sum together, mirroring the consolidated QB report.
   interface GlAccount {
+    /** Fully qualified name, as posted. */
     name: string;
     classification: string;
     accountType: string;
@@ -414,9 +481,8 @@ export function buildReconciliation(
     const key = accountMatchKey(c.row_key);
     let acct = glByKey.get(key);
     if (!acct) {
-      const parts = c.row_key.split(":");
       acct = {
-        name: parts[parts.length - 1].trim(),
+        name: c.row_key.trim(),
         classification: c.classification ?? "",
         accountType: c.account_type ?? "",
         cells: {},
@@ -457,12 +523,60 @@ export function buildReconciliation(
     return s;
   };
 
-  const summary = { tied: 0, variance: 0, qbOnly: 0, glOnly: 0 };
+  // Line each export account up with one ledger account. First by full path
+  // — the detail account under the same parents. Then, for anything left, by
+  // the account's own name, but only when that name is unique among the
+  // unmatched accounts on both sides, so two different accounts can never be
+  // netted into one line (e.g. when an export prints a parent's own postings
+  // ahead of its sub-accounts instead of inside the group).
+  const glKeyForRow = new Map<ParsedPlRow, string>();
   const matchedGlKeys = new Set<string>();
   for (const row of parsed.rows) {
-    const key = accountMatchKey(row.account);
-    const gl = glByKey.get(key);
-    if (gl) matchedGlKeys.add(key);
+    const key = accountMatchKey(row.path);
+    if (glByKey.has(key)) {
+      glKeyForRow.set(row, key);
+      matchedGlKeys.add(key);
+    }
+  }
+  const countBy = <T>(items: T[], keyOf: (item: T) => string) => {
+    const out = new Map<string, T[]>();
+    for (const item of items) {
+      const k = keyOf(item);
+      out.set(k, [...(out.get(k) ?? []), item]);
+    }
+    return out;
+  };
+  const qbByLeaf = countBy(
+    parsed.rows.filter((r) => !glKeyForRow.has(r)),
+    (r) => leafMatchKey(r.path),
+  );
+  const glByLeaf = countBy(
+    [...glByKey.keys()].filter((k) => !matchedGlKeys.has(k)),
+    (k) => leafMatchKey(k),
+  );
+  for (const [leaf, rows] of qbByLeaf) {
+    const gls = glByLeaf.get(leaf);
+    if (rows.length === 1 && gls?.length === 1) {
+      glKeyForRow.set(rows[0], gls[0]);
+      matchedGlKeys.add(gls[0]);
+    }
+  }
+
+  // An export run with sub-accounts collapsed shows a parent as one line
+  // while the ledger posts to its sub-accounts — flag it, since only an
+  // expanded export can tie account by account.
+  const collapsed = new Set<string>();
+  for (const row of parsed.rows) {
+    const prefix = `${glKeyForRow.get(row) ?? accountMatchKey(row.path)}:`;
+    for (const [key, acct] of glByKey)
+      if (!matchedGlKeys.has(key) && key.startsWith(prefix) && !tie(acct.total))
+        collapsed.add(row.account);
+  }
+
+  const summary = { tied: 0, variance: 0, qbOnly: 0, glOnly: 0 };
+  for (const row of parsed.rows) {
+    const glKey = glKeyForRow.get(row);
+    const gl = glKey ? glByKey.get(glKey) : undefined;
     const glTotal = gl?.total ?? 0;
     const diff = row.total - glTotal;
     const monthDiffs = monthDiffsFor(row.cells, gl?.cells ?? {});
@@ -490,11 +604,13 @@ export function buildReconciliation(
   }
 
   // Ledger accounts with activity in the period that the export never
-  // mentions — the other direction of "doesn't tie".
+  // mentions — the other direction of "doesn't tie". Any month off counts,
+  // so activity that nets to zero over the period still shows.
   const glOnly = [...glByKey.entries()]
     .filter(
       ([key, acct]) =>
-        !matchedGlKeys.has(key) && !tie(acct.total),
+        !matchedGlKeys.has(key) &&
+        Object.values(acct.cells).some((v) => !tie(v)),
     )
     .sort((a, b) => Math.abs(b[1].total) - Math.abs(a[1].total));
   for (const [, acct] of glOnly) {
@@ -529,6 +645,12 @@ export function buildReconciliation(
   }
 
   const warnings = [...parsed.warnings];
+  if (collapsed.size > 0) {
+    const names = [...collapsed];
+    warnings.push(
+      `${names.slice(0, 5).map((n) => `"${n}"`).join(", ")}${names.length > 5 ? ` and ${names.length - 5} more` : ""} ${names.length === 1 ? "shows" : "show"} in the export as a single line, but the ledger posts to sub-accounts under ${names.length === 1 ? "it" : "them"}. Run the QuickBooks Profit and Loss with sub-accounts expanded (not collapsed) so every detail account ties on its own.`,
+    );
+  }
   if (
     parsed.reportedNetIncome &&
     !tie(parsed.reportedNetIncome.total - qbNetTotal)
