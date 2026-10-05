@@ -77,14 +77,8 @@ export default async function BudgetPage({
     return q ? `/financials/budget?${q}` : "/financials/budget";
   };
 
-  const data = await loadBudget(supabase, {
-    year,
-    company,
-    realms,
-    companyByRealm,
-    view,
-  });
-  const { accountRows, initiatives, wantEliminations } = data;
+  const data = await loadBudget(supabase, { year, company, realms, view });
+  const { accountRows, initiatives } = data;
 
   // Accounts offered in the New Initiative dialog, per company.
   const accountsByRealm: Record<string, InitiativeAccount[]> = {};
@@ -201,14 +195,11 @@ export default async function BudgetPage({
         companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
         initialAssumptions={data.assumptions}
         baselineByRealm={data.baselineByRealm}
-        eliminationCellsByRealm={data.eliminationCellsByRealm}
         actuals={data.actuals}
-        actualEliminationSlices={data.actualEliminationSlices}
         approved={initiatives.filter((i) => i.status === "approved")}
         categoryEntries={[...data.categoryByAccount.entries()]}
         realmCategoryEntries={data.realmCategories.map((m) => [...m.entries()])}
         growthCategories={growthCategories(accountRows, realms)}
-        wantEliminations={wantEliminations}
         approvedNet={approvedNet}
         proposedNet={proposedNet}
         proposedCount={proposed.length}
@@ -240,9 +231,8 @@ export default async function BudgetPage({
         spread each account&rsquo;s amount evenly from their start month
         through their end month and are folded into those accounts&rsquo; categories
         only once approved; proposed and rejected initiatives never touch the
-        budget totals. Categories, the direct-cost split, the Employee Benefits
-        allocation{wantEliminations ? ", and intercompany eliminations (grown by each company's overall revenue growth)" : ""}{" "}
-        work exactly as on the{" "}
+        budget totals. Categories and the direct-cost split work exactly as on
+        the{" "}
         <Link href="/financials/statement" className="underline">
           Income Statement
         </Link>

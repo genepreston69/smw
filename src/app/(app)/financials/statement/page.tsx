@@ -10,18 +10,15 @@ import {
   SCOPE_CLASSIFICATIONS,
   UNCATEGORIZED,
   buildCategoryStatement,
-  buildEliminations,
   clampMonth,
   defaultFrom,
   lastDayOfMonth,
   latestMonth,
   monthLabel,
   pivotColLabel,
-  serializeEliminations,
   statementExportHref,
   type ColDim,
   type PivotCell,
-  type PivotTotals,
 } from "@/lib/financials";
 import {
   Card,
@@ -35,7 +32,8 @@ import { StatementTable } from "./StatementTable";
 // Expandable income statement grouped by the Category assigned to each
 // account on the Chart of Accounts page. Same ledger slice as the Financials
 // pivot (gl_pivot, account rows, Revenue + Expense): each category row
-// subtotals its member accounts and expands to show them.
+// subtotals its member accounts and expands to show them. Amounts are the
+// ledger as booked — no allocations or eliminations — so it ties to QB.
 
 export default async function IncomeStatementPage({
   searchParams,
@@ -90,15 +88,7 @@ export default async function IncomeStatementPage({
     return q ? `/financials/statement?${q}` : "/financials/statement";
   };
 
-  // On the All companies view, one revenue-by-customer slice per company for
-  // the Intercompany eliminations below the Net income line (per company
-  // because the Marathon billing-agent rule depends on which company booked
-  // the revenue) — the same slices the Income Ratios page fetches.
-  // Eliminations are a consolidation adjustment, so single-company views
-  // skip them entirely.
-  const eliminationRealms =
-    company === "all" ? companies.map((c) => c.realm_id) : [];
-  const [cells, accountRows, eliminationSlices] = await Promise.all([
+  const [cells, accountRows] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
         .rpc("gl_pivot", {
@@ -130,28 +120,6 @@ export default async function IncomeStatementPage({
         category: string | null;
       }[]
     >,
-    Promise.all(
-      eliminationRealms.map(async (realmId) => ({
-        realmId,
-        companyName: companyByRealm.get(realmId) ?? null,
-        cells: (await fetchAllRows((fromRow, toRow) =>
-          supabase
-            .rpc("gl_pivot", {
-              p_start: `${from}-01`,
-              p_end: lastDayOfMonth(to),
-              p_row_dim: "customer",
-              p_col_dim: colDim,
-              p_realm_id: realmId,
-              p_classifications: SCOPE_CLASSIFICATIONS.income,
-            })
-            .order("row_key")
-            .order("col_key")
-            .order("classification")
-            .order("account_type")
-            .range(fromRow, toRow),
-        )) as PivotCell[],
-      })),
-    ),
   ]);
 
   // gl_pivot's account row key is the account's full name, merged across
@@ -166,21 +134,6 @@ export default async function IncomeStatementPage({
   }
 
   const statement = buildCategoryStatement(cells, categoryByAccount);
-
-  // buildEliminations works on the Map-keyed PivotTotals the ratios page
-  // uses; re-key the statement's net income into that shape, then serialize
-  // the result back to plain records for the client table.
-  const netIncomePivot: PivotTotals = {
-    bycol: new Map(Object.entries(statement.netIncome.cells)),
-    total: statement.netIncome.total,
-  };
-  const rawEliminations =
-    company === "all"
-      ? buildEliminations(eliminationSlices, netIncomePivot)
-      : null;
-  const eliminations = rawEliminations
-    ? serializeEliminations(rawEliminations)
-    : null;
 
   const colLabels = Object.fromEntries(
     statement.colKeys.map((k) => [k, pivotColLabel(colDim, k, companyByRealm)]),
@@ -318,14 +271,8 @@ export default async function IncomeStatementPage({
           />
           <StatTile
             label="Net income"
-            value={moneyWhole(
-              (eliminations?.adjusted ?? statement.netIncome).total,
-            )}
-            hint={
-              eliminations
-                ? "After intercompany eliminations"
-                : "Income less all expenses"
-            }
+            value={moneyWhole(statement.netIncome.total)}
+            hint="Income less all expenses"
           />
         </div>
       )}
@@ -339,7 +286,6 @@ export default async function IncomeStatementPage({
         ) : (
           <StatementTable
             statement={statement}
-            eliminations={eliminations}
             colLabels={colLabels}
             showRowTotal={colDim !== "total"}
           />
@@ -358,23 +304,13 @@ export default async function IncomeStatementPage({
         Sold / Cost of Sales / COGS) are shown between Income and the operating
         expense categories, and Gross profit is Income less those direct costs
         — the line appears once at least one account carries a direct-cost
-        category. The direct-labor share of any Employee Benefits category is
-        reclassified into Direct Costs: each column moves Employee Benefits
-        &times; Direct Labor &divide; (Direct Labor + Salaries &amp; Wages),
-        where Direct Labor is matched by account name (&ldquo;710 Labor
-        Cost&rdquo; or any account containing &ldquo;Direct Labor&rdquo;) and
-        Salaries &amp; Wages by category name. The remainder
-        stays in Operating Expenses, with the movement shown as a
-        &ldquo;Less: allocated to Direct Costs&rdquo; line, so Net income is
-        unaffected. The % column after each amount is the common-size view:
-        the amount as a percent of the same column&rsquo;s total income
-        (columns with no income show a dash). Amounts are otherwise the same
-        natural-signed ledger
-        activity as the Financials pivot, so Net income before eliminations
-        matches the Financials page for the same filters.
-        {eliminations
-          ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize — the same adjustment shown on the Financials and Income Ratios pages. The Net income card above reflects the after-eliminations view."
-          : ""}
+        category. Every account stays in its own category: there are no
+        allocations between categories and no intercompany eliminations, so
+        amounts are the same natural-signed ledger activity as the Financials
+        pivot and QuickBooks, and Net income matches both for the same
+        filters. The % column after each amount is the common-size view: the
+        amount as a percent of the same column&rsquo;s total income (columns
+        with no income show a dash).
       </p>
     </div>
   );

@@ -6,20 +6,14 @@
 //
 // Everything here is pure: the page fetches gl_pivot cells and the budget
 // tables, and these helpers re-key them into synthetic PivotCells that feed
-// the same buildCategoryStatement / buildEliminations as the Income
-// Statement — so the budget has exactly the statement's layout, categories,
-// direct-cost split, and benefits allocation.
+// the same buildCategoryStatement as the Income Statement — so the budget
+// has exactly the statement's layout, categories, and direct-cost split.
 
 import {
   buildCategoryStatement,
-  buildEliminations,
   isDirectCostCategory,
-  serializeEliminations,
   type CategoryStatement,
   type PivotCell,
-  type PivotTotals,
-  type RealmRevenueSlice,
-  type StatementEliminations,
 } from "@/lib/financials";
 
 export const BUDGET_YEAR = 2027;
@@ -289,28 +283,6 @@ export function growBaselineCells(
 }
 
 /**
- * A realm's overall revenue growth factor: grown baseline revenue ÷ baseline
- * revenue. Equals 1 + its default revenue % when no revenue category has a
- * rate of its own; falls back to that when the baseline has no revenue.
- */
-export function revenueGrowthFactor(
-  cells: PivotCell[],
-  assumption: BudgetAssumption | undefined,
-  categoryByAccount: ReadonlyMap<string, string>,
-): number {
-  let base = 0;
-  let grown = 0;
-  for (const c of cells) {
-    if (c.classification !== "Revenue") continue;
-    const v = Number(c.amount);
-    base += v;
-    grown += v * (1 + growthPct(assumption, "Revenue", categoryByAccount.get(c.row_key)) / 100);
-  }
-  if (Math.abs(base) < 0.005) return 1 + (assumption?.revenue_growth_pct ?? 0) / 100;
-  return grown / base;
-}
-
-/**
  * Approved initiatives as account cells: each line's amount spread evenly
  * from the initiative's start month through its end month
  * (spreadInitiativeLine). Callers pass only the initiatives that should be in
@@ -341,21 +313,6 @@ export function initiativeCells(
   return out;
 }
 
-/**
- * Budgeted revenue-by-customer slices for the intercompany eliminations:
- * the realm's baseline customer cells, moved onto the budget columns. Customer
- * cells carry no account, so no category rate applies; they grow by the
- * realm's overall revenue growth (revenueGrowthFactor). Initiatives carry no
- * customer, so they never eliminate.
- */
-export function growEliminationSlice(
-  slice: RealmRevenueSlice,
-  factor: number,
-  toCol: MonthToCol,
-): RealmRevenueSlice {
-  return { ...slice, cells: shiftCells(slice.cells, toCol, () => factor) };
-}
-
 /** Re-key actual gl_pivot month cells (budget year) onto one column, keeping
     months up to `throughMonth`. */
 export function actualCells(
@@ -383,24 +340,16 @@ export interface BudgetInputs {
       rates follow the company's categories, while categoryByAccount below
       only decides where a row shows on a consolidated statement. */
   realmCategories: ReadonlyMap<string, string>[];
-  /** Baseline customer × month cells that feed an elimination, per company. */
-  eliminationCellsByRealm: PivotCell[][];
   /** YTD actual account × month cells, all companies (null = not loaded). */
   actuals: PivotCell[] | null;
-  actualEliminationSlices: RealmRevenueSlice[];
   approved: BudgetInitiative[];
   categoryByAccount: ReadonlyMap<string, string>;
-  wantEliminations: boolean;
 }
 
 export interface AssembledBudget {
   statement: CategoryStatement;
-  eliminations: StatementEliminations | null;
   /** Budget vs Actual: columns "fy", "budget" (YTD) and "actual" (YTD). */
-  variance: {
-    statement: CategoryStatement;
-    eliminations: StatementEliminations | null;
-  } | null;
+  variance: CategoryStatement | null;
 }
 
 /**
@@ -424,64 +373,22 @@ export function assembleBudget(i: BudgetInputs): AssembledBudget {
         toCol,
       ),
     ]);
-  const revenueFactors = i.wantEliminations
-    ? i.companies.map((c, idx) =>
-        revenueGrowthFactor(i.baselineByRealm[idx] ?? [], i.assumptions[c.realmId], categoriesOf(idx)),
-      )
-    : [];
-  const budgetSlices = (toCol: MonthToCol): RealmRevenueSlice[] =>
-    i.wantEliminations
-      ? i.companies.map((c, idx) =>
-          growEliminationSlice(
-            { realmId: c.realmId, companyName: c.name, cells: i.eliminationCellsByRealm[idx] ?? [] },
-            revenueFactors[idx],
-            toCol,
-          ),
-        )
-      : [];
-  const eliminationsFor = (
-    slices: RealmRevenueSlice[],
-    s: CategoryStatement,
-  ): StatementEliminations | null => {
-    if (!i.wantEliminations) return null;
-    const net: PivotTotals = {
-      bycol: new Map(Object.entries(s.netIncome.cells)),
-      total: s.netIncome.total,
-    };
-    const raw = buildEliminations(slices, net);
-    return raw ? serializeEliminations(raw) : null;
-  };
 
   const toCol: MonthToCol = (m) => budgetColKey(i.year, m, i.colDim);
   const statement = buildCategoryStatement(budgetCells(toCol), i.categoryByAccount);
-  const eliminations = eliminationsFor(budgetSlices(toCol), statement);
 
   // Budget vs Actual: full-year budget, YTD budget, and YTD actual as three
   // columns of one statement, so every row lines up.
-  let variance: AssembledBudget["variance"] = null;
+  let variance: CategoryStatement | null = null;
   if (i.view === "variance" && i.actuals) {
     const fy: MonthToCol = () => "fy";
     const ytd: MonthToCol = (m) => (m <= i.closedThrough ? "budget" : null);
-    const vStatement = buildCategoryStatement(
+    variance = buildCategoryStatement(
       [...budgetCells(fy), ...budgetCells(ytd), ...actualCells(i.actuals, "actual", i.closedThrough)],
       i.categoryByAccount,
     );
-    variance = {
-      statement: vStatement,
-      eliminations: eliminationsFor(
-        [
-          ...budgetSlices(fy),
-          ...budgetSlices(ytd),
-          ...i.actualEliminationSlices.map((s) => ({
-            ...s,
-            cells: actualCells(s.cells, "actual", i.closedThrough),
-          })),
-        ],
-        vStatement,
-      ),
-    };
   }
-  return { statement, eliminations, variance };
+  return { statement, variance };
 }
 
 /** Budget-year months already closed as of the last complete month. */
