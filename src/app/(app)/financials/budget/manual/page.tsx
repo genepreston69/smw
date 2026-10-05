@@ -164,12 +164,13 @@ export default async function BudgetManualPage() {
           {/* ------------------------------------------------------------ */}
           <Section id="access" title="2. Who can use it">
             <P>
-              The Budget is part of the Financials area and is{" "}
-              <strong>admin-only</strong>, like the general ledger it is built
-              from. Only users whose role is <em>Admin</em> see the{" "}
-              <strong>Financials → Budget</strong> entry in the sidebar; anyone
-              else who opens the address directly is redirected to the home
-              page.
+              The Budget has its own <strong>Budget and Forecast</strong>{" "}
+              section in the sidebar and is <strong>admin-only</strong>, like
+              the general ledger it is built from. Only users whose role is{" "}
+              <em>Admin</em> see the{" "}
+              <strong>Budget and Forecast → Budget</strong> entry in the
+              sidebar; anyone else who opens the address directly is
+              redirected to the home page.
             </P>
             <MTable
               head={["Role", "Budget access"]}
@@ -238,8 +239,8 @@ export default async function BudgetManualPage() {
           {/* ------------------------------------------------------------ */}
           <Section id="tour" title="4. A tour of the Budget page">
             <P>
-              Open <strong>Financials → Budget</strong> in the sidebar. From
-              top to bottom the page shows:
+              Open <strong>Budget and Forecast → Budget</strong> in the
+              sidebar. From top to bottom the page shows:
             </P>
             <Steps
               items={[

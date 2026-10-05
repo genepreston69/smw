@@ -74,12 +74,6 @@ const SECTIONS: NavSection[] = [
         adminOnly: true,
       },
       {
-        href: "/financials/budget",
-        label: "Budget",
-        icon: Wallet,
-        adminOnly: true,
-      },
-      {
         href: "/financials/accounts",
         label: "Chart of Accounts",
         icon: BookOpen,
@@ -89,6 +83,17 @@ const SECTIONS: NavSection[] = [
         href: "/financials/reconciliation",
         label: "Reconciliation with QB",
         icon: Scale,
+        adminOnly: true,
+      },
+    ],
+  },
+  {
+    label: "Budget and Forecast",
+    items: [
+      {
+        href: "/financials/budget",
+        label: "Budget",
+        icon: Wallet,
         adminOnly: true,
       },
     ],
