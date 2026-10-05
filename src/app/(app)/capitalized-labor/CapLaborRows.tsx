@@ -17,16 +17,15 @@ export interface CapLaborRowData {
   customerName: string | null;
   bucket: CapLaborBucket;
   /**
-   * Period sums of the job's journal labor lines: wages and employer taxes
-   * posted (net of reversals), labor credited off to an asset (already
-   * capitalized, stored positive), and their net. All null when the job has
-   * no journal labor activity in the selected period.
+   * Year-to-date sums of the job's journal labor lines: wages and employer
+   * taxes posted (net of reversals), labor credited off to an asset (already
+   * capitalized, stored positive), and their net.
    */
   postedAmount: number | null;
   capitalizedAmount: number | null;
   amount: number | null;
   /** Direct-labor share of Employee Benefits allocated to this job in the
-      selected period (same figure as the Jobs dashboard column); null when
+      year to date (same figure as the Jobs dashboard column); null when
       nothing was allocated. */
   benefitAllocation: number | null;
   entryCount: number;
@@ -167,8 +166,8 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
   if (state.lines.length === 0) {
     return (
       <p className="py-2 text-sm text-ink-600">
-        No journal-entry labor lines. Run a QuickBooks sync in Settings to pull
-        the latest transactions.
+        No journal-entry labor lines this year. Run a QuickBooks sync in
+        Settings to pull the latest transactions.
       </p>
     );
   }
@@ -184,9 +183,9 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
   }
   const total = posted - capitalized;
 
-  // Lines arrive newest first; grouping them by calendar year with a net
-  // subtotal per year matches how the dashboard splits the totals. Undated
-  // lines (rare) fall into their own group at the end.
+  // Lines arrive newest first, all from the calendar year to date, so this
+  // is a single year group whose header carries the net. Undated lines
+  // (rare) would fall into their own group at the end.
   const groups: { year: string; lines: CapLaborLine[] }[] = [];
   for (const l of state.lines) {
     const year = l.txn_date ? l.txn_date.slice(0, 4) : "Undated";

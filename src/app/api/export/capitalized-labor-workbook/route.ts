@@ -5,7 +5,7 @@ import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import {
   capLaborAmounts,
   capLaborBucket,
-  capLaborYears,
+  capLaborWindow,
   CAP_LABOR_BUCKET_LABELS,
   CAP_LABOR_TREATMENT_LABELS,
   yearOf,
@@ -14,11 +14,11 @@ import {
 import { shortDate } from "@/lib/format";
 
 // Excel workbook for the Capitalized Labor dashboard: a Jobs sheet mirroring
-// the dashboard table (all-time amounts), a By Year sheet mirroring its
-// by-year breakdown, and a Journal Lines sheet with the line-level detail
-// accounting builds the capitalization entry from. Must bucket identically to
-// the dashboard (src/app/(app)/capitalized-labor/) and the CSV export — the
-// rule lives in src/lib/capitalizedLabor.ts.
+// the dashboard table and a Journal Lines sheet with the line-level detail
+// accounting builds the capitalization entry from — both calendar year to
+// date, like the dashboard. Must bucket identically to the dashboard
+// (src/app/(app)/capitalized-labor/) and the CSV export — the rule lives in
+// src/lib/capitalizedLabor.ts.
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -27,6 +27,8 @@ export async function GET() {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  const ytd = capLaborWindow();
 
   // Paged reads so the workbook includes every row past Supabase's 1000-row cap.
   const [jobs, { data: connRows }, lines, { data: benefitData }] = await Promise.all([
@@ -41,40 +43,39 @@ export async function GET() {
         .range(from, to),
     ),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
+    // Counted journal lines only — wages and employer taxes, each tagged
+    // posted or capitalized; withholdings never appear (migration 0030).
     fetchAllRows((from, to) =>
-      // Counted journal lines only — wages and employer taxes, each tagged
-      // posted or capitalized; withholdings never appear (migration 0030).
       supabase
         .from("cap_labor_lines")
         .select(
           "id, job_id, qb_txn_id, qb_doc_number, txn_date, description, category, amount, treatment",
         )
+        .gte("txn_date", ytd.from)
+        .lte("txn_date", ytd.to)
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),
     ),
-    // Employee-benefit allocation per job and calendar year, in one
+    // Employee-benefit allocation per job over the year to date, in one
     // statement (migration 0024) — same figure as the dashboard's Benefit
-    // allocation column, and summing a job's years gives its all-time
-    // total. Reading the month-grain view row by row instead re-ran the
-    // whole allocation once per page of results.
-    supabase.rpc("job_benefit_allocation_summary"),
+    // allocation column. Reading the month-grain view row by row instead
+    // re-ran the whole allocation once per page of results.
+    supabase.rpc("job_benefit_allocation_summary", {
+      p_from: ytd.from,
+      p_to: ytd.toMonth,
+    }),
   ]);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),
   );
-  // Compact [job, year, amount] tuples, covering every year of history.
-  const benefitYears =
-    ((benefitData ?? {}) as { years?: [string, number, number][] }).years ?? [];
+  // Compact [job, amount] tuples for the window.
+  const benefitPeriod =
+    ((benefitData ?? {}) as { period?: [string, number][] }).period ?? [];
   const benefitByJob = new Map<string, number>();
-  const benefitByJobYear = new Map<string, Map<number, number>>();
-  for (const [jobId, year, raw] of benefitYears) {
-    const amount = Number(raw ?? 0);
-    benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + amount);
-    let perYear = benefitByJobYear.get(jobId);
-    if (!perYear) benefitByJobYear.set(jobId, (perYear = new Map()));
-    perYear.set(year, (perYear.get(year) ?? 0) + amount);
+  for (const [jobId, raw] of benefitPeriod) {
+    benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + Number(raw ?? 0));
   }
 
   interface JobRow {
@@ -110,16 +111,6 @@ export async function GET() {
     latestDate: string | null;
   }
   const aggByJob = new Map<string, JobAgg>();
-  // The same rollup split by calendar year, for the By Year sheet — the
-  // dashboard's by-year breakdown in workbook form.
-  interface YearAgg {
-    posted: number;
-    capitalized: number;
-    entryIds: Set<string>;
-    jobIds: Set<string>;
-  }
-  const aggByYear = new Map<number, YearAgg>();
-  let earliestDate: string | null = null;
   for (const l of lines) {
     const jobId = l.job_id as string;
     if (!candidateByJob.has(jobId)) continue;
@@ -135,26 +126,6 @@ export async function GET() {
     const date = (l.txn_date as string | null) ?? null;
     if (date && (!agg.latestDate || date > agg.latestDate)) {
       agg.latestDate = date;
-    }
-    if (date && (!earliestDate || date < earliestDate)) earliestDate = date;
-    const year = yearOf(date);
-    if (year != null) {
-      let yearAgg = aggByYear.get(year);
-      if (!yearAgg) {
-        aggByYear.set(
-          year,
-          (yearAgg = {
-            posted: 0,
-            capitalized: 0,
-            entryIds: new Set(),
-            jobIds: new Set(),
-          }),
-        );
-      }
-      yearAgg.posted += split.posted;
-      yearAgg.capitalized += split.capitalized;
-      yearAgg.entryIds.add(l.qb_txn_id as string);
-      yearAgg.jobIds.add(jobId);
     }
   }
 
@@ -202,7 +173,7 @@ export async function GET() {
     });
   }
   const totalRow = jobsSheet.addRow({
-    job: "Total",
+    job: `Total — ${ytd.label}`,
     entries: summaryRows.reduce((s, r) => s + r.agg.entryIds.size, 0),
     posted: summaryRows.reduce((s, r) => s + r.agg.posted, 0),
     capitalized: summaryRows.reduce((s, r) => s + r.agg.capitalized, 0),
@@ -213,61 +184,6 @@ export async function GET() {
     ),
   });
   totalRow.font = { bold: true };
-
-  // By Year: the dashboard's by-year breakdown — every calendar year of
-  // imported history, candidate jobs only.
-  const yearSheet = workbook.addWorksheet("By Year");
-  yearSheet.columns = [
-    { header: "Year", key: "year", width: 10 },
-    { header: "Jobs", key: "jobs", width: 9 },
-    { header: "Entries", key: "entries", width: 9 },
-    { header: "Labor Posted", key: "posted", width: 14, style: { numFmt: moneyFmt } },
-    { header: "Already Capitalized", key: "capitalized", width: 18, style: { numFmt: moneyFmt } },
-    { header: "Awaiting Review", key: "net", width: 15, style: { numFmt: moneyFmt } },
-    { header: "Benefit Allocation", key: "benefits", width: 17, style: { numFmt: moneyFmt } },
-  ];
-  yearSheet.getRow(1).font = { bold: true };
-  yearSheet.views = [{ state: "frozen", ySplit: 1 }];
-
-  const candidateBenefitYear = (year: number) => {
-    let sum = 0;
-    for (const jobId of candidateByJob.keys()) {
-      sum += benefitByJobYear.get(jobId)?.get(year) ?? 0;
-    }
-    return sum;
-  };
-  const yearTotals = { entries: 0, posted: 0, capitalized: 0, benefits: 0 };
-  for (const year of capLaborYears(earliestDate)) {
-    const agg = aggByYear.get(year);
-    const benefits = candidateBenefitYear(year);
-    const posted = agg?.posted ?? 0;
-    const capitalized = agg?.capitalized ?? 0;
-    yearSheet.addRow({
-      year,
-      jobs: agg?.jobIds.size ?? 0,
-      entries: agg?.entryIds.size ?? 0,
-      posted,
-      capitalized,
-      net: posted - capitalized,
-      benefits,
-    });
-    yearTotals.entries += agg?.entryIds.size ?? 0;
-    yearTotals.posted += posted;
-    yearTotals.capitalized += capitalized;
-    yearTotals.benefits += benefits;
-  }
-  const yearTotalRow = yearSheet.addRow({
-    year: "All years",
-    // A job active across several years counts once per year above, so the
-    // total counts distinct jobs rather than summing the year rows.
-    jobs: aggByJob.size,
-    entries: yearTotals.entries,
-    posted: yearTotals.posted,
-    capitalized: yearTotals.capitalized,
-    net: yearTotals.posted - yearTotals.capitalized,
-    benefits: yearTotals.benefits,
-  });
-  yearTotalRow.font = { bold: true };
 
   const linesSheet = workbook.addWorksheet("Journal Lines");
   linesSheet.columns = [
@@ -317,7 +233,7 @@ export async function GET() {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": 'attachment; filename="capitalized-labor.xlsx"',
+      "Content-Disposition": `attachment; filename="capitalized-labor-${ytd.year}-ytd.xlsx"`,
     },
   });
 }

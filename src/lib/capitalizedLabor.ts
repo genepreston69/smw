@@ -90,30 +90,36 @@ export function capLaborBucket(j: {
 }
 
 /* ---------------------------------------------------------------------------
-   Year breakdown. The dashboard, the CSV export, and the Excel workbook all
-   split the same history into calendar years, so the range lives here too.
+   Time window. Capitalized labor is calculated for the calendar year to date
+   only — Jan 1 of the current year through today — on the dashboard, its
+   line drill-down, and both exports, so the window lives here. Dates are
+   UTC, matching the database (current_date is UTC on Supabase), and
+   YYYY-MM-DD strings compare as dates.
 --------------------------------------------------------------------------- */
 
-// Imported transaction history starts here: syncs refresh only rows dated on
-// or after JOB_COSTS_START_DATE (src/lib/quickbooks.ts), and everything back
-// to Jan 1 2023 persists in job_costs as frozen pre-audit history.
-export const CAP_LABOR_FIRST_YEAR = 2023;
+export interface CapLaborWindow {
+  year: number;
+  /** First day counted (Jan 1), YYYY-MM-DD. */
+  from: string;
+  /** Last day counted (today), YYYY-MM-DD. */
+  to: string;
+  /** First of the current month: the upper bound for month-grain reads
+      (the benefit allocation). */
+  toMonth: string;
+  /** "2026 year to date" — for labels and file names. */
+  label: string;
+}
 
-/**
- * Calendar years the dashboard breaks out — 2023 through the current year,
- * extended backwards if any imported line predates 2023.
- * `earliestDate` is a YYYY-MM-DD string (the oldest line seen), if known.
- */
-export function capLaborYears(
-  earliestDate?: string | null,
-  now: Date = new Date(),
-): number[] {
-  const dataFirst = earliestDate ? Number(earliestDate.slice(0, 4)) : NaN;
-  const first = Number.isFinite(dataFirst)
-    ? Math.min(CAP_LABOR_FIRST_YEAR, dataFirst)
-    : CAP_LABOR_FIRST_YEAR;
-  const last = Math.max(now.getUTCFullYear(), first);
-  return Array.from({ length: last - first + 1 }, (_, i) => first + i);
+export function capLaborWindow(now: Date = new Date()): CapLaborWindow {
+  const year = now.getUTCFullYear();
+  const to = now.toISOString().slice(0, 10);
+  return {
+    year,
+    from: `${year}-01-01`,
+    to,
+    toMonth: `${to.slice(0, 7)}-01`,
+    label: `${year} year to date`,
+  };
 }
 
 /** Calendar year of a YYYY-MM-DD (or YYYY-MM) string; null when undated. */
