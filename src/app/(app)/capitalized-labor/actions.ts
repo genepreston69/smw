@@ -2,6 +2,7 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
+import type { CapLaborTreatment } from "@/lib/capitalizedLabor";
 
 export interface CapLaborLine {
   id: string;
@@ -12,6 +13,8 @@ export interface CapLaborLine {
   /** QuickBooks account the journal line posted to. */
   category: string | null;
   amount: number;
+  /** Labor posted, or labor credited off by a capitalization entry. */
+  treatment: CapLaborTreatment;
 }
 
 export type CapLaborLinesResult =
@@ -20,8 +23,10 @@ export type CapLaborLinesResult =
 
 /**
  * Journal-entry labor lines for one job, newest first (RLS: any signed-in
- * user). Only journal entries count — bills, purchases, and time entries are
- * regular job cost, not capitalization candidates.
+ * user) — the lines the dashboard counts (cap_labor_lines, migration 0030):
+ * wages and employer taxes, never withholdings. Only journal entries count —
+ * bills, purchases, and time entries are regular job cost, not
+ * capitalization candidates.
  */
 export async function getCapLaborLines(
   jobId: string,
@@ -33,11 +38,11 @@ export async function getCapLaborLines(
     // cap. The id tie-break keeps pages stable when lines share a date.
     data = await fetchAllRows((from, to) =>
       supabase
-        .from("job_costs")
-        .select("id, txn_date, qb_txn_id, qb_doc_number, description, category, amount")
+        .from("cap_labor_lines")
+        .select(
+          "id, txn_date, qb_txn_id, qb_doc_number, description, category, amount, treatment",
+        )
         .eq("job_id", jobId)
-        .eq("qb_txn_type", "JournalEntry")
-        .eq("cost_type", "labor")
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),

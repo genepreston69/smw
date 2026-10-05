@@ -362,7 +362,7 @@ interface QboJournalLine {
   Description?: string;
   JournalEntryLineDetail?: {
     PostingType?: "Debit" | "Credit";
-    AccountRef?: { name?: string };
+    AccountRef?: { value?: string; name?: string };
     Entity?: { Type?: string; EntityRef?: { value?: string } };
   };
 }
@@ -398,6 +398,19 @@ const FINANCIALS_START_DATE = "2025-01-01";
 type CostType = "materials" | "labor" | "other";
 
 const LABOR_NAME = /labor|payroll|wages?/i;
+
+// A journal entry that debits a capital asset is moving cost onto the balance
+// sheet — the signature of a capitalization entry. The asset account varies
+// by equipment and job, so this goes by account type, never by name.
+// Migration 0030 backfilled frozen rows with the same rule from the ledger.
+const CAPITAL_ASSET_TYPES = new Set(["Fixed Asset", "Other Asset"]);
+
+function isCapitalAssetAccount(account: QboAccount | undefined): boolean {
+  return (
+    account?.Classification === "Asset" &&
+    CAPITAL_ASSET_TYPES.has(account.AccountType ?? "")
+  );
+}
 
 // Item-based lines are purchased goods (materials); account-based lines are
 // other direct costs — except lines whose item/account name marks them as
@@ -671,7 +684,14 @@ export async function syncJobCosts(): Promise<{
     if (jobIdByQbId.size === 0) continue; // no jobs synced for this company yet
 
     const since = `WHERE TxnDate >= '${JOB_COSTS_START_DATE}'`;
-    const [bills, purchases, timeActivities, qbInvoices, journalEntries] = [
+    const [
+      bills,
+      purchases,
+      timeActivities,
+      qbInvoices,
+      journalEntries,
+      accounts,
+    ] = [
       await qboQuery<QboTxn>(accessToken, realmId, `SELECT * FROM Bill ${since}`),
       await qboQuery<QboTxn>(
         accessToken,
@@ -693,7 +713,16 @@ export async function syncJobCosts(): Promise<{
         realmId,
         `SELECT * FROM JournalEntry ${since}`,
       ),
+      // The chart of accounts, so journal lines carry their account's
+      // classification (Capitalized Labor counts only expense-side payroll
+      // lines) and capitalization entries can be told apart.
+      await qboQuery<QboAccount>(
+        accessToken,
+        realmId,
+        "SELECT * FROM Account WHERE Active IN (true, false)",
+      ),
     ];
+    const accountById = new Map(accounts.map((a) => [a.Id, a]));
 
     const timeRows = [];
     for (const t of timeActivities) {
@@ -724,9 +753,19 @@ export async function syncJobCosts(): Promise<{
     // Journal-entry lines tagged to a job (e.g. Paychex gross wages posted
     // as direct labor). Debits are costs; credits reduce them. Only
     // customer-type entities can be jobs — vendor/employee refs share the
-    // same id space and must not match.
+    // same id space and must not match. Each line also records its account's
+    // classification and whether its entry capitalizes — debits a capital
+    // asset on any line, tagged or not — for the Capitalized Labor rule
+    // (cap_labor_lines, migration 0030).
     const journalRows = [];
     for (const je of journalEntries) {
+      const debitsAsset = (je.Line ?? []).some(
+        (l) =>
+          l.JournalEntryLineDetail?.PostingType === "Debit" &&
+          isCapitalAssetAccount(
+            accountById.get(l.JournalEntryLineDetail.AccountRef?.value ?? ""),
+          ),
+      );
       for (const line of je.Line ?? []) {
         const detail = line.JournalEntryLineDetail;
         const entity = detail?.Entity;
@@ -736,6 +775,7 @@ export async function syncJobCosts(): Promise<{
           : undefined;
         if (!jobId) continue;
         const account = detail?.AccountRef?.name ?? "";
+        const accountId = detail?.AccountRef?.value ?? null;
         const amount = line.Amount ?? 0;
         journalRows.push({
           org_id: org.id,
@@ -751,6 +791,11 @@ export async function syncJobCosts(): Promise<{
           category: account || null,
           cost_type: LABOR_NAME.test(account) ? "labor" : "other",
           amount: detail?.PostingType === "Credit" ? -amount : amount,
+          qb_account_id: accountId,
+          account_classification: accountId
+            ? (accountById.get(accountId)?.Classification ?? null)
+            : null,
+          je_debits_asset: debitsAsset,
           last_synced_at: now,
         });
       }

@@ -3,15 +3,43 @@ import { isNonBillableJobName, isTransportationJobName } from "@/lib/jobViews";
 
 /* ---------------------------------------------------------------------------
    Capitalized-labor candidates. Labor posted by journal entry (payroll
-   allocations against labor/payroll/wages accounts) to a job that isn't
-   outside-customer work may belong in a capital account rather than job
-   cost. The dashboard (src/app/(app)/capitalized-labor/), the CSV export
-   (src/app/api/export/capitalized-labor/), and the Excel export
+   allocations: wages plus the employer's share of payroll taxes) to a job
+   that isn't outside-customer work may belong in a capital account rather
+   than job cost. The dashboard (src/app/(app)/capitalized-labor/), the CSV
+   export (src/app/api/export/capitalized-labor/), and the Excel export
    (src/app/api/export/capitalized-labor-workbook/) must bucket identically,
-   so the rule lives here.
+   so the job rule lives here.
+
+   Which journal lines count, and whether each is labor posted or already
+   capitalized, is decided in SQL by the cap_labor_lines view (migration
+   0030): expense-side wage and employer-tax accounts only — withholdings and
+   other payroll liabilities never count — and a line is capitalized only
+   when its entry debits a capital asset. Every reader goes through it.
 --------------------------------------------------------------------------- */
 
 export type CapLaborBucket = "nonbillable" | "intercompany";
+
+/** A counted journal line's role (cap_labor_lines.treatment). */
+export type CapLaborTreatment = "posted" | "capitalized";
+
+export const CAP_LABOR_TREATMENT_LABELS: Record<CapLaborTreatment, string> = {
+  posted: "Labor posted",
+  capitalized: "Capitalized",
+};
+
+/**
+ * A line's contribution to the dashboard's two sums: labor posted (net — a
+ * reversal nets against it) and already capitalized (stored positive; the
+ * capitalizing credit is negative in the ledger).
+ */
+export function capLaborAmounts(
+  treatment: string,
+  amount: number,
+): { posted: number; capitalized: number } {
+  return treatment === "capitalized"
+    ? { posted: 0, capitalized: -amount }
+    : { posted: amount, capitalized: 0 };
+}
 
 export const CAP_LABOR_BUCKET_LABELS: Record<CapLaborBucket, string> = {
   nonbillable: "Non-Billable",
