@@ -872,10 +872,12 @@ interface QboReportRow {
   type?: string; // "Section" | "Data"
   ColData?: QboReportColData[];
   Header?: { ColData?: QboReportColData[] };
+  Summary?: { ColData?: QboReportColData[] };
   Rows?: { Row?: QboReportRow[] };
 }
 
 interface QboReport {
+  Header?: { Option?: { Name?: string; Value?: string }[] };
   Columns?: {
     Column?: {
       ColTitle?: string;
@@ -947,10 +949,26 @@ async function fetchGeneralLedger(
   return res.json();
 }
 
+// The Reports API caps a response at 400,000 cells and, past that, does not
+// fail: the report just stops, ending with an "Unable to display more data.
+// Please reduce the date range." row. The GeneralLedger report lists accounts
+// in chart order — balance sheet, income, cost of goods sold, expenses, then
+// other income / other expense — so a cut-off window silently loses the
+// accounts at the end (interest expense among them). A report that carries
+// the notice, or that comes close enough to the cap that it may have been
+// cut without one, counts as truncated.
+const REPORT_CELL_LIMIT = 400_000;
+const REPORT_TRUNCATED_CELLS = REPORT_CELL_LIMIT * 0.95;
+const REPORT_TRUNCATED_TEXT = "unable to display more data";
+
+const mentionsTruncation = (text: string | undefined) =>
+  !!text && text.toLowerCase().includes(REPORT_TRUNCATED_TEXT);
+
 // The report nests a Section per account (sub-accounts nest deeper), with
 // data rows aligned to the requested columns. Beginning-balance and summary
-// rows carry no transaction date and are skipped.
-function parseGlReport(report: QboReport): GlLine[] {
+// rows carry no transaction date and are skipped. `truncated` means the lines
+// are incomplete and the window must be re-fetched in smaller pieces.
+function parseGlReport(report: QboReport): { lines: GlLine[]; truncated: boolean } {
   const colKeys = (report.Columns?.Column ?? []).map(
     (c) =>
       c.MetaData?.find((m) => m.Name === "ColKey")?.Value ??
@@ -968,11 +986,26 @@ function parseGlReport(report: QboReport): GlLine[] {
   };
 
   const lines: GlLine[] = [];
+  let cells = 0;
+  let truncated = (report.Header?.Option ?? []).some(
+    (o) => mentionsTruncation(o.Name) || mentionsTruncation(o.Value),
+  );
+  // Notices sit in rows that are not ledger lines; a line's own text (its
+  // memo) is never checked, so a memo can't masquerade as the notice.
+  const checkNotice = (cols: QboReportColData[] | undefined) => {
+    if (cols?.some((c) => mentionsTruncation(c.value))) truncated = true;
+  };
   const walk = (
     rows: QboReportRow[],
     account: { qbId: string | null; name: string } | null,
   ) => {
     for (const row of rows) {
+      cells +=
+        (row.ColData?.length ?? 0) +
+        (row.Header?.ColData?.length ?? 0) +
+        (row.Summary?.ColData?.length ?? 0);
+      checkNotice(row.Header?.ColData);
+      checkNotice(row.Summary?.ColData);
       if (row.Rows?.Row) {
         const header = row.Header?.ColData?.[0];
         walk(
@@ -984,10 +1017,14 @@ function parseGlReport(report: QboReport): GlLine[] {
         continue;
       }
       if (!row.ColData || (row.type && row.type !== "Data") || !account) {
+        checkNotice(row.ColData);
         continue;
       }
       const txnDate = text(row, "tx_date");
-      if (!txnDate || !/^\d{4}-\d{2}-\d{2}$/.test(txnDate)) continue;
+      if (!txnDate || !/^\d{4}-\d{2}-\d{2}$/.test(txnDate)) {
+        checkNotice(row.ColData);
+        continue;
+      }
       lines.push({
         accountQbId: account.qbId,
         accountName: account.name,
@@ -1007,11 +1044,48 @@ function parseGlReport(report: QboReport): GlLine[] {
     }
   };
   walk(report.Rows?.Row ?? [], null);
-  return lines;
+  return { lines, truncated: truncated || cells >= REPORT_TRUNCATED_CELLS };
+}
+
+const DAY_MS = 86_400_000;
+const isoDay = (ms: number) => new Date(ms).toISOString().slice(0, 10);
+
+/**
+ * Every ledger line dated start..end (inclusive). A window whose report comes
+ * back truncated is split in half and re-fetched until each piece fits; a
+ * single day that still doesn't fit fails the sync rather than publishing a
+ * ledger with lines missing.
+ */
+async function fetchGeneralLedgerLines(
+  accessToken: string,
+  realmId: string,
+  start: string,
+  end: string,
+): Promise<GlLine[]> {
+  const { lines, truncated } = parseGlReport(
+    await fetchGeneralLedger(accessToken, realmId, start, end),
+  );
+  if (!truncated) return lines;
+  if (start >= end) {
+    throw new Error(
+      `QuickBooks GeneralLedger report for ${start} exceeds the report API's ${REPORT_CELL_LIMIT.toLocaleString("en-US")}-cell limit even for a single day`,
+    );
+  }
+  const from = Date.parse(`${start}T00:00:00Z`);
+  const days = Math.round((Date.parse(`${end}T00:00:00Z`) - from) / DAY_MS);
+  const mid = from + Math.floor(days / 2) * DAY_MS;
+  console.log(
+    `QB GL report ${realmId} ${start}..${end} hit the report cell limit; re-fetching as ${start}..${isoDay(mid)} and ${isoDay(mid + DAY_MS)}..${end}`,
+  );
+  return [
+    ...(await fetchGeneralLedgerLines(accessToken, realmId, start, isoDay(mid))),
+    ...(await fetchGeneralLedgerLines(accessToken, realmId, isoDay(mid + DAY_MS), end)),
+  ];
 }
 
 // Quarter-sized report windows from the start date through today, so no
-// single report response grows unbounded.
+// single report response grows unbounded; fetchGeneralLedgerLines splits a
+// window further when its report still hits the cell limit.
 function quarterRanges(startDate: string): { start: string; end: string }[] {
   const today = new Date().toISOString().slice(0, 10);
   const startYear = Number(startDate.slice(0, 4));
@@ -1094,13 +1168,9 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
 
     const glLines: GlLine[] = [];
     for (const range of quarterRanges(FINANCIALS_START_DATE)) {
-      const report = await fetchGeneralLedger(
-        accessToken,
-        realmId,
-        range.start,
-        range.end,
+      glLines.push(
+        ...(await fetchGeneralLedgerLines(accessToken, realmId, range.start, range.end)),
       );
-      glLines.push(...parseGlReport(report));
     }
     console.log(
       `QB GL sync ${realmId} (${companyName ?? "unnamed"}): ${accounts.length} accounts, ${glLines.length} ledger lines since ${FINANCIALS_START_DATE}`,
