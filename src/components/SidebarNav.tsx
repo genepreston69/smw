@@ -11,6 +11,7 @@ import {
   PieChart,
   Wrench,
   HardHat,
+  Archive,
   Landmark,
   Percent,
   BookOpen,
@@ -52,9 +53,19 @@ const SECTIONS: NavSection[] = [
   },
   {
     label: "Job Performance",
+    items: [{ href: "/jobs", label: "Jobs", icon: Wrench }],
+  },
+  {
+    label: "Capitalized Labor",
     items: [
-      { href: "/jobs", label: "Jobs", icon: Wrench },
       { href: "/capitalized-labor", label: "Capitalized Labor", icon: HardHat },
+      {
+        // Built from the general ledger, so admin-only like Financials.
+        href: "/capitalized-labor/already-capitalized",
+        label: "Already Capitalized",
+        icon: Archive,
+        adminOnly: true,
+      },
     ],
   },
   {
