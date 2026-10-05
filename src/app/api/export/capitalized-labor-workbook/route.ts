@@ -3,10 +3,13 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import {
+  capLaborAmounts,
   capLaborBucket,
   capLaborYears,
   CAP_LABOR_BUCKET_LABELS,
+  CAP_LABOR_TREATMENT_LABELS,
   yearOf,
+  type CapLaborTreatment,
 } from "@/lib/capitalizedLabor";
 import { shortDate } from "@/lib/format";
 
@@ -39,13 +42,13 @@ export async function GET() {
     ),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
     fetchAllRows((from, to) =>
+      // Counted journal lines only — wages and employer taxes, each tagged
+      // posted or capitalized; withholdings never appear (migration 0030).
       supabase
-        .from("job_costs")
+        .from("cap_labor_lines")
         .select(
-          "id, job_id, qb_txn_id, qb_doc_number, txn_date, description, category, amount",
+          "id, job_id, qb_txn_id, qb_doc_number, txn_date, description, category, amount, treatment",
         )
-        .eq("qb_txn_type", "JournalEntry")
-        .eq("cost_type", "labor")
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),
@@ -97,12 +100,12 @@ export async function GET() {
     if (bucket) candidateByJob.set(j.id, { job: j, bucket });
   }
 
-  // Per-job rollup matching the dashboard: debits are payroll allocations
-  // posted to the job, credits (stored positive) are labor already moved off
-  // the labor accounts, net is what still awaits review.
+  // Per-job rollup matching the dashboard: labor posted is wages plus
+  // employer taxes net of reversals, already capitalized (stored positive) is
+  // labor credited off to a capital asset, net is what still awaits review.
   interface JobAgg {
-    debits: number;
-    credits: number;
+    posted: number;
+    capitalized: number;
     entryIds: Set<string>;
     latestDate: string | null;
   }
@@ -110,8 +113,8 @@ export async function GET() {
   // The same rollup split by calendar year, for the By Year sheet — the
   // dashboard's by-year breakdown in workbook form.
   interface YearAgg {
-    debits: number;
-    credits: number;
+    posted: number;
+    capitalized: number;
     entryIds: Set<string>;
     jobIds: Set<string>;
   }
@@ -122,12 +125,12 @@ export async function GET() {
     if (!candidateByJob.has(jobId)) continue;
     let agg = aggByJob.get(jobId);
     if (!agg) {
-      agg = { debits: 0, credits: 0, entryIds: new Set(), latestDate: null };
+      agg = { posted: 0, capitalized: 0, entryIds: new Set(), latestDate: null };
       aggByJob.set(jobId, agg);
     }
-    const amount = Number(l.amount ?? 0);
-    if (amount >= 0) agg.debits += amount;
-    else agg.credits += -amount;
+    const split = capLaborAmounts(l.treatment as string, Number(l.amount ?? 0));
+    agg.posted += split.posted;
+    agg.capitalized += split.capitalized;
     agg.entryIds.add(l.qb_txn_id as string);
     const date = (l.txn_date as string | null) ?? null;
     if (date && (!agg.latestDate || date > agg.latestDate)) {
@@ -141,15 +144,15 @@ export async function GET() {
         aggByYear.set(
           year,
           (yearAgg = {
-            debits: 0,
-            credits: 0,
+            posted: 0,
+            capitalized: 0,
             entryIds: new Set(),
             jobIds: new Set(),
           }),
         );
       }
-      if (amount >= 0) yearAgg.debits += amount;
-      else yearAgg.credits += -amount;
+      yearAgg.posted += split.posted;
+      yearAgg.capitalized += split.capitalized;
       yearAgg.entryIds.add(l.qb_txn_id as string);
       yearAgg.jobIds.add(jobId);
     }
@@ -166,8 +169,8 @@ export async function GET() {
     { header: "Type", key: "type", width: 14 },
     { header: "Entries", key: "entries", width: 9 },
     { header: "Latest Entry", key: "latest", width: 13 },
-    { header: "Labor Posted", key: "debits", width: 14, style: { numFmt: moneyFmt } },
-    { header: "Already Capitalized", key: "credits", width: 18, style: { numFmt: moneyFmt } },
+    { header: "Labor Posted", key: "posted", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Already Capitalized", key: "capitalized", width: 18, style: { numFmt: moneyFmt } },
     { header: "Awaiting Review", key: "net", width: 15, style: { numFmt: moneyFmt } },
     { header: "Benefit Allocation", key: "benefits", width: 17, style: { numFmt: moneyFmt } },
   ];
@@ -176,7 +179,7 @@ export async function GET() {
 
   const summaryRows = [...aggByJob.entries()].map(([jobId, agg]) => {
     const { job, bucket } = candidateByJob.get(jobId)!;
-    return { job, bucket, agg, net: agg.debits - agg.credits };
+    return { job, bucket, agg, net: agg.posted - agg.capitalized };
   });
   // Biggest dollars first, matching the dashboard's default sort.
   summaryRows.sort(
@@ -192,8 +195,8 @@ export async function GET() {
       type: CAP_LABOR_BUCKET_LABELS[bucket],
       entries: agg.entryIds.size,
       latest: agg.latestDate ? shortDate(agg.latestDate) : "",
-      debits: agg.debits,
-      credits: agg.credits,
+      posted: agg.posted,
+      capitalized: agg.capitalized,
       net,
       benefits: benefitByJob.get(job.id) ?? null,
     });
@@ -201,8 +204,8 @@ export async function GET() {
   const totalRow = jobsSheet.addRow({
     job: "Total",
     entries: summaryRows.reduce((s, r) => s + r.agg.entryIds.size, 0),
-    debits: summaryRows.reduce((s, r) => s + r.agg.debits, 0),
-    credits: summaryRows.reduce((s, r) => s + r.agg.credits, 0),
+    posted: summaryRows.reduce((s, r) => s + r.agg.posted, 0),
+    capitalized: summaryRows.reduce((s, r) => s + r.agg.capitalized, 0),
     net: summaryRows.reduce((s, r) => s + r.net, 0),
     benefits: summaryRows.reduce(
       (s, r) => s + (benefitByJob.get(r.job.id) ?? 0),
@@ -218,8 +221,8 @@ export async function GET() {
     { header: "Year", key: "year", width: 10 },
     { header: "Jobs", key: "jobs", width: 9 },
     { header: "Entries", key: "entries", width: 9 },
-    { header: "Labor Posted", key: "debits", width: 14, style: { numFmt: moneyFmt } },
-    { header: "Already Capitalized", key: "credits", width: 18, style: { numFmt: moneyFmt } },
+    { header: "Labor Posted", key: "posted", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Already Capitalized", key: "capitalized", width: 18, style: { numFmt: moneyFmt } },
     { header: "Awaiting Review", key: "net", width: 15, style: { numFmt: moneyFmt } },
     { header: "Benefit Allocation", key: "benefits", width: 17, style: { numFmt: moneyFmt } },
   ];
@@ -233,24 +236,24 @@ export async function GET() {
     }
     return sum;
   };
-  const yearTotals = { entries: 0, debits: 0, credits: 0, benefits: 0 };
+  const yearTotals = { entries: 0, posted: 0, capitalized: 0, benefits: 0 };
   for (const year of capLaborYears(earliestDate)) {
     const agg = aggByYear.get(year);
     const benefits = candidateBenefitYear(year);
-    const debits = agg?.debits ?? 0;
-    const credits = agg?.credits ?? 0;
+    const posted = agg?.posted ?? 0;
+    const capitalized = agg?.capitalized ?? 0;
     yearSheet.addRow({
       year,
       jobs: agg?.jobIds.size ?? 0,
       entries: agg?.entryIds.size ?? 0,
-      debits,
-      credits,
-      net: debits - credits,
+      posted,
+      capitalized,
+      net: posted - capitalized,
       benefits,
     });
     yearTotals.entries += agg?.entryIds.size ?? 0;
-    yearTotals.debits += debits;
-    yearTotals.credits += credits;
+    yearTotals.posted += posted;
+    yearTotals.capitalized += capitalized;
     yearTotals.benefits += benefits;
   }
   const yearTotalRow = yearSheet.addRow({
@@ -259,9 +262,9 @@ export async function GET() {
     // total counts distinct jobs rather than summing the year rows.
     jobs: aggByJob.size,
     entries: yearTotals.entries,
-    debits: yearTotals.debits,
-    credits: yearTotals.credits,
-    net: yearTotals.debits - yearTotals.credits,
+    posted: yearTotals.posted,
+    capitalized: yearTotals.capitalized,
+    net: yearTotals.posted - yearTotals.capitalized,
     benefits: yearTotals.benefits,
   });
   yearTotalRow.font = { bold: true };
@@ -278,6 +281,7 @@ export async function GET() {
     { header: "Account", key: "account", width: 28 },
     { header: "Description", key: "description", width: 40 },
     { header: "Posting", key: "posting", width: 9 },
+    { header: "Treatment", key: "treatment", width: 13 },
     { header: "Amount", key: "amount", width: 14, style: { numFmt: moneyFmt } },
   ];
   linesSheet.getRow(1).font = { bold: true };
@@ -299,9 +303,11 @@ export async function GET() {
       entry: (l.qb_doc_number as string | null) ?? `#${l.qb_txn_id}`,
       account: (l.category as string | null) ?? "",
       description: (l.description as string | null) ?? "",
-      // Credits are labor already moved off the job's labor accounts
-      // (capitalized or corrected); debits are allocations awaiting review.
       posting: Number(l.amount ?? 0) < 0 ? "Credit" : "Debit",
+      // Capitalized lines are labor credited off by an entry that debits a
+      // capital asset; every other line is labor posted (a reversal nets
+      // against it).
+      treatment: CAP_LABOR_TREATMENT_LABELS[l.treatment as CapLaborTreatment],
       amount: Number(l.amount ?? 0),
     });
   }

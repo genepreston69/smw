@@ -4,6 +4,7 @@ import { Fragment, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { money, shortDate } from "@/lib/format";
 import {
+  capLaborAmounts,
   CAP_LABOR_BUCKET_LABELS,
   type CapLaborBucket,
 } from "@/lib/capitalizedLabor";
@@ -16,12 +17,12 @@ export interface CapLaborRowData {
   customerName: string | null;
   bucket: CapLaborBucket;
   /**
-   * Period sums of the job's journal labor lines: debits posted to labor
-   * accounts, credits against them (already capitalized/reversed, stored
-   * positive), and their net. All null when the job has no journal labor
-   * activity in the selected period.
+   * Period sums of the job's journal labor lines: wages and employer taxes
+   * posted (net of reversals), labor credited off to an asset (already
+   * capitalized, stored positive), and their net. All null when the job has
+   * no journal labor activity in the selected period.
    */
-  grossAmount: number | null;
+  postedAmount: number | null;
   capitalizedAmount: number | null;
   amount: number | null;
   /** Direct-labor share of Employee Benefits allocated to this job in the
@@ -119,7 +120,7 @@ export function CapLaborRows({
                 {shortDate(j.latestDate)}
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-ink-600">
-                {j.grossAmount != null ? money(j.grossAmount) : "—"}
+                {j.postedAmount != null ? money(j.postedAmount) : "—"}
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-ink-600">
                 {j.capitalizedAmount != null && j.capitalizedAmount !== 0
@@ -172,12 +173,16 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
     );
   }
 
-  // Credits (negative lines) are labor already moved off the job's labor
-  // accounts — the trace a capitalization entry leaves when its credit line
-  // is tagged to the job.
-  const debits = state.lines.reduce((s, l) => s + Math.max(l.amount, 0), 0);
-  const credits = state.lines.reduce((s, l) => s + Math.min(l.amount, 0), 0);
-  const total = debits + credits;
+  // Same split as the dashboard: capitalized lines are labor credited off by
+  // an entry that debits a capital asset; everything else is labor posted.
+  let posted = 0;
+  let capitalized = 0;
+  for (const l of state.lines) {
+    const split = capLaborAmounts(l.treatment, l.amount);
+    posted += split.posted;
+    capitalized += split.capitalized;
+  }
+  const total = posted - capitalized;
 
   // Lines arrive newest first; grouping them by calendar year with a net
   // subtotal per year matches how the dashboard splits the totals. Undated
@@ -218,6 +223,11 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
                   </td>
                   <td className="py-1.5 pr-3 text-ink-900">
                     {l.category ?? "—"}
+                    {l.treatment === "capitalized" && (
+                      <span className="ml-2 inline-block rounded-full border border-ok-600/25 bg-ok-50 px-1.5 py-px text-[0.65rem] font-medium text-ok-600">
+                        Capitalized
+                      </span>
+                    )}
                   </td>
                   <td className="py-1.5 pr-3 text-ink-600">
                     {l.description ?? "—"}
@@ -237,12 +247,12 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
       </table>
       <div className="mt-2 space-y-1 border-t border-line pt-2 text-sm">
         <p className="flex justify-between text-ink-600">
-          <span>Labor posted (debits)</span>
-          <span className="tabular-nums">{money(debits)}</span>
+          <span>Labor posted (wages + employer taxes, net of reversals)</span>
+          <span className="tabular-nums">{money(posted)}</span>
         </p>
         <p className="flex justify-between text-ink-600">
-          <span>Already capitalized / reversed (credits)</span>
-          <span className="tabular-nums">{money(credits)}</span>
+          <span>Already capitalized (credited off to an asset)</span>
+          <span className="tabular-nums">{money(-capitalized)}</span>
         </p>
         <p className="flex justify-between font-semibold text-ink-900">
           <span>Awaiting review (net)</span>

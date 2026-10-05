@@ -13,6 +13,7 @@ import { requireUser } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { money } from "@/lib/format";
 import {
+  capLaborAmounts,
   capLaborBucket,
   capLaborYears,
   CAP_LABOR_FIRST_YEAR,
@@ -167,12 +168,12 @@ export default async function CapitalizedLaborPage({
           .range(from, to),
       ),
       supabase.from("qb_connection_status").select("realm_id, company_name"),
+      // Counted journal lines only — wages and employer taxes, each tagged
+      // posted or capitalized; withholdings never appear (migration 0030).
       fetchAllRows((from, to) =>
         supabase
-          .from("job_costs")
-          .select("id, job_id, qb_txn_id, txn_date, amount")
-          .eq("qb_txn_type", "JournalEntry")
-          .eq("cost_type", "labor")
+          .from("cap_labor_lines")
+          .select("id, job_id, qb_txn_id, txn_date, amount, treatment")
           .order("id")
           .range(from, to),
       ),
@@ -233,20 +234,20 @@ export default async function CapitalizedLaborPage({
   }
   const years = capLaborYears(earliestDate);
 
-  // Debits (positive amounts) are payroll allocations posted to the job;
-  // credits (negative amounts) are labor moved back off the labor accounts —
-  // the signature a capitalization entry leaves when its credit line is
-  // tagged to the job. Tracking them separately is what lets the page show
-  // what may have already been capitalized vs. what still awaits review.
+  // Labor posted is wages plus employer taxes posted to the job, net of
+  // reversals; already capitalized is labor credited off by an entry that
+  // debits a capital asset. cap_labor_lines decides which is which, so
+  // withholdings never land in either.
   interface Sums {
-    debits: number;
-    credits: number; // stored positive
+    posted: number;
+    capitalized: number; // stored positive
     entryIds: Set<string>;
   }
-  const newSums = (): Sums => ({ debits: 0, credits: 0, entryIds: new Set() });
-  const addLine = (s: Sums, amount: number, txnId: string) => {
-    if (amount >= 0) s.debits += amount;
-    else s.credits += -amount;
+  const newSums = (): Sums => ({ posted: 0, capitalized: 0, entryIds: new Set() });
+  const addLine = (s: Sums, treatment: string, amount: number, txnId: string) => {
+    const split = capLaborAmounts(treatment, amount);
+    s.posted += split.posted;
+    s.capitalized += split.capitalized;
     s.entryIds.add(txnId);
   };
 
@@ -273,19 +274,20 @@ export default async function CapitalizedLaborPage({
       aggByJob.set(jobId, agg);
     }
     const amount = Number(l.amount ?? 0);
+    const treatment = l.treatment as string;
     const txnId = l.qb_txn_id as string;
     const date = (l.txn_date as string | null) ?? null;
     const year = yearOf(date);
     if (year != null) {
       let yearSums = agg.byYear.get(year);
       if (!yearSums) agg.byYear.set(year, (yearSums = newSums()));
-      addLine(yearSums, amount, txnId);
+      addLine(yearSums, treatment, amount, txnId);
     }
     const inPeriod =
       (!periodStart || (date && date >= periodStart)) &&
       (!periodEnd || (date && date <= periodEnd));
     if (inPeriod) {
-      addLine(agg.period, amount, txnId);
+      addLine(agg.period, treatment, amount, txnId);
       agg.inPeriod = true;
       if (date && (!agg.latestDate || date > agg.latestDate)) {
         agg.latestDate = date;
@@ -296,8 +298,8 @@ export default async function CapitalizedLaborPage({
   // Candidate jobs: journal-entry labor posted to a non-billable or
   // intercompany job.
   const candidates: (CapLaborRowData & {
-    periodDebits: number;
-    periodCredits: number;
+    periodPosted: number;
+    periodCapitalized: number;
     periodNet: number;
     byYear: Map<number, Sums>;
     benefitByYear: Map<number, number> | null;
@@ -312,19 +314,19 @@ export default async function CapitalizedLaborPage({
       qbCompanyName: j.realm_id ? companyByRealm.get(j.realm_id) : null,
     });
     if (!bucket) continue;
-    const net = agg.period.debits - agg.period.credits;
+    const net = agg.period.posted - agg.period.capitalized;
     candidates.push({
       id: j.id,
       name: j.name,
       companyName: (j.realm_id && companyByRealm.get(j.realm_id)) || null,
       customerName: j.customer?.display_name ?? null,
       bucket,
-      grossAmount: agg.inPeriod ? agg.period.debits : null,
-      capitalizedAmount: agg.inPeriod ? agg.period.credits : null,
+      postedAmount: agg.inPeriod ? agg.period.posted : null,
+      capitalizedAmount: agg.inPeriod ? agg.period.capitalized : null,
       amount: agg.inPeriod ? net : null,
       benefitAllocation: benefitByJob.get(j.id) ?? null,
-      periodDebits: agg.inPeriod ? agg.period.debits : 0,
-      periodCredits: agg.inPeriod ? agg.period.credits : 0,
+      periodPosted: agg.inPeriod ? agg.period.posted : 0,
+      periodCapitalized: agg.inPeriod ? agg.period.capitalized : 0,
       periodNet: agg.inPeriod ? net : 0,
       // Entries and the latest entry date follow the period like the amounts
       // do, so a year selection reads as that year alone.
@@ -355,8 +357,8 @@ export default async function CapitalizedLaborPage({
     year: number;
     jobs: number;
     entries: number;
-    debits: number;
-    credits: number;
+    posted: number;
+    capitalized: number;
     net: number;
     benefits: number;
   }
@@ -365,8 +367,8 @@ export default async function CapitalizedLaborPage({
       year,
       jobs: 0,
       entries: 0,
-      debits: 0,
-      credits: 0,
+      posted: 0,
+      capitalized: 0,
       net: 0,
       benefits: 0,
     };
@@ -376,12 +378,12 @@ export default async function CapitalizedLaborPage({
       if (sums) {
         row.jobs += 1;
         row.entries += sums.entryIds.size;
-        row.debits += sums.debits;
-        row.credits += sums.credits;
+        row.posted += sums.posted;
+        row.capitalized += sums.capitalized;
       }
       row.benefits += benefits;
     }
-    row.net = row.debits - row.credits;
+    row.net = row.posted - row.capitalized;
     return row;
   });
   const yearTotals = yearRows.reduce<YearRow>(
@@ -391,8 +393,8 @@ export default async function CapitalizedLaborPage({
       // total counts distinct jobs instead of summing the year rows.
       jobs: t.jobs,
       entries: t.entries + r.entries,
-      debits: t.debits + r.debits,
-      credits: t.credits + r.credits,
+      posted: t.posted + r.posted,
+      capitalized: t.capitalized + r.capitalized,
       net: t.net + r.net,
       benefits: t.benefits + r.benefits,
     }),
@@ -400,8 +402,8 @@ export default async function CapitalizedLaborPage({
       year: 0,
       jobs: rows.filter((c) => c.byYear.size > 0).length,
       entries: 0,
-      debits: 0,
-      credits: 0,
+      posted: 0,
+      capitalized: 0,
       net: 0,
       benefits: 0,
     },
@@ -409,8 +411,11 @@ export default async function CapitalizedLaborPage({
 
   const sumNet = (list: { periodNet: number }[]) =>
     list.reduce((s, c) => s + c.periodNet, 0);
-  const grossTotal = candidates.reduce((s, c) => s + c.periodDebits, 0);
-  const capitalizedTotal = candidates.reduce((s, c) => s + c.periodCredits, 0);
+  const postedTotal = candidates.reduce((s, c) => s + c.periodPosted, 0);
+  const capitalizedTotal = candidates.reduce(
+    (s, c) => s + c.periodCapitalized,
+    0,
+  );
   const benefitTotal = candidates.reduce(
     (s, c) => s + (c.benefitAllocation ?? 0),
     0,
@@ -488,7 +493,7 @@ export default async function CapitalizedLaborPage({
 
       <PageHeader
         title="Capitalized Labor"
-        subtitle={`Labor posted by journal entry to non-billable (EQP) or intercompany jobs — payroll allocations that may belong in a capital account rather than job cost, covering imported history back to Jan 1, ${years[0]}. Credits already posted against those labor accounts count as capitalized; the net is what still awaits review. Pick a year to see it on its own, click a job to see the entries, and see the methodology summary at the bottom of the page.`}
+        subtitle={`Labor posted by journal entry to non-billable (EQP) or intercompany jobs — wages plus the employer's share of payroll taxes that may belong in a capital account rather than job cost, covering imported history back to Jan 1, ${years[0]}. Withholdings from employees' checks are never counted. Labor moved to an asset account counts as already capitalized; the net is what still awaits review. Pick a year to see it on its own, click a job to see the entries, and see the methodology summary at the bottom of the page.`}
         action={
           <div className="flex gap-2">
             <a
@@ -520,14 +525,14 @@ export default async function CapitalizedLaborPage({
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
         <StatTile
           label={`Labor posted (${periodLabel})`}
-          value={money(grossTotal)}
-          hint="journal-entry debits to labor accounts"
+          value={money(postedTotal)}
+          hint="wages + employer payroll taxes, net of reversals"
           icon={Layers}
         />
         <StatTile
           label={`Already capitalized (${periodLabel})`}
           value={money(capitalizedTotal)}
-          hint="credits — labor moved off these jobs"
+          hint="labor credited off to an asset account"
           icon={CheckCircle2}
         />
         <StatTile
@@ -625,13 +630,13 @@ export default async function CapitalizedLaborPage({
                     {r.entries || "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-ink-600">
-                    {r.debits ? money(r.debits) : "—"}
+                    {r.posted ? money(r.posted) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-ink-600">
-                    {r.credits ? money(r.credits) : "—"}
+                    {r.capitalized ? money(r.capitalized) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right font-medium tabular-nums text-ink-900">
-                    {r.debits || r.credits ? money(r.net) : "—"}
+                    {r.posted || r.capitalized ? money(r.net) : "—"}
                   </td>
                   <td className="px-4 py-3 text-right tabular-nums text-ink-600">
                     {r.benefits ? money(r.benefits) : "—"}
@@ -647,8 +652,8 @@ export default async function CapitalizedLaborPage({
               </td>
               <td className="px-4 py-3 text-right tabular-nums">{yearTotals.jobs}</td>
               <td className="px-4 py-3 text-right tabular-nums">{yearTotals.entries}</td>
-              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.debits)}</td>
-              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.credits)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.posted)}</td>
+              <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.capitalized)}</td>
               <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.net)}</td>
               <td className="px-4 py-3 text-right tabular-nums">{money(yearTotals.benefits)}</td>
             </tr>
@@ -660,7 +665,7 @@ export default async function CapitalizedLaborPage({
       <Card pad={false} clip={false}>
         {rows.length === 0 ? (
           <EmptyState icon={HardHat} title="No capitalized labor found">
-            Journal entries that post labor, payroll, or wages accounts to
+            Journal entries that post wages or employer payroll taxes to
             non-billable (EQP) or intercompany jobs will appear here. Connect
             QuickBooks in Settings and run a sync.
           </EmptyState>
@@ -696,11 +701,15 @@ export default async function CapitalizedLaborPage({
             </h3>
             <p>
               Journal-entry lines imported from QuickBooks that post to an
-              account whose name contains <em>labor</em>, <em>payroll</em>, or{" "}
-              <em>wages</em> — the payroll allocations (e.g. Paychex gross
-              wages) posted per job. Bills, purchases, and time entries are
-              regular job cost and are excluded. Debits count as labor posted;
-              credits count against it.
+              expense account for <strong>wages</strong> (<em>labor</em>,{" "}
+              <em>payroll</em>, <em>wages</em>, <em>salaries</em>) or the{" "}
+              <strong>employer&rsquo;s share of payroll taxes</strong> (FICA,
+              Medicare, FUTA, SUTA, unemployment) — the payroll allocations
+              (e.g. Paychex) posted per job. Withholdings from the
+              employee&rsquo;s check, and every other payroll liability, are
+              balance-sheet lines and never count, debit or credit. Payroll
+              service fees, bills, purchases, and time entries are excluded.
+              Reversals and corrections net against labor posted.
             </p>
           </div>
           <div>
@@ -724,14 +733,17 @@ export default async function CapitalizedLaborPage({
               3. How &ldquo;already capitalized&rdquo; is detected
             </h3>
             <p>
-              A capitalization entry credits the labor account and debits a
-              capital (fixed-asset) account. When that credit is tagged to the
-              job in QuickBooks, it lands here as a negative line, so{" "}
-              <strong>Already capitalized</strong> totals those credits and{" "}
-              <strong>Awaiting review</strong> is labor posted minus credits —
-              what may still belong in a capital account. A credit posted
-              without the job tag won&rsquo;t appear on this page; the asset
-              side of such entries is visible on the Financials page.
+              A capitalization entry credits the labor (and employer-tax)
+              accounts and debits a capital asset. The asset account varies by
+              equipment and job, so an entry counts as capitalization when any
+              of its lines debits a <em>Fixed Asset</em> or{" "}
+              <em>Other Asset</em> account, whatever its name.{" "}
+              <strong>Already capitalized</strong> totals the job-tagged labor
+              credits on those entries, and <strong>Awaiting review</strong>{" "}
+              is labor posted minus already capitalized — what may still belong
+              in a capital account. A credit posted without the job tag
+              won&rsquo;t appear on this page; the asset side of such entries
+              is visible on the Financials page.
             </p>
           </div>
           <div>

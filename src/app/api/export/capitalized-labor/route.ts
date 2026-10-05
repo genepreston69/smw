@@ -5,15 +5,19 @@ import { csvResponse, toCsv } from "@/lib/csv";
 import {
   capLaborBucket,
   CAP_LABOR_BUCKET_LABELS,
+  CAP_LABOR_TREATMENT_LABELS,
   yearOf,
+  type CapLaborTreatment,
 } from "@/lib/capitalizedLabor";
 import { shortDate } from "@/lib/format";
 
-// Line-level export of capitalized-labor candidates: every journal-entry
-// labor line posted to a non-billable or intercompany job, one row per line,
-// so accounting can build the capitalization entry from it. Must bucket
-// identically to the dashboard (src/app/(app)/capitalized-labor/) — the rule
-// lives in src/lib/capitalizedLabor.ts.
+// Line-level export of capitalized-labor candidates: every counted
+// journal-entry labor line (wages and employer taxes — never withholdings;
+// cap_labor_lines, migration 0030) posted to a non-billable or intercompany
+// job, one row per line, so accounting can build the capitalization entry
+// from it. Must bucket identically to the dashboard
+// (src/app/(app)/capitalized-labor/) — the rule lives in
+// src/lib/capitalizedLabor.ts.
 export async function GET() {
   const supabase = await createClient();
   const {
@@ -38,12 +42,10 @@ export async function GET() {
     supabase.from("qb_connection_status").select("realm_id, company_name"),
     fetchAllRows((from, to) =>
       supabase
-        .from("job_costs")
+        .from("cap_labor_lines")
         .select(
-          "id, job_id, qb_txn_id, qb_doc_number, txn_date, description, category, amount",
+          "id, job_id, qb_txn_id, qb_doc_number, txn_date, description, category, amount, treatment",
         )
-        .eq("qb_txn_type", "JournalEntry")
-        .eq("cost_type", "labor")
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),
@@ -89,6 +91,7 @@ export async function GET() {
       "Account",
       "Description",
       "Posting",
+      "Treatment",
       "Amount",
     ],
     lines.flatMap((l) => {
@@ -108,9 +111,11 @@ export async function GET() {
           (l.qb_doc_number as string | null) ?? `#${l.qb_txn_id}`,
           l.category as string | null,
           l.description as string | null,
-          // Credits are labor already moved off the job's labor accounts
-          // (capitalized or corrected); debits are allocations awaiting review.
           Number(l.amount ?? 0) < 0 ? "Credit" : "Debit",
+          // Capitalized lines are labor credited off by an entry that debits
+          // a capital asset; every other line is labor posted (a reversal
+          // nets against it).
+          CAP_LABOR_TREATMENT_LABELS[l.treatment as CapLaborTreatment],
           Number(l.amount ?? 0).toFixed(2),
         ],
       ];
