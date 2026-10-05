@@ -3,7 +3,7 @@
 import { useMemo, useState } from "react";
 import { Building2, Download, Landmark } from "lucide-react";
 import { moneyWhole } from "@/lib/format";
-import type { PivotCell, RealmRevenueSlice } from "@/lib/financials";
+import type { PivotCell } from "@/lib/financials";
 import {
   MONTH_NAMES,
   assembleBudget,
@@ -23,9 +23,8 @@ import { VarianceTable } from "./VarianceTable";
 
 /**
  * The live part of the Budget page. The server hands over the raw inputs —
- * per-company baseline cells and account categories, the intercompany
- * customer cells, YTD actuals, approved initiatives, and the saved growth
- * assumptions — and the budget
+ * per-company baseline cells and account categories, YTD actuals, approved
+ * initiatives, and the saved growth assumptions — and the budget
  * statement is assembled here, so editing a growth % re-prices every row
  * immediately; AssumptionsEditor then asks to save or revert. Same
  * helpers and statement builder as before (src/lib/budget.ts,
@@ -44,14 +43,11 @@ export function BudgetWorkspace({
   companies,
   initialAssumptions,
   baselineByRealm,
-  eliminationCellsByRealm,
   actuals,
-  actualEliminationSlices,
   approved,
   categoryEntries,
   realmCategoryEntries,
   growthCategories,
-  wantEliminations,
   approvedNet,
   proposedNet,
   proposedCount,
@@ -75,18 +71,14 @@ export function BudgetWorkspace({
   initialAssumptions: BudgetAssumption[];
   /** Baseline account × month cells, one array per company (companies order). */
   baselineByRealm: PivotCell[][];
-  /** Baseline customer × month cells that feed an elimination, per company. */
-  eliminationCellsByRealm: PivotCell[][];
   /** YTD actual account × month cells, all companies (null = not loaded). */
   actuals: PivotCell[] | null;
-  actualEliminationSlices: RealmRevenueSlice[];
   approved: BudgetInitiative[];
   categoryEntries: [string, string][];
   /** Each company's own account → category entries (companies order). */
   realmCategoryEntries: [string, string][][];
   /** Rows of the growth assumptions grid. */
   growthCategories: GrowthCategory[];
-  wantEliminations: boolean;
   approvedNet: number;
   proposedNet: number;
   proposedCount: number;
@@ -106,7 +98,7 @@ export function BudgetWorkspace({
     [realmCategoryEntries],
   );
 
-  const { statement, eliminations, variance } = useMemo(
+  const { statement, variance } = useMemo(
     () =>
       assembleBudget({
         year,
@@ -117,24 +109,18 @@ export function BudgetWorkspace({
         assumptions,
         baselineByRealm,
         realmCategories,
-        eliminationCellsByRealm,
         actuals,
-        actualEliminationSlices,
         approved,
         categoryByAccount,
-        wantEliminations,
       }),
     [
       assumptions,
       companies,
       baselineByRealm,
       realmCategories,
-      eliminationCellsByRealm,
       actuals,
-      actualEliminationSlices,
       approved,
       categoryByAccount,
-      wantEliminations,
       year,
       colDim,
       view,
@@ -248,13 +234,11 @@ export function BudgetWorkspace({
           )}
           <StatTile
             label="Budgeted net income"
-            value={moneyWhole((eliminations?.adjusted ?? statement.netIncome).total)}
+            value={moneyWhole(statement.netIncome.total)}
             hint={
               approvedNet !== 0
                 ? `Includes ${moneyWhole(approvedNet)} from approved initiatives`
-                : eliminations
-                  ? "After intercompany eliminations"
-                  : "Income less all expenses"
+                : "Income less all expenses"
             }
           />
           <StatTile
@@ -275,14 +259,12 @@ export function BudgetWorkspace({
         ) : view === "budget" ? (
           <StatementTable
             statement={statement}
-            eliminations={eliminations}
             colLabels={colLabels}
             showRowTotal={colDim !== "total"}
           />
         ) : variance ? (
           <VarianceTable
-            statement={variance.statement}
-            eliminations={variance.eliminations}
+            statement={variance}
             ytdLabel={`YTD ${MONTH_NAMES[closedThrough - 1]} ${year}`}
           />
         ) : (

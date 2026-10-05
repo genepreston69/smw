@@ -5,7 +5,6 @@ import { ChevronRight } from "lucide-react";
 import { moneyWhole, pct } from "@/lib/format";
 import type {
   CategoryStatement,
-  StatementEliminations,
   StatementSection,
   StatementTotals,
 } from "@/lib/financials";
@@ -20,11 +19,9 @@ import { Table, Th, buttonCls } from "@/components/ui";
  */
 export function VarianceTable({
   statement,
-  eliminations,
   ytdLabel,
 }: {
   statement: CategoryStatement;
-  eliminations: StatementEliminations | null;
   ytdLabel: string;
 }) {
   const [expanded, setExpanded] = useState<ReadonlySet<string>>(new Set());
@@ -179,35 +176,9 @@ export function VarianceTable({
         )}
         {sectionRows(statement.expenses, true)}
         <tr className="bg-surface">
-          <td className="px-4 py-2 font-semibold text-ink-900">
-            {eliminations ? "Net income before eliminations" : "Net income"}
-          </td>
+          <td className="px-4 py-2 font-semibold text-ink-900">Net income</td>
           {cells(statement.netIncome, false, true)}
         </tr>
-        {eliminations && (
-          <>
-            <tr className="bg-surface/50">
-              <td
-                colSpan={COLS}
-                className="px-4 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
-              >
-                Intercompany eliminations
-              </td>
-            </tr>
-            {eliminations.lines.map((line) => (
-              <tr key={line.label} className="hover:bg-surface/50">
-                <td className="px-4 py-2 text-ink-900">{line.label}</td>
-                {cells(line, false)}
-              </tr>
-            ))}
-            <tr className="bg-surface">
-              <td className="px-4 py-2 font-semibold text-ink-900">
-                Net income after eliminations
-              </td>
-              {cells(eliminations.adjusted, false, true)}
-            </tr>
-          </>
-        )}
       </Table>
     </div>
   );

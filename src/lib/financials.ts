@@ -4,8 +4,6 @@
 // (migrations 0009 / 0010) — the database does the grouping and filtering,
 // these are just the vocabulary.
 
-import { isEnterpriseName } from "@/lib/enterprise";
-
 export type RowDim =
   | "account"
   | "class"
@@ -438,113 +436,15 @@ export function buildIncomeStatement(cells: PivotCell[]): IncomeStatement {
 }
 
 /* ---------------------------------------------------------------------------
-   Intercompany eliminations. Superior Marine acts as billing agent for its
-   sister companies, so the same revenue is recognized on two companies'
-   books and the consolidated Net income line is overstated. The eliminations
-   section shown below Net income backs out the duplicate side, always
-   keeping the agent's customer-facing invoice:
-
-     1. Revenue whose customer is a sister company (Precision Paint invoicing
-        Superior Marine for work SMW billed on to the end customer), matched
-        with the same fuzzy naming (isEnterpriseName) that buckets
-        Intercompany jobs on the dashboard.
-     2. Revenue under a "Marathon" customer booked by any company other than
-        Superior Marine — SMW is always the billing agent for Marathon
-        invoices, so the operating company's (IRDC's) own booking is the
-        duplicate.
-
-   Feed it one slice per company: gl_pivot cells with row_dim = 'customer',
-   classifications = ['Revenue'], p_realm_id set to that company.
---------------------------------------------------------------------------- */
-
-const AGENCY_CUSTOMER_PHRASE = "marathon";
-const BILLING_AGENT_PHRASE = "superior marine";
-
-export interface RealmRevenueSlice {
-  realmId: string;
-  companyName: string | null;
-  /** gl_pivot cells: row_dim 'customer', Revenue only, this realm. */
-  cells: PivotCell[];
-}
-
-export interface EliminationLine {
-  label: string;
-  /** Signed effect on net income: negative backs the revenue out. */
-  totals: PivotTotals;
-}
-
-export interface Eliminations {
-  lines: EliminationLine[];
-  /** Net income after applying every elimination line. */
-  adjusted: PivotTotals;
-}
-
-const ELIMINATION_LABELS = [
-  "Intercompany revenue (Precision Paint)",
-  "Intercompany revenue (other sister company)",
-] as const;
-
-/** Which elimination line (if any) a company's revenue from a customer
-    belongs to. Exported so callers can pre-filter customer slices to the
-    cells buildEliminations will actually use. */
-export function eliminationLabel(
-  companyName: string | null,
-  customer: string,
-): string | null {
-  if (isEnterpriseName(customer)) return ELIMINATION_LABELS[0];
-  // Guarded by the branch above so a line can never be eliminated twice.
-  if (
-    customer.toLowerCase().includes(AGENCY_CUSTOMER_PHRASE) &&
-    !(companyName ?? "").toLowerCase().includes(BILLING_AGENT_PHRASE)
-  )
-    return ELIMINATION_LABELS[1];
-  return null;
-}
-
-export function buildEliminations(
-  slices: RealmRevenueSlice[],
-  netIncome: PivotTotals,
-): Eliminations | null {
-  const lines: EliminationLine[] = [];
-  const collect = (
-    label: string,
-    match: (slice: RealmRevenueSlice, customer: string) => boolean,
-  ) => {
-    const bycol = new Map<string, number>();
-    let total = 0;
-    let any = false;
-    for (const s of slices) {
-      for (const c of s.cells) {
-        if (!match(s, c.row_key)) continue;
-        any = true;
-        const v = -Number(c.amount);
-        bycol.set(c.col_key, (bycol.get(c.col_key) ?? 0) + v);
-        total += v;
-      }
-    }
-    if (any) lines.push({ label, totals: { bycol, total } });
-  };
-
-  for (const label of ELIMINATION_LABELS)
-    collect(label, (slice, customer) => eliminationLabel(slice.companyName, customer) === label);
-
-  if (lines.length === 0) return null;
-  const bycol = new Map(netIncome.bycol);
-  let total = netIncome.total;
-  for (const l of lines) {
-    for (const [k, v] of l.totals.bycol) bycol.set(k, (bycol.get(k) ?? 0) + v);
-    total += l.totals.total;
-  }
-  return { lines, adjusted: { bycol, total } };
-}
-
-/* ---------------------------------------------------------------------------
    Category-grouped income statement for /financials/statement. Groups
    account-level gl_pivot cells (Revenue + Expense classifications) by the
    admin-assigned Category on gl_accounts (edited on the Chart of Accounts
-   page), one expandable group per category. Everything is plain JSON —
-   records, not Maps — because the built statement crosses the server →
-   client boundary into the collapsible table component.
+   page), one expandable group per category. Every amount is the account's
+   own ledger activity — no reclassifications between categories and no
+   adjustments below Net income — so the statement ties to the QuickBooks
+   Profit and Loss. Everything is plain JSON — records, not Maps — because
+   the built statement crosses the server → client boundary into the
+   collapsible table component.
 --------------------------------------------------------------------------- */
 
 export const UNCATEGORIZED = "Uncategorized";
@@ -575,37 +475,6 @@ export function isDirectCostCategory(label: string): boolean {
   return DIRECT_COST_CATEGORIES.has(normalizeLabel(label));
 }
 
-// Employee-benefits allocation: the direct-labor share of each employee-
-// benefits category is reclassified above the gross profit line. Per column,
-// the share is Direct Labor ÷ (Direct Labor + Salaries & Wages). Direct Labor
-// is matched by account name anywhere in the expense sections (or by
-// membership in a category named "Direct Labor"); Salaries & Wages and
-// Employee Benefits are matched by category name.
-const SALARY_WAGE_CATEGORIES = new Set(["salaries and wages"]);
-
-const EMPLOYEE_BENEFIT_CATEGORIES = new Set(["employee benefits"]);
-
-export const ALLOCATED_BENEFITS_LABEL = "Employee Benefits (Allocated)";
-
-function isSalaryWageCategory(label: string): boolean {
-  return SALARY_WAGE_CATEGORIES.has(normalizeLabel(label));
-}
-
-function isEmployeeBenefitsCategory(label: string): boolean {
-  return EMPLOYEE_BENEFIT_CATEGORIES.has(normalizeLabel(label));
-}
-
-function isDirectLaborCategory(label: string): boolean {
-  return normalizeLabel(label) === "direct labor";
-}
-
-function isDirectLaborAccount(name: string): boolean {
-  // "710 Labor Cost" is the direct-labor account in the SMW chart of
-  // accounts; "direct labor" covers conventionally named accounts.
-  const n = normalizeLabel(name);
-  return n.includes("direct labor") || n.includes("710 labor cost");
-}
-
 export interface StatementTotals {
   cells: Record<string, number>;
   total: number;
@@ -625,26 +494,6 @@ export interface StatementGroup extends StatementTotals {
 export interface StatementSection extends StatementTotals {
   label: string;
   groups: StatementGroup[];
-}
-
-/** Serializable form of Eliminations for the statement's client table. */
-export interface StatementEliminations {
-  lines: ({ label: string } & StatementTotals)[];
-  adjusted: StatementTotals;
-}
-
-/** Re-key an Eliminations result to plain records for the client boundary. */
-export function serializeEliminations(
-  e: Eliminations,
-): StatementEliminations {
-  const toTotals = (t: PivotTotals): StatementTotals => ({
-    cells: Object.fromEntries(t.bycol),
-    total: t.total,
-  });
-  return {
-    lines: e.lines.map((l) => ({ label: l.label, ...toTotals(l.totals) })),
-    adjusted: toTotals(e.adjusted),
-  };
 }
 
 export interface CategoryStatement {
@@ -716,83 +565,6 @@ export function buildCategoryStatement(
       })
       .sort(byTotalDesc);
 
-  // Reclassify the direct-labor share of Employee Benefits into Direct Costs,
-  // per column: moved = benefits × Direct Labor ÷ (Direct Labor + Salaries &
-  // Wages). Mutates both group arrays; net income is unchanged. The source
-  // category keeps its full account rows plus a "Less:" contra line so the
-  // ledger amounts stay auditable against QuickBooks.
-  const allocateBenefits = (
-    direct: StatementGroup[],
-    opex: StatementGroup[],
-  ): void => {
-    const benefitGroups = opex.filter((g) => isEmployeeBenefitsCategory(g.label));
-    if (direct.length === 0 || benefitGroups.length === 0) return;
-
-    // Direct Labor may be categorized anywhere in the expense sections —
-    // match by account name, or take a whole category named "Direct Labor".
-    const laborByCol: Record<string, number> = {};
-    for (const g of [...direct, ...opex])
-      for (const r of g.rows)
-        if (isDirectLaborCategory(g.label) || isDirectLaborAccount(r.key))
-          for (const [k, v] of Object.entries(r.cells))
-            laborByCol[k] = (laborByCol[k] ?? 0) + v;
-
-    const salariesByCol: Record<string, number> = {};
-    for (const g of opex)
-      if (isSalaryWageCategory(g.label))
-        for (const [k, v] of Object.entries(g.cells))
-          salariesByCol[k] = (salariesByCol[k] ?? 0) + v;
-
-    const ratio = (k: string): number => {
-      const labor = laborByCol[k] ?? 0;
-      const denom = labor + (salariesByCol[k] ?? 0);
-      if (labor <= 0 || denom <= 0) return 0;
-      return Math.min(1, labor / denom);
-    };
-
-    const allocated: StatementGroup = {
-      label: ALLOCATED_BENEFITS_LABEL,
-      rows: [],
-      cells: {},
-      total: 0,
-    };
-    for (const g of benefitGroups) {
-      const moved: StatementTotals = { cells: {}, total: 0 };
-      for (const k of colKeys) {
-        const v = (g.cells[k] ?? 0) * ratio(k);
-        if (v === 0) continue;
-        moved.cells[k] = v;
-        moved.total += v;
-      }
-      if (Object.keys(moved.cells).length === 0) continue;
-
-      g.rows.push({
-        key: "Less: allocated to Direct Costs",
-        cells: Object.fromEntries(
-          Object.entries(moved.cells).map(([k, v]) => [k, -v]),
-        ),
-        total: -moved.total,
-      });
-      for (const [k, v] of Object.entries(moved.cells))
-        g.cells[k] = (g.cells[k] ?? 0) - v;
-      g.total -= moved.total;
-
-      allocated.rows.push({
-        key: `Allocated from ${g.label}`,
-        cells: moved.cells,
-        total: moved.total,
-      });
-      for (const [k, v] of Object.entries(moved.cells))
-        allocated.cells[k] = (allocated.cells[k] ?? 0) + v;
-      allocated.total += moved.total;
-    }
-    if (allocated.rows.length > 0) {
-      direct.push(allocated);
-      direct.sort(byTotalDesc);
-      opex.sort(byTotalDesc);
-    }
-  };
-
   const section = (label: string, groups: StatementGroup[]): StatementSection =>
     ({ label, groups, ...sum(groups) });
 
@@ -806,7 +578,6 @@ export function buildCategoryStatement(
   const expenseGroups = buildGroups("Expense");
   const directGroups = expenseGroups.filter((g) => isDirectCostCategory(g.label));
   const opexGroups = expenseGroups.filter((g) => !isDirectCostCategory(g.label));
-  allocateBenefits(directGroups, opexGroups);
 
   const income = section("Income", buildGroups("Revenue"));
   const directCosts = section("Direct Costs", directGroups);

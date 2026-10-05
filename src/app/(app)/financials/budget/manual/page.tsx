@@ -110,8 +110,7 @@ export default async function BudgetManualPage() {
               imported from QuickBooks into a <strong>full calendar-year
               budget for {year}</strong>, laid out exactly like the expandable
               Income Statement: Income, Direct Costs, Gross profit, Operating
-              Expenses, Net income, and (for all companies together) the
-              intercompany eliminations. You do not type a budget line by
+              Expenses, and Net income. You do not type a budget line by
               line. Instead the system starts from a year of real actuals,
               you apply growth assumptions per company and category, and you add new
               initiatives that do not exist in history yet. The result is a
@@ -223,7 +222,7 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "Categories",
-                  "The grouping of accounts into Income / Direct Costs / Operating Expense categories, the direct-cost split, and the Employee Benefits allocation.",
+                  "The grouping of accounts into Income / Direct Costs / Operating Expense categories and the direct-cost split.",
                   "Assigned on the Chart of Accounts page — shared with the Income Statement, not budget-specific.",
                 ],
               ]}
@@ -281,8 +280,7 @@ export default async function BudgetManualPage() {
                 <>
                   <strong>Summary tiles.</strong> <em>Budgeted income</em>,{" "}
                   <em>Budgeted gross profit</em> (when a direct-cost category
-                  exists), <em>Budgeted net income</em> (after eliminations
-                  when viewing all companies), and <em>Proposed
+                  exists), <em>Budgeted net income</em>, and <em>Proposed
                   initiatives</em> — the net value of initiatives still
                   awaiting approval, which is <strong>not</strong> in the
                   budget.
@@ -329,11 +327,9 @@ export default async function BudgetManualPage() {
             <H3>Company</H3>
             <P>
               <strong>All companies</strong> consolidates every connected
-              QuickBooks company into one statement and shows the
-              intercompany eliminations below Net income. Picking a single
-              company shows that company alone, and — because eliminations
-              are a consolidation adjustment — hides the eliminations
-              section. The Company filter also controls which companies
+              QuickBooks company into one statement, adding the companies
+              together exactly as booked. Picking a single company shows that
+              company alone. The Company filter also controls which companies
               appear in the Growth assumptions card and which initiatives are
               listed. The row is hidden entirely when only one company is
               connected.
@@ -502,9 +498,8 @@ export default async function BudgetManualPage() {
             <Steps
               items={[
                 <>
-                  Type a percentage in any field. The statement, the summary
-                  tiles, and the eliminations{" "}
-                  <strong>re-price immediately</strong> — the field turns
+                  Type a percentage in any field. The statement and the
+                  summary tiles <strong>re-price immediately</strong> — the field turns
                   amber to show it differs from the saved value.
                 </>,
                 <>
@@ -653,11 +648,6 @@ export default async function BudgetManualPage() {
               account&rsquo;s actuals</strong> — they are indistinguishable
               from grown baseline once approved.
             </P>
-            <Callout>
-              Initiatives have no customer, so they never create or affect an
-              intercompany elimination. If an initiative is genuinely
-              intercompany revenue, budget it net or leave it out.
-            </Callout>
           </Section>
 
           {/* ------------------------------------------------------------ */}
@@ -763,7 +753,7 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "Direct Costs",
-                  "Expense categories named Direct Costs / Direct Labor / Cost of Goods Sold / Cost of Sales / COGS, plus the Employee Benefits (Allocated) group. Shown only when at least one such category exists.",
+                  "Expense categories named Direct Costs / Direct Labor / Cost of Goods Sold / Cost of Sales / COGS. Shown only when at least one such category exists.",
                 ],
                 [
                   "Gross profit",
@@ -774,12 +764,8 @@ export default async function BudgetManualPage() {
                   "Every other expense category, largest first; Uncategorized always last.",
                 ],
                 [
-                  "Net income (before eliminations)",
+                  "Net income",
                   "Income − Direct Costs − Operating Expenses, per column and in total.",
-                ],
-                [
-                  "Intercompany eliminations",
-                  "All-companies view only: the revenue lines backed out, and Net income after eliminations.",
                 ],
               ]}
             />
@@ -811,35 +797,15 @@ export default async function BudgetManualPage() {
                 </>,
               ]}
             />
-            <H3>Employee Benefits allocation</H3>
+            <H3>No allocations or eliminations</H3>
             <P>
-              Exactly as on the Income Statement, the direct-labor share of
-              any category named <em>Employee Benefits</em> is reclassified
-              into Direct Costs, column by column: moved = Employee Benefits ×
-              Direct Labor ÷ (Direct Labor + Salaries &amp; Wages). The source
-              category keeps its accounts plus a <em>&ldquo;Less: allocated to
-              Direct Costs&rdquo;</em> line, and an <em>Employee Benefits
-              (Allocated)</em> group appears under Direct Costs. Net income is
-              unchanged by the move. Because it is computed on the budgeted
-              numbers, higher growth on Employee Benefits (or on the default
-              it inherits) grows the allocation proportionally.
-            </P>
-            <H3>Intercompany eliminations (all companies)</H3>
-            <P>
-              When viewing all companies, revenue that one sister company
-              bills to another is backed out below Net income so the
-              consolidated result is not inflated. The budget applies the
-              same two elimination lines as the Income Statement — revenue
-              from Precision Paint / other enterprise customers, and revenue
-              from the agency customer billed by anyone other than the billing
-              agent — using the baseline&rsquo;s customer activity{" "}
-              <strong>grown by that company&rsquo;s overall revenue
-              growth</strong>: its budgeted baseline revenue ÷ its baseline
-              revenue. That equals the company&rsquo;s revenue default unless
-              income categories carry their own rates. Customer revenue is not
-              tied to an account, so no single category&rsquo;s rate applies.
-              The <em>Budgeted net income</em> tile shows the after-eliminations
-              figure in this view.
+              Every account stays in its own category and every company is
+              added in as booked, exactly as on the Income Statement: no
+              Employee Benefits are reclassified into Direct Costs, and no
+              intercompany revenue is backed out below Net income.
+              Intercompany activity is handled on the balance sheet, so the
+              income is only counted once in the ledger — and the budgeted
+              Net income is built on the same basis as QuickBooks.
             </P>
           </Section>
 
@@ -874,8 +840,8 @@ export default async function BudgetManualPage() {
               ]}
             />
             <P>
-              Positive variances show in green, negative in red. Gross profit,
-              Net income, and the eliminations rows follow the income rule.
+              Positive variances show in green, negative in red. Gross profit
+              and Net income follow the income rule.
             </P>
             <H3>Before the first month closes</H3>
             <P>
@@ -938,21 +904,12 @@ export default async function BudgetManualPage() {
             <Formulas
               rows={[
                 ["Category", "Σ its accounts' budget cells"],
-                ["Direct Costs", "Σ categories named Direct Costs / Direct Labor / COGS / Cost of Sales + Employee Benefits (Allocated)"],
-                ["Benefits moved", "Employee Benefits × Direct Labor ÷ (Direct Labor + Salaries & Wages), per column, capped at 100%"],
+                ["Direct Costs", "Σ categories named Direct Costs / Direct Labor / COGS / Cost of Sales"],
                 ["Gross profit", "Income − Direct Costs"],
                 ["Net income", "Income − Direct Costs − Operating Expenses"],
               ]}
             />
-            <H3>6. Eliminations (all companies)</H3>
-            <Formulas
-              rows={[
-                ["revenue factor", "Σ grown(revenue account) ÷ Σ baseline(revenue account) over the year, per company (1 + revenue default when the baseline has no revenue)"],
-                ["elimination(m)", "− Σ baseline intercompany customer revenue × revenue factor, per company"],
-                ["Net income after", "Net income + Σ elimination lines"],
-              ]}
-            />
-            <H3>7. Budget vs Actual</H3>
+            <H3>6. Budget vs Actual</H3>
             <Formulas
               rows={[
                 ["closed through", "last complete calendar month of the budget year (0 before January closes)"],
@@ -1057,11 +1014,11 @@ export default async function BudgetManualPage() {
               rows={[
                 [
                   "All companies (or the selected company)",
-                  "The statement exactly as on screen, with every category expanded to its accounts as grouped outline rows (collapse them with Excel's outline buttons). Budget: amount and % pairs per column plus Total. Budget vs Actual: full-year budget, YTD budget, YTD actual, variance, variance %. On All companies this tab is consolidated and ends with the intercompany eliminations. A notes line records the baseline window, growth status, and the number of approved initiatives.",
+                  "The statement exactly as on screen, with every category expanded to its accounts as grouped outline rows (collapse them with Excel's outline buttons). Budget: amount and % pairs per column plus Total. Budget vs Actual: full-year budget, YTD budget, YTD actual, variance, variance %. On All companies this tab is consolidated. A notes line records the baseline window, growth status, and the number of approved initiatives.",
                 ],
                 [
                   "One tab per company",
-                  "On All companies only, a tab for each company follows, named after it and laid out the same way — built exactly like that company's own view on the page: its categories, its growth rates, its approved initiatives, and no intercompany eliminations (those are a consolidation adjustment). The company tabs add up to the All companies tab's Net income before eliminations.",
+                  "On All companies only, a tab for each company follows, named after it and laid out the same way — built exactly like that company's own view on the page: its categories, its growth rates, and its approved initiatives. The company tabs add up to the All companies tab's Net income.",
                 ],
                 [
                   "Assumptions",
@@ -1145,12 +1102,6 @@ export default async function BudgetManualPage() {
                   the statement shows a Gross profit line.
                 </>,
                 <>
-                  Categories named <em>Employee Benefits</em> and <em>Salaries
-                  &amp; Wages</em>, together with the direct-labor account (710
-                  Labor Cost or any account containing &ldquo;Direct
-                  Labor&rdquo;), drive the benefits allocation.
-                </>,
-                <>
                   Categories survive syncs and apply to every month, past and
                   budget. Changing one re-groups the budget on the next load.
                 </>,
@@ -1192,9 +1143,8 @@ export default async function BudgetManualPage() {
                 <>
                   <strong>Clean the chart of accounts.</strong> Review
                   categories on the Chart of Accounts page; confirm Gross
-                  profit appears on the Income Statement and the benefits
-                  allocation looks right. Do this before anyone sees a budget
-                  number.
+                  profit appears on the Income Statement. Do this before
+                  anyone sees a budget number.
                 </>,
                 <>
                   <strong>Review the baseline.</strong> Open the Budget with
@@ -1280,12 +1230,8 @@ export default async function BudgetManualPage() {
                 a="The baseline is the ledger as posted and cannot be edited here. Add a negative initiative on the same account for the same amount, describe why, and approve it — the adjustment is then explicit, attributed, and reversible."
               />
               <Faq
-                q="Why does the Direct Costs block contain “Employee Benefits (Allocated)”?"
-                a="The direct-labor share of the Employee Benefits category is reclassified above Gross profit, exactly as on the Income Statement. The source category shows a matching “Less: allocated to Direct Costs” line, so Net income is unchanged."
-              />
-              <Faq
-                q="The eliminations disappeared when I picked one company."
-                a="Intercompany eliminations are a consolidation adjustment and only make sense across companies, so they show in the All companies view only."
+                q="Where did the intercompany eliminations and the Employee Benefits allocation go?"
+                a="Both were removed so the budget, the Income Statement, and the Financials pages tie to QuickBooks. Intercompany activity is handled on the balance sheet, so that income is only counted once in the ledger; and every account now stays in its own category, with no benefits moved into Direct Costs."
               />
               <Faq
                 q="Why is a cost variance negative when we spent more than budget?"
@@ -1315,8 +1261,8 @@ export default async function BudgetManualPage() {
           SMW Job Plans — Budget module user manual. The budget year, baseline
           window, and growth limits quoted here are read from the live
           application, so they always match the Budget page. Baseline
-          seasonality, growth, initiative spreading, categories, benefits
-          allocation, and eliminations follow the rules in sections 6–12;
+          seasonality, growth, initiative spreading, and categories follow
+          the rules in sections 6–12;
           the Budget page footnote restates them in brief.
         </footer>
       </article>

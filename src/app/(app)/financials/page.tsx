@@ -10,7 +10,6 @@ import {
   ROW_DIMS,
   SCOPES,
   SCOPE_CLASSIFICATIONS,
-  buildEliminations,
   buildPivot,
   financialsExportHref,
   financialsHref,
@@ -75,20 +74,11 @@ export default async function FinancialsPage({
   // Aggregated cells; paged like every other complete list so PostgREST's
   // 1000-row cap can't silently truncate a wide pivot. The four-column
   // ordering matches the RPC's GROUP BY, so pages are deterministic.
-  // Under the Net income scope on the All companies view, one revenue-by-
-  // customer slice per company feeds the Intercompany eliminations section
-  // below the Net income line (per company because the Marathon billing-agent
-  // rule depends on which company booked the revenue). Eliminations are a
-  // consolidation adjustment, so single-company views skip them entirely.
-  const eliminationRealms =
-    scope === "pl" && company === "all"
-      ? companies.map((c) => c.realm_id)
-      : [];
   // The % of revenue display divides by each column's total revenue. Every
   // scope except expense-only already carries the Revenue cells; expense-only
   // needs one extra revenue slice for the denominators.
   const needsRevenueSlice = display === "pct" && scope === "expense";
-  const [cells, eliminationSlices, revenueCells] = await Promise.all([
+  const [cells, revenueCells] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       supabase
         .rpc("gl_pivot", {
@@ -105,28 +95,6 @@ export default async function FinancialsPage({
         .order("account_type")
         .range(fromRow, toRow),
     ) as Promise<PivotCell[]>,
-    Promise.all(
-      eliminationRealms.map(async (realmId) => ({
-        realmId,
-        companyName: companyByRealm.get(realmId) ?? null,
-        cells: (await fetchAllRows((fromRow, toRow) =>
-          supabase
-            .rpc("gl_pivot", {
-              p_start: `${from}-01`,
-              p_end: lastDayOfMonth(to),
-              p_row_dim: "customer",
-              p_col_dim: colDim,
-              p_realm_id: realmId,
-              p_classifications: SCOPE_CLASSIFICATIONS.income,
-            })
-            .order("row_key")
-            .order("col_key")
-            .order("classification")
-            .order("account_type")
-            .range(fromRow, toRow),
-        )) as PivotCell[],
-      })),
-    ),
     needsRevenueSlice
       ? (fetchAllRows((fromRow, toRow) =>
           supabase
@@ -151,10 +119,6 @@ export default async function FinancialsPage({
   const revenueTotals =
     display === "pct"
       ? revenueByCol(needsRevenueSlice ? revenueCells : cells)
-      : null;
-  const eliminations =
-    scope === "pl" && company === "all"
-      ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
       : null;
   const showRowTotal = colDim !== "total";
 
@@ -384,36 +348,6 @@ export default async function FinancialsPage({
                   amountCell(pivot.grand.total, null, true, linesHref(state, null, null))}
               </tr>
             )}
-            {eliminations && (
-              <>
-                <tr className="bg-surface/50">
-                  <td
-                    colSpan={sectionSpan}
-                    className="px-4 py-1.5 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
-                  >
-                    Intercompany eliminations
-                  </td>
-                </tr>
-                {eliminations.lines.map((line) => (
-                  <tr key={line.label} className="hover:bg-surface/50">
-                    <td className="max-w-[26rem] truncate px-4 py-2 text-ink-900" title={line.label}>
-                      {line.label}
-                    </td>
-                    {pivot.colKeys.map((k) => amountCell(line.totals.bycol.get(k), k))}
-                    {showRowTotal && amountCell(line.totals.total, null)}
-                  </tr>
-                ))}
-                <tr className="bg-surface">
-                  <td className="px-4 py-2 font-semibold text-ink-900">
-                    Net income after eliminations
-                  </td>
-                  {pivot.colKeys.map((k) =>
-                    amountCell(eliminations.adjusted.bycol.get(k), k, true),
-                  )}
-                  {showRowTotal && amountCell(eliminations.adjusted.total, null, true)}
-                </tr>
-              </>
-            )}
           </Table>
         )}
       </Card>
@@ -428,9 +362,6 @@ export default async function FinancialsPage({
           : ""}{" "}
         Net income on the account view is Income minus Expenses. Click any
         amount to drill into the underlying ledger lines.
-        {eliminations
-          ? " Intercompany eliminations back out revenue Superior Marine bills as agent for its sister companies and that both companies recognize: invoices between sister companies, and Marathon revenue booked by a company other than Superior Marine."
-          : ""}
       </p>
     </div>
   );

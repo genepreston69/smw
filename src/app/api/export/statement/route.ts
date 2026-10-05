@@ -8,17 +8,14 @@ import {
   MONTH_PARAM,
   SCOPE_CLASSIFICATIONS,
   buildCategoryStatement,
-  buildEliminations,
   clampMonth,
   defaultFrom,
   lastDayOfMonth,
   latestMonth,
   monthLabel,
   pivotColLabel,
-  serializeEliminations,
   type ColDim,
   type PivotCell,
-  type PivotTotals,
   type StatementSection,
   type StatementTotals,
 } from "@/lib/financials";
@@ -81,13 +78,9 @@ export async function GET(request: Request) {
     ? (sp.get("cols") as ColDim)
     : "month";
 
-  // Same slices as the statement page: the account pivot plus, on the All
-  // companies view, one revenue-by-customer slice per company for the
-  // Intercompany eliminations below the Net income line. Eliminations are a
-  // consolidation adjustment, so single-company exports skip them entirely.
-  const eliminationRealms =
-    company === "all" ? [...companyByRealm.keys()] : [];
-  const [cells, accountRows, eliminationSlices] = await Promise.all([
+  // Same slices as the statement page: the account pivot plus the account
+  // categories.
+  const [cells, accountRows] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       db
         .rpc("gl_pivot", {
@@ -119,28 +112,6 @@ export async function GET(request: Request) {
         category: string | null;
       }[]
     >,
-    Promise.all(
-      eliminationRealms.map(async (realmId) => ({
-        realmId,
-        companyName: companyByRealm.get(realmId) ?? null,
-        cells: (await fetchAllRows((fromRow, toRow) =>
-          db
-            .rpc("gl_pivot", {
-              p_start: `${from}-01`,
-              p_end: lastDayOfMonth(to),
-              p_row_dim: "customer",
-              p_col_dim: colDim,
-              p_realm_id: realmId,
-              p_classifications: SCOPE_CLASSIFICATIONS.income,
-            })
-            .order("row_key")
-            .order("col_key")
-            .order("classification")
-            .order("account_type")
-            .range(fromRow, toRow),
-        )) as PivotCell[],
-      })),
-    ),
   ]);
 
   // Same name → category mapping as the page: gl_pivot's account row key is
@@ -155,18 +126,6 @@ export async function GET(request: Request) {
   }
 
   const statement = buildCategoryStatement(cells, categoryByAccount);
-
-  const netIncomePivot: PivotTotals = {
-    bycol: new Map(Object.entries(statement.netIncome.cells)),
-    total: statement.netIncome.total,
-  };
-  const rawEliminations =
-    company === "all"
-      ? buildEliminations(eliminationSlices, netIncomePivot)
-      : null;
-  const eliminations = rawEliminations
-    ? serializeEliminations(rawEliminations)
-    : null;
 
   const showRowTotal = colDim !== "total";
   const colLabels = statement.colKeys.map((k) =>
@@ -253,22 +212,9 @@ export async function GET(request: Request) {
     };
   }
   writeSection(statement.expenses);
-  sheet.addRow([
-    eliminations ? "Net income before eliminations" : "Net income",
-    ...totalsCells(statement.netIncome),
-  ]).font = { bold: true };
-
-  if (eliminations) {
-    sheet.addRow(["Intercompany eliminations"]).font = { bold: true };
-    for (const line of eliminations.lines) {
-      sheet.addRow([line.label, ...totalsCells(line)]);
-    }
-    const adjusted = sheet.addRow([
-      "Net income after eliminations",
-      ...totalsCells(eliminations.adjusted),
-    ]);
-    adjusted.font = { bold: true };
-  }
+  sheet.addRow(["Net income", ...totalsCells(statement.netIncome)]).font = {
+    bold: true,
+  };
 
   const buffer = await workbook.xlsx.writeBuffer();
   return new Response(Buffer.from(buffer), {

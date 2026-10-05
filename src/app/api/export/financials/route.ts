@@ -7,7 +7,6 @@ import {
   ROW_DIMS,
   SCOPES,
   SCOPE_CLASSIFICATIONS,
-  buildEliminations,
   buildPivot,
   lastDayOfMonth,
   monthLabel,
@@ -65,19 +64,11 @@ export async function GET(request: Request) {
   );
   const { company, from, to, rows: rowDim, cols: colDim, scope, display } = state;
 
-  // Same slices as the Financials page: the pivot itself plus, under the Net
-  // income scope on the All companies view, one revenue-by-customer slice per
-  // company for the Intercompany eliminations section below the Net income
-  // line (per company because the Marathon billing-agent rule depends on
-  // which company booked the revenue). Eliminations are a consolidation
-  // adjustment, so single-company exports skip them entirely.
-  const eliminationRealms =
-    scope === "pl" && company === "all" ? [...companyByRealm.keys()] : [];
   // Same as the page: the % of revenue display divides by each column's total
   // revenue, and only the expense-only scope lacks the Revenue cells to
   // derive that from the pivot itself.
   const needsRevenueSlice = display === "pct" && scope === "expense";
-  const [cells, eliminationSlices, revenueCells] = await Promise.all([
+  const [cells, revenueCells] = await Promise.all([
     fetchAllRows((fromRow, toRow) =>
       db
         .rpc("gl_pivot", {
@@ -94,28 +85,6 @@ export async function GET(request: Request) {
         .order("account_type")
         .range(fromRow, toRow),
     ) as Promise<PivotCell[]>,
-    Promise.all(
-      eliminationRealms.map(async (realmId) => ({
-        realmId,
-        companyName: companyByRealm.get(realmId) ?? null,
-        cells: (await fetchAllRows((fromRow, toRow) =>
-          db
-            .rpc("gl_pivot", {
-              p_start: `${from}-01`,
-              p_end: lastDayOfMonth(to),
-              p_row_dim: "customer",
-              p_col_dim: colDim,
-              p_realm_id: realmId,
-              p_classifications: SCOPE_CLASSIFICATIONS.income,
-            })
-            .order("row_key")
-            .order("col_key")
-            .order("classification")
-            .order("account_type")
-            .range(fromRow, toRow),
-        )) as PivotCell[],
-      })),
-    ),
     needsRevenueSlice
       ? (fetchAllRows((fromRow, toRow) =>
           db
@@ -139,10 +108,6 @@ export async function GET(request: Request) {
   const revenueTotals =
     display === "pct"
       ? revenueByCol(needsRevenueSlice ? revenueCells : cells)
-      : null;
-  const eliminations =
-    scope === "pl" && company === "all"
-      ? buildEliminations(eliminationSlices, pivot.netIncome ?? pivot.grand)
       : null;
   const showRowTotal = colDim !== "total";
 
@@ -232,18 +197,6 @@ export async function GET(request: Request) {
       : [pivot.totalLabel, ...totalsCells(pivot.grand)],
   );
   summary.font = { bold: true };
-
-  if (eliminations) {
-    sheet.addRow(["Intercompany eliminations"]).font = { bold: true };
-    for (const line of eliminations.lines) {
-      sheet.addRow([line.label, ...totalsCells(line.totals)]);
-    }
-    const adjusted = sheet.addRow([
-      "Net income after eliminations",
-      ...totalsCells(eliminations.adjusted),
-    ]);
-    adjusted.font = { bold: true };
-  }
 
   const buffer = await workbook.xlsx.writeBuffer();
   return new Response(Buffer.from(buffer), {

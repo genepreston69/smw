@@ -5,7 +5,6 @@ import { createServiceClient } from "@/lib/supabase/service";
 import {
   monthLabel,
   type CategoryStatement,
-  type StatementEliminations,
   type StatementSection,
   type StatementTotals,
 } from "@/lib/financials";
@@ -84,7 +83,7 @@ export async function GET(request: Request) {
   const year = BUDGET_YEAR;
   const baseline = baselineRange(year);
 
-  const data = await loadBudget(db, { year, company, realms, companyByRealm, view });
+  const data = await loadBudget(db, { year, company, realms, view });
 
   // Growth rates from the screen; a company whose rates are missing or
   // malformed keeps its saved ones.
@@ -93,7 +92,7 @@ export async function GET(request: Request) {
 
   const companies = realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }));
   const approved = data.initiatives.filter((i) => i.status === "approved");
-  const { statement, eliminations, variance } = assembleBudget({
+  const { statement, variance } = assembleBudget({
     year,
     colDim,
     view,
@@ -102,12 +101,9 @@ export async function GET(request: Request) {
     assumptions,
     baselineByRealm: data.baselineByRealm,
     realmCategories: data.realmCategories,
-    eliminationCellsByRealm: data.eliminationCellsByRealm,
     actuals: data.actuals,
-    actualEliminationSlices: data.actualEliminationSlices,
     approved,
     categoryByAccount: data.categoryByAccount,
-    wantEliminations: data.wantEliminations,
   });
 
   const companyLabel =
@@ -135,7 +131,6 @@ export async function GET(request: Request) {
   const writeStatement = (
     sheet: ExcelJS.Worksheet,
     s: CategoryStatement,
-    elim: StatementEliminations | null,
     title: string,
     notes: string[],
     cols: Columns,
@@ -173,17 +168,7 @@ export async function GET(request: Request) {
     if (s.grossProfit)
       sheet.addRow(["Gross profit", ...cols.cells(s.grossProfit, false)]).font = { bold: true };
     section(s.expenses, true);
-    sheet.addRow([
-      elim ? "Net income before eliminations" : "Net income",
-      ...cols.cells(s.netIncome, false),
-    ]).font = { bold: true };
-    if (elim) {
-      sheet.addRow(["Intercompany eliminations"]).font = { bold: true };
-      for (const line of elim.lines) sheet.addRow([line.label, ...cols.cells(line, false)]);
-      sheet.addRow(["Net income after eliminations", ...cols.cells(elim.adjusted, false)]).font = {
-        bold: true,
-      };
-    }
+    sheet.addRow(["Net income", ...cols.cells(s.netIncome, false)]).font = { bold: true };
   };
 
   const sheetNames = new Set<string>();
@@ -216,8 +201,7 @@ export async function GET(request: Request) {
       const ytd = `YTD ${MONTH_NAMES[data.closedThrough - 1]} ${year}`;
       writeStatement(
         workbook.addWorksheet(sheetName(tab)),
-        built.variance.statement,
-        built.variance.eliminations,
+        built.variance,
         `Budget vs Actual ${year} — ${label}`,
         [
           `Actuals through ${MONTH_NAMES[data.closedThrough - 1]} ${year}`,
@@ -255,7 +239,6 @@ export async function GET(request: Request) {
     writeStatement(
       workbook.addWorksheet(sheetName(tab)),
       s,
-      built.eliminations,
       `Budget ${year} — ${label}`,
       [
         `Baseline ${baselineLabel} actuals mapped onto ${year}`,
@@ -278,14 +261,13 @@ export async function GET(request: Request) {
     );
   };
 
-  // First tab: the selection exactly as on screen (consolidated, with
-  // eliminations, when All companies is selected).
-  writeScope(companyLabel, companyLabel, companies, { statement, eliminations, variance }, approved.length);
+  // First tab: the selection exactly as on screen (consolidated when All
+  // companies is selected).
+  writeScope(companyLabel, companyLabel, companies, { statement, variance }, approved.length);
 
   // On All companies, one tab per company after it — each built exactly like
   // that company's own view on the page: its categories, its approved
-  // initiatives, its growth rates, and no intercompany eliminations (they are
-  // a consolidation adjustment).
+  // initiatives, and its growth rates.
   if (company === "all") {
     companies.forEach((c, idx) => {
       const categories = data.realmCategories[idx] ?? new Map<string, string>();
@@ -303,12 +285,9 @@ export async function GET(request: Request) {
           assumptions,
           baselineByRealm: [data.baselineByRealm[idx] ?? []],
           realmCategories: [categories],
-          eliminationCellsByRealm: [],
           actuals: data.actualsByRealm ? (data.actualsByRealm[idx] ?? []) : null,
-          actualEliminationSlices: [],
           approved: companyApproved,
           categoryByAccount: categories,
-          wantEliminations: false,
         }),
         companyApproved.length,
       );

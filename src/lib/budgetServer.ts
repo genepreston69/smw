@@ -2,13 +2,7 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
-import {
-  eliminationLabel,
-  lastDayOfMonth,
-  latestMonth,
-  type PivotCell,
-  type RealmRevenueSlice,
-} from "@/lib/financials";
+import { lastDayOfMonth, latestMonth, type PivotCell } from "@/lib/financials";
 import {
   baselineRange,
   closedMonthsOf,
@@ -37,17 +31,13 @@ export interface LoadedBudget {
   /** Budget-year months already closed (0 = none). */
   closedThrough: number;
   realms: string[];
-  wantEliminations: boolean;
   /** True when YTD actuals were loaded (variance view with a closed month). */
   wantActuals: boolean;
   baselineByRealm: PivotCell[][];
-  /** Baseline customer cells pre-filtered to those an elimination uses. */
-  eliminationCellsByRealm: PivotCell[][];
   /** YTD actual account cells, all realms, or null when not loaded. */
   actuals: PivotCell[] | null;
   /** The same YTD actual cells split per realm (realms order), or null. */
   actualsByRealm: PivotCell[][] | null;
-  actualEliminationSlices: RealmRevenueSlice[];
   accountRows: BudgetAccount[];
   /** Saved assumptions per realm, category rates included (missing realms
       default to 0%). */
@@ -68,38 +58,31 @@ export async function loadBudget(
     year: number;
     company: string; // realm id or "all"
     realms: string[];
-    companyByRealm: ReadonlyMap<string, string>;
     view: BudgetView;
   },
 ): Promise<LoadedBudget> {
-  const { year, company, realms, companyByRealm, view } = opts;
+  const { year, company, realms, view } = opts;
   const baseline = baselineRange(year);
   const closedThrough = closedMonthsOf(year, latestMonth());
 
   // One budget_ledger_summary call per window (migration 0027): a single
-  // ledger scan returning account × month and revenue customer × month cells
-  // for every realm as one JSON row. Paged gl_pivot calls re-ran the whole
-  // aggregation per 1000-row page, per company, and timed the page out.
-  // Cells come back split per realm (in `realms` order) in gl_pivot's shape.
-  const ledger = async (
-    from: string,
-    to: string,
-    withCustomers: boolean,
-  ): Promise<{ accounts: PivotCell[][]; customers: PivotCell[][] }> => {
+  // ledger scan returning account × month cells for every realm as one JSON
+  // row. Paged gl_pivot calls re-ran the whole aggregation per 1000-row
+  // page, per company, and timed the page out. Cells come back split per
+  // realm (in `realms` order) in gl_pivot's shape.
+  const ledger = async (from: string, to: string): Promise<PivotCell[][]> => {
     const { data, error } = await db.rpc("budget_ledger_summary", {
       p_start: `${from}-01`,
       p_end: lastDayOfMonth(to),
       p_realm_ids: realms,
-      p_customers: withCustomers,
+      p_customers: false,
     });
     if (error) throw new Error(error.message);
-    const summary = (data ?? { accounts: [], customers: [] }) as {
+    const summary = (data ?? { accounts: [] }) as {
       accounts: [string, string, string | null, string, string, number | string][];
-      customers: [string, string, string, number | string][];
     };
     const idx = new Map(realms.map((r, i) => [r, i]));
     const accounts: PivotCell[][] = realms.map(() => []);
-    const customers: PivotCell[][] = realms.map(() => []);
     for (const [realm, classification, accountType, account, month, amount] of summary.accounts)
       accounts[idx.get(realm)!]?.push({
         classification,
@@ -109,22 +92,11 @@ export async function loadBudget(
         amount,
         line_count: 0,
       });
-    for (const [realm, customer, month, amount] of summary.customers)
-      customers[idx.get(realm)!]?.push({
-        classification: "Revenue",
-        account_type: null,
-        row_key: customer,
-        col_key: month,
-        amount,
-        line_count: 0,
-      });
-    return { accounts, customers };
+    return accounts;
   };
 
-  const wantEliminations = company === "all";
   const wantActuals = view === "variance" && closedThrough > 0;
   const actualTo = `${year}-${String(closedThrough).padStart(2, "0")}`;
-  const noLedger = { accounts: [] as PivotCell[][], customers: [] as PivotCell[][] };
 
   const [
     baselineLedger,
@@ -134,8 +106,8 @@ export async function loadBudget(
     categoryRateRows,
     initiatives,
   ] = await Promise.all([
-      ledger(baseline.from, baseline.to, wantEliminations),
-      wantActuals ? ledger(`${year}-01`, actualTo, wantEliminations) : noLedger,
+      ledger(baseline.from, baseline.to),
+      wantActuals ? ledger(`${year}-01`, actualTo) : null,
       fetchAllRows((fromRow, toRow) =>
         db
           .from("gl_accounts")
@@ -197,32 +169,14 @@ export async function loadBudget(
     if (!categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
   }
 
-  // Only the customer cells an intercompany elimination will use are kept —
-  // the full customer × month slice is far larger.
-  const eliminationOnly = (cells: PivotCell[], realmId: string) =>
-    cells.filter(
-      (c) => eliminationLabel(companyByRealm.get(realmId) ?? null, c.row_key) !== null,
-    );
-
   return {
     year,
     closedThrough,
     realms,
-    wantEliminations,
     wantActuals,
-    baselineByRealm: baselineLedger.accounts,
-    eliminationCellsByRealm: wantEliminations
-      ? baselineLedger.customers.map((cells, idx) => eliminationOnly(cells, realms[idx]))
-      : [],
-    actuals: wantActuals ? actualLedger.accounts.flat() : null,
-    actualsByRealm: wantActuals ? actualLedger.accounts : null,
-    actualEliminationSlices: wantEliminations
-      ? actualLedger.customers.map((cells, idx) => ({
-          realmId: realms[idx],
-          companyName: companyByRealm.get(realms[idx]) ?? null,
-          cells: eliminationOnly(cells, realms[idx]),
-        }))
-      : [],
+    baselineByRealm: baselineLedger,
+    actuals: actualLedger ? actualLedger.flat() : null,
+    actualsByRealm: actualLedger,
     accountRows,
     assumptions,
     initiatives,
