@@ -39,7 +39,7 @@ export default async function ReconciliationPage() {
           <>
             Verify the general ledger imported into this app ties to
             QuickBooks: upload the consolidated Profit and Loss export and
-            compare every account, month by month.
+            compare every detail account, month by month.
             {lastSynced.length > 0 && (
               <>
                 {" "}

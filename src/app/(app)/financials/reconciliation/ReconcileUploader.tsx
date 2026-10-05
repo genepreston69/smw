@@ -182,7 +182,8 @@ export function ReconcileUploader() {
           <p className="text-sm text-ink-600">
             In QuickBooks, run <span className="font-medium">Reports → Profit
             and Loss</span> (the consolidated view across all companies),
-            display columns by <span className="font-medium">month</span>, and
+            display columns by <span className="font-medium">month</span> with
+            sub-accounts <span className="font-medium">expanded</span>, and
             export to Excel. Upload that file here unchanged. Reconciliation
             runs through the last complete month — a current-month column in
             the export is excluded automatically.
@@ -245,7 +246,7 @@ export function ReconcileUploader() {
           <Card pad={false}>
             <div className="flex items-center justify-between border-b border-line/70 px-4 py-2.5">
               <p className="text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400">
-                Account tie-out by section
+                Detail account tie-out
               </p>
               <label className="flex items-center gap-2 text-sm text-ink-600">
                 <input
@@ -311,7 +312,13 @@ export function ReconcileUploader() {
             and expenses both positive, difference = QuickBooks − imported GL.
             &ldquo;Missing from GL&rdquo; accounts are in the export but have
             no imported ledger activity for the period; &ldquo;Not in
-            export&rdquo; is the reverse. Both sides are the ledger as booked
+            export&rdquo; is the reverse. Each row is one detail account,
+            matched by its full QuickBooks path (Parent:Sub-account) to the
+            same account in the imported chart of accounts — the categories
+            assigned on the Chart of Accounts page play no part, and parent
+            accounts are never compared as rollups. Sections are
+            QuickBooks&rsquo; own (Income, Cost of Goods Sold, Expenses, Other
+            Income, Other Expenses). Both sides are the ledger as booked
             — no allocations or intercompany eliminations — so every account
             and Net income should tie to the cent. If recent months
             don&rsquo;t tie, run a QuickBooks sync in Settings first — the
