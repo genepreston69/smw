@@ -86,6 +86,58 @@ export async function saveAssumption(
   return { ok: true };
 }
 
+const overridesSchema = z
+  .object({
+    budgetYear: z.number().int(),
+    realmId: z.string().min(1),
+    account: z.string().trim().min(1).max(300),
+    classification: z.enum(["Revenue", "Expense"]),
+    // The account's complete set of typed months; a month left out returns
+    // to its growth-based amount. Empty resets the whole account.
+    months: z
+      .array(
+        z.object({
+          month: z.number().int().min(1).max(12),
+          amount: z.coerce
+            .number({ message: "Budget amount must be a number" })
+            .min(-1_000_000_000, "Budget amount is too large")
+            .max(1_000_000_000, "Budget amount is too large"),
+        }),
+      )
+      .max(12),
+  })
+  .refine(
+    (d) => new Set(d.months.map((m) => m.month)).size === d.months.length,
+    "A month can only have one amount",
+  );
+
+/** Replaces one account's typed budget months (set_budget_account_overrides,
+    migration 0031). Called as each cell is committed on the budget
+    statement, so typed figures save as you go. */
+export async function saveAccountOverrides(
+  input: z.input<typeof overridesSchema>,
+): Promise<ActionResult> {
+  const profile = await requireAdminAction();
+  if (!profile) return DENIED;
+  const parsed = overridesSchema.safeParse(input);
+  if (!parsed.success) return { ok: false, error: firstIssue(parsed.error) };
+  const d = parsed.data;
+
+  const supabase = createServiceClient();
+  const { error } = await supabase.rpc("set_budget_account_overrides", {
+    p_budget_year: d.budgetYear,
+    p_realm_id: d.realmId,
+    p_account: d.account,
+    p_classification: d.classification,
+    p_months: d.months,
+    p_updated_by: profile.id,
+  });
+  if (error) return fail(error);
+  // No revalidatePath, as with saveAssumption: the page already shows the
+  // typed figure.
+  return { ok: true };
+}
+
 const initiativeSchema = z
   .object({
     id: z.string().uuid().nullable(),

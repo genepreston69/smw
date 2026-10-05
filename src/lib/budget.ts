@@ -1,8 +1,9 @@
 // Budget (/financials/budget): a calendar-year budget built from a trailing-
 // twelve-month baseline of ledger actuals, grown by per-company growth
 // assumptions — a rate per account category, falling back to the company's
-// revenue / expense rate (migrations 0026, 0028) — plus approved new
-// initiatives (migrations 0026, 0029).
+// revenue / expense rate (migrations 0026, 0028) — with any account-month an
+// admin typed over replacing its growth-based amount (migration 0031), plus
+// approved new initiatives (migrations 0026, 0029).
 //
 // Everything here is pure: the page fetches gl_pivot cells and the budget
 // tables, and these helpers re-key them into synthetic PivotCells that feed
@@ -244,42 +245,135 @@ export function budgetColLabel(colDim: BudgetColDim, key: string): string {
 /** Maps a budget month (1–12) to the output column key; null drops the month. */
 export type MonthToCol = (month: number) => string | null;
 
-/** Moves baseline month cells onto the budget columns, scaled per cell:
-    each baseline month lands on the same calendar month of the budget year
-    (Jul 2025 → Jul 2027, Jan 2026 → Jan 2027), so seasonality carries
-    forward. */
-function shiftCells(
+/** A budget figure typed over one account-month (migration 0031). It
+    replaces that month's growth-based amount, so growth edits no longer move
+    it; approved initiatives still add on top. */
+export interface BudgetOverride {
+  realm_id: string;
+  /** Account full name, as the statement's account rows show it. */
+  account: string;
+  classification: "Revenue" | "Expense";
+  /** Budget month, 1–12. */
+  month: number;
+  amount: number;
+}
+
+/** One account's budget per month before initiatives (index 0 = January). */
+export interface AccountMonths {
+  classification: string | null;
+  account_type: string | null;
+  months: number[];
+  /** Months with a baseline cell or a typed figure: the ones that become
+      statement cells. */
+  present: boolean[];
+  /** Months typed over (overrides). */
+  typed: boolean[];
+}
+
+const twelve = <T,>(v: T): T[] => Array.from({ length: 12 }, () => v);
+
+/**
+ * Each account's budget per month before initiatives: its baseline month
+ * (the same calendar month a year earlier, so seasonality carries forward —
+ * Jul 2025 → Jul 2027, Jan 2026 → Jan 2027) grown at its category's rate,
+ * looked up in the realm's own account → category map — except months typed
+ * over, which take the typed figure. `overrides` are one realm's.
+ */
+export function accountBaseMonths(
   cells: PivotCell[],
-  toCol: MonthToCol,
-  factor: (c: PivotCell) => number,
-): PivotCell[] {
-  const out: PivotCell[] = [];
+  assumption: BudgetAssumption | undefined,
+  categoryByAccount: ReadonlyMap<string, string>,
+  overrides: readonly BudgetOverride[] = [],
+): Map<string, AccountMonths> {
+  const out = new Map<string, AccountMonths>();
+  const entry = (key: string, classification: string | null, accountType: string | null) => {
+    let a = out.get(key);
+    if (!a) {
+      a = {
+        classification,
+        account_type: accountType,
+        months: twelve(0),
+        present: twelve(false),
+        typed: twelve(false),
+      };
+      out.set(key, a);
+    }
+    return a;
+  };
   for (const c of cells) {
-    const month = Number(c.col_key.slice(5, 7));
-    const col = toCol(month);
-    if (col === null) continue;
-    out.push({ ...c, col_key: col, amount: Number(c.amount) * factor(c) });
+    const m = Number(c.col_key.slice(5, 7)) - 1;
+    if (!(m >= 0 && m < 12)) continue;
+    const a = entry(c.row_key, c.classification, c.account_type);
+    const factor =
+      1 + growthPct(assumption, c.classification, categoryByAccount.get(c.row_key)) / 100;
+    a.months[m] += Number(c.amount) * factor;
+    a.present[m] = true;
+  }
+  for (const o of overrides) {
+    const m = o.month - 1;
+    if (!(m >= 0 && m < 12)) continue;
+    const a = entry(o.account, o.classification, null);
+    a.months[m] = o.amount;
+    a.present[m] = true;
+    a.typed[m] = true;
   }
   return out;
 }
 
 /**
- * Baseline account cells (row_dim account, col_dim month, one realm) grown
- * by that realm's assumptions — each account at its category's rate, looked
- * up in the realm's own account → category map — and moved onto the budget
- * year.
+ * Baseline account cells (row_dim account, col_dim month, one realm) as
+ * budget cells: grown by that realm's assumptions, typed months replacing
+ * the growth-based amount (accountBaseMonths), and moved onto the budget
+ * columns.
  */
 export function growBaselineCells(
   cells: PivotCell[],
   assumption: BudgetAssumption | undefined,
   categoryByAccount: ReadonlyMap<string, string>,
   toCol: MonthToCol,
+  overrides: readonly BudgetOverride[] = [],
 ): PivotCell[] {
-  return shiftCells(
-    cells,
-    toCol,
-    (c) => 1 + growthPct(assumption, c.classification, categoryByAccount.get(c.row_key)) / 100,
-  );
+  const out: PivotCell[] = [];
+  for (const [row_key, a] of accountBaseMonths(cells, assumption, categoryByAccount, overrides)) {
+    for (let m = 0; m < 12; m++) {
+      if (!a.present[m]) continue;
+      const col = toCol(m + 1);
+      if (col === null) continue;
+      out.push({
+        classification: a.classification,
+        account_type: a.account_type,
+        row_key,
+        col_key: col,
+        amount: a.months[m],
+        line_count: 0,
+      });
+    }
+  }
+  return out;
+}
+
+const round2 = (n: number) => Math.round(n * 100) / 100;
+
+/**
+ * Twelve months re-spread to a new annual total in the shape they already
+ * have (each month scaled by total ÷ current total), or evenly when the
+ * current months add up to nothing. Rounded to cents; any rounding
+ * remainder lands on the largest month so the months add up to the total
+ * exactly.
+ */
+export function respreadTotal(months: readonly number[], total: number): number[] {
+  const current = months.reduce((s, v) => s + v, 0);
+  const spread =
+    Math.abs(current) >= 0.005
+      ? months.map((v) => round2((v * total) / current))
+      : twelve(round2(total / 12));
+  const diff = round2(total - spread.reduce((s, v) => s + v, 0));
+  if (diff !== 0) {
+    let at = 11;
+    for (let m = 0; m < 12; m++) if (Math.abs(spread[m]) > Math.abs(spread[at])) at = m;
+    spread[at] = round2(spread[at] + diff);
+  }
+  return spread;
 }
 
 /**
@@ -343,6 +437,8 @@ export interface BudgetInputs {
   /** YTD actual account × month cells, all companies (null = not loaded). */
   actuals: PivotCell[] | null;
   approved: BudgetInitiative[];
+  /** Account-months typed over, all companies (migration 0031). */
+  overrides: readonly BudgetOverride[];
   categoryByAccount: ReadonlyMap<string, string>;
 }
 
@@ -367,6 +463,7 @@ export function assembleBudget(i: BudgetInputs): AssembledBudget {
         i.assumptions[c.realmId],
         categoriesOf(idx),
         toCol,
+        i.overrides.filter((o) => o.realm_id === c.realmId),
       ),
       ...initiativeCells(
         i.approved.filter((x) => x.realm_id === c.realmId),

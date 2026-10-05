@@ -36,9 +36,12 @@ const toCompanyDraft = (a: BudgetAssumption): CompanyDraft => {
   };
 };
 
+/** Field text without the "%" or spaces people may type. */
+const clean = (v: string) => v.replace(/[\s%]/g, "");
+
 /** Default fields: "", "-" → 0; anything non-numeric → null. */
 const parse = (v: string): number | null => {
-  const t = v.trim();
+  const t = clean(v);
   if (t === "" || t === "-") return 0;
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
@@ -46,7 +49,7 @@ const parse = (v: string): number | null => {
 
 /** Category fields: "", "-" → "default"; anything non-numeric → null. */
 const parseCategory = (v: string | undefined): number | "default" | null => {
-  const t = (v ?? "").trim();
+  const t = clean(v ?? "");
   if (t === "" || t === "-") return "default";
   const n = Number(t);
   return Number.isFinite(n) ? n : null;
@@ -234,9 +237,12 @@ export function AssumptionsEditor({
     onInput: (value: string) => void,
   ) => (
     <span className="relative inline-block">
+      {/* Plain text, not type="number": no spinner arrows — type the exact
+          percentage (4.75, -2, 5%). */}
       <input
-        type="number"
-        step="0.1"
+        type="text"
+        inputMode="decimal"
+        autoComplete="off"
         value={value}
         placeholder={placeholder}
         aria-label={label}

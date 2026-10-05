@@ -152,6 +152,8 @@ export default async function BudgetManualPage() {
               <br />
               &nbsp;&nbsp;→ × (1 + growth %) per company and category (blank category → revenue / expense default)
               <br />
+              &nbsp;&nbsp;→ any account-month you type over replaces that grown amount
+              <br />
               &nbsp;&nbsp;+ approved new initiatives (spread from start month → end month)
               <br />
               &nbsp;&nbsp;= Budget {year}, in the Income Statement&rsquo;s layout
@@ -291,7 +293,8 @@ export default async function BudgetManualPage() {
                   Actual) in the Income Statement&rsquo;s expandable layout.
                   Click any category row to expand it to its accounts; use{" "}
                   <strong>Expand all / Collapse all</strong> above the table.
-                  See{" "}
+                  With one company selected, click an account&rsquo;s month or
+                  Total to type a budget figure over it. See{" "}
                   <a href="#statement" className="text-brand-600 hover:underline">
                     section 10
                   </a>
@@ -499,7 +502,9 @@ export default async function BudgetManualPage() {
             <Steps
               items={[
                 <>
-                  Type a percentage in any field. The statement and the
+                  Type a percentage in any field — the fields are plain text
+                  with no up/down arrows, so enter the exact figure (4.75, −2;
+                  a typed % sign is fine). The statement and the
                   summary tiles <strong>re-price immediately</strong> — the field turns
                   amber to show it differs from the saved value.
                 </>,
@@ -798,6 +803,65 @@ export default async function BudgetManualPage() {
                 </>,
               ]}
             />
+            <H3>Typing figures into account cells</H3>
+            <P>
+              Growth percentages set the default for every account. When an
+              account needs a specific figure — a lease that steps up in
+              March, a contract that bills quarterly — type it straight into
+              the statement. Select a single company (on All companies an
+              account row merges every company&rsquo;s account of that name,
+              so a typed figure would have no single home) and the Budget
+              view, expand the category, and click the cell.
+            </P>
+            <MTable
+              head={["Where you type", "What happens"]}
+              rows={[
+                [
+                  "An account's month (Months layout)",
+                  "That figure replaces the account's growth-based amount for that month. The other months are unchanged.",
+                ],
+                [
+                  "An account's Total (any layout)",
+                  "The annual figure re-spreads across the twelve months in the shape they already have — each month scaled by the same factor, so seasonality and earlier typed months keep their proportions — or evenly when the account has no budget yet. All twelve months become typed. Rounding lands on the largest month so the months add up to the total exactly.",
+                ],
+                [
+                  "A cell you empty",
+                  "The month returns to its growth-based amount. Emptying an account's Total returns every month of it.",
+                ],
+              ]}
+            />
+            <Ul
+              items={[
+                <>
+                  Press <strong>Enter</strong> or click away to keep a figure,{" "}
+                  <strong>Esc</strong> to cancel. Figures may include a $ sign
+                  or thousands separators; negative amounts take a minus sign.
+                </>,
+                <>
+                  Typed cells are <strong>highlighted</strong> and keep their
+                  figure when growth rates change; every other cell keeps
+                  re-pricing with the growth grid.
+                </>,
+                <>
+                  <strong>Approved initiatives still add on top</strong> of a
+                  typed figure, so approving or rejecting one still moves the
+                  budget. The field opens with the amount before initiatives;
+                  the cell&rsquo;s tooltip shows what initiatives add.
+                </>,
+                <>
+                  Typed figures <strong>save as you go</strong> — there is no
+                  Save button for them. The bar above the statement shows{" "}
+                  <em>Saving…</em>, how many figures are typed, and any error
+                  (the cell then returns to its saved value).{" "}
+                  <strong>Clear typed figures</strong> there returns the whole
+                  company to its growth defaults.
+                </>,
+                <>
+                  Quarter columns can&rsquo;t be typed into; switch Columns to{" "}
+                  <em>Months</em> for single months, or type the Total.
+                </>,
+              ]}
+            />
             <H3>No allocations or eliminations</H3>
             <P>
               Every account stays in its own category and every company is
@@ -895,7 +959,9 @@ export default async function BudgetManualPage() {
             <H3>4. Budget cell and columns</H3>
             <Formulas
               rows={[
-                ["budget(account, m)", "grown(account, m) + Σ initiative(account, m) over approved initiatives"],
+                ["base(account, m)", "the figure typed for that account-month, if any; otherwise grown(account, m)"],
+                ["budget(account, m)", "base(account, m) + Σ initiative(account, m) over approved initiatives"],
+                ["typed Total T", "base(account, m) × T ÷ Σ base(account, ·) for every m — or T ÷ 12 each when the base is all zero"],
                 ["Quarter column", "sum of its three months"],
                 ["Total / Budget column", "sum of all twelve months"],
                 ["% cell", "amount ÷ same column's total income"],
@@ -1032,6 +1098,10 @@ export default async function BudgetManualPage() {
                 [
                   "Initiatives by month",
                   "The same initiatives with one column per month (Jan–Dec) plus Total. It opens with an In budget block — what the approved initiatives add to the budget each month (revenue, expense, net) — then each initiative's revenue and expense accounts, section totals, and net by month. Months outside an initiative's run are blank.",
+                ],
+                [
+                  "Typed figures",
+                  "Only when any exist: every account-month typed over on the statement — company, account, type, month, amount. The statement tabs already include them, and their notes line counts them.",
                 ],
               ]}
             />

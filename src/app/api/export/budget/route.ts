@@ -103,6 +103,7 @@ export async function GET(request: Request) {
     realmCategories: data.realmCategories,
     actuals: data.actuals,
     approved,
+    overrides: data.overrides,
     categoryByAccount: data.categoryByAccount,
   });
 
@@ -196,6 +197,12 @@ export async function GET(request: Request) {
     const growthNote = scopeUnsaved.length
       ? `Includes unsaved growth changes for ${scopeUnsaved.map((c) => c.name).join(", ")}`
       : "Saved growth assumptions";
+    const typedCount = data.overrides.filter((o) =>
+      scope.some((c) => c.realmId === o.realm_id),
+    ).length;
+    const typedNote = typedCount
+      ? `Includes ${typedCount} typed account-month figure(s) in place of growth (see Typed figures)`
+      : "";
 
     if (view === "variance" && built.variance) {
       const ytd = `YTD ${MONTH_NAMES[data.closedThrough - 1]} ${year}`;
@@ -243,6 +250,7 @@ export async function GET(request: Request) {
       [
         `Baseline ${baselineLabel} actuals mapped onto ${year}`,
         growthNote,
+        typedNote,
         approvedCount ? `Includes ${approvedCount} approved initiative(s)` : "",
         "% columns show each amount as a percent of the same column's total income",
       ],
@@ -287,6 +295,7 @@ export async function GET(request: Request) {
           realmCategories: [categories],
           actuals: data.actualsByRealm ? (data.actualsByRealm[idx] ?? []) : null,
           approved: companyApproved,
+          overrides: data.overrides.filter((o) => o.realm_id === c.realmId),
           categoryByAccount: categories,
         }),
         companyApproved.length,
@@ -433,6 +442,39 @@ export async function GET(request: Request) {
       summary: true,
     },
   );
+
+  /* ---- Sheet 5: typed figures -------------------------------------- */
+
+  // Account-months typed over on the statement (migration 0031), so the
+  // file shows which figures replace the growth-based amount.
+  if (data.overrides.length > 0) {
+    const tSheet = workbook.addWorksheet(sheetName("Typed figures"));
+    tSheet.addRow([`Typed budget figures — ${year}`]).font = { bold: true, size: 13 };
+    tSheet.addRow([
+      "Each figure replaces that account-month's growth-based amount; approved initiatives still add on top. Growth rates do not change them.",
+    ]);
+    tSheet.addRow([]);
+    tSheet.addRow(["Company", "Account", "Type", "Month", "Amount"]).font = { bold: true };
+    tSheet.views = [{ state: "frozen", ySplit: 4 }];
+    const sorted = [...data.overrides].sort(
+      (a, b) =>
+        (companyByRealm.get(a.realm_id) ?? a.realm_id).localeCompare(
+          companyByRealm.get(b.realm_id) ?? b.realm_id,
+        ) ||
+        a.account.localeCompare(b.account) ||
+        a.month - b.month,
+    );
+    for (const o of sorted)
+      tSheet.addRow([
+        companyByRealm.get(o.realm_id) ?? o.realm_id,
+        o.account,
+        o.classification,
+        `${MONTH_NAMES[o.month - 1]} ${year}`,
+        o.amount,
+      ]);
+    for (const [i, w] of [24, 42, 10, 12, 15].entries()) tSheet.getColumn(i + 1).width = w;
+    tSheet.getColumn(5).numFmt = "#,##0.00";
+  }
 
   const buffer = await workbook.xlsx.writeBuffer();
   const suffix = view === "variance" && variance ? "vs-actual" : `by-${colDim}`;
