@@ -2,7 +2,10 @@
 
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
-import type { CapLaborTreatment } from "@/lib/capitalizedLabor";
+import {
+  capLaborWindow,
+  type CapLaborTreatment,
+} from "@/lib/capitalizedLabor";
 
 export interface CapLaborLine {
   id: string;
@@ -24,14 +27,15 @@ export type CapLaborLinesResult =
 /**
  * Journal-entry labor lines for one job, newest first (RLS: any signed-in
  * user) — the lines the dashboard counts (cap_labor_lines, migration 0030):
- * wages and employer taxes, never withholdings. Only journal entries count —
- * bills, purchases, and time entries are regular job cost, not
- * capitalization candidates.
+ * wages and employer taxes, never withholdings, dated in the calendar year to
+ * date. Only journal entries count — bills, purchases, and time entries are
+ * regular job cost, not capitalization candidates.
  */
 export async function getCapLaborLines(
   jobId: string,
 ): Promise<CapLaborLinesResult> {
   const supabase = await createClient();
+  const ytd = capLaborWindow();
   let data: CapLaborLine[];
   try {
     // Paged read: heavy payroll allocation can exceed Supabase's 1000-row
@@ -43,6 +47,8 @@ export async function getCapLaborLines(
           "id, txn_date, qb_txn_id, qb_doc_number, description, category, amount, treatment",
         )
         .eq("job_id", jobId)
+        .gte("txn_date", ytd.from)
+        .lte("txn_date", ytd.to)
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),
