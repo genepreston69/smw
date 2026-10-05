@@ -9,6 +9,7 @@ import {
   emptyCategoryGrowth,
   type BudgetAssumption,
   type BudgetInitiative,
+  type BudgetOverride,
   type BudgetView,
 } from "@/lib/budget";
 
@@ -44,6 +45,8 @@ export interface LoadedBudget {
   assumptions: BudgetAssumption[];
   /** Initiatives for the selected realms, every status. */
   initiatives: BudgetInitiative[];
+  /** Account-months typed over for the selected realms (migration 0031). */
+  overrides: BudgetOverride[];
   /** Account → category for the statement's rows (first realm wins on All
       companies, as on the Income Statement). */
   categoryByAccount: Map<string, string>;
@@ -105,6 +108,7 @@ export async function loadBudget(
     assumptionRows,
     categoryRateRows,
     initiatives,
+    overrideRows,
   ] = await Promise.all([
       ledger(baseline.from, baseline.to),
       wantActuals ? ledger(`${year}-01`, actualTo) : null,
@@ -138,6 +142,17 @@ export async function loadBudget(
         }[]
       >,
       loadInitiatives(db, year, realms),
+      fetchAllRows((fromRow, toRow) =>
+        db
+          .from("budget_account_overrides")
+          .select("realm_id, account, classification, month, amount")
+          .eq("budget_year", year)
+          .in("realm_id", realms)
+          .order("realm_id")
+          .order("account")
+          .order("month")
+          .range(fromRow, toRow),
+      ) as Promise<(Omit<BudgetOverride, "amount"> & { amount: number | string })[]>,
     ]);
 
   type AssumptionRow = { realm_id: string; revenue_growth_pct: number | string; expense_growth_pct: number | string };
@@ -180,6 +195,7 @@ export async function loadBudget(
     accountRows,
     assumptions,
     initiatives,
+    overrides: overrideRows.map((o) => ({ ...o, amount: Number(o.amount) })),
     categoryByAccount,
     realmCategories,
   };

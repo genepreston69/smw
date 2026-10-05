@@ -169,7 +169,7 @@ export default async function BudgetPage({
     <div>
       <BudgetWorkspace
         title={`Budget ${year}`}
-        subtitle={`Calendar ${year} budget built from ${monthLabel(baseline.from)} – ${monthLabel(baseline.to)} actuals, grown by each company's assumptions, plus approved new initiatives. Click a category to expand its accounts.`}
+        subtitle={`Calendar ${year} budget built from ${monthLabel(baseline.from)} – ${monthLabel(baseline.to)} actuals, grown by each company's assumptions, plus approved new initiatives. Click a category to expand its accounts; with one company selected, click an account's month or Total to type a figure over it.`}
         headerLinks={
           <>
             <Link href="/financials/statement" className={buttonCls("secondary")}>
@@ -194,6 +194,7 @@ export default async function BudgetPage({
         closedThrough={data.closedThrough}
         companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
         initialAssumptions={data.assumptions}
+        initialOverrides={data.overrides}
         baselineByRealm={data.baselineByRealm}
         actuals={data.actuals}
         approved={initiatives.filter((i) => i.status === "approved")}
