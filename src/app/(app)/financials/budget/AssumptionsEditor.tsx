@@ -91,6 +91,7 @@ export function AssumptionsEditor({
   initial,
   categories,
   action,
+  note,
   onChange,
 }: {
   budgetYear: number;
@@ -101,6 +102,8 @@ export function AssumptionsEditor({
   categories: GrowthCategory[];
   /** Header control on the right (the New Initiative button). */
   action?: React.ReactNode;
+  /** Extra line under the description (e.g. that rates span every class). */
+  note?: string;
   onChange: (assumption: BudgetAssumption) => void;
 }) {
   const [saved, setSaved] = useState<Record<string, BudgetAssumption>>(() =>
@@ -320,6 +323,7 @@ export function AssumptionsEditor({
             uses the company default shown in grey, and so does any
             uncategorized account.
           </p>
+          {note && <p className="mt-0.5 text-xs font-medium text-amber-700">{note}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button

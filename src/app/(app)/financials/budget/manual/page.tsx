@@ -14,9 +14,10 @@ export const metadata = {
    Printable user manual for the Budget module (/financials/budget). Static
    content — the authoritative behavior lives in src/lib/budget.ts
    (assembleBudget and friends), src/lib/budgetServer.ts (loadBudget), the
-   page components in this folder, the Excel export at
-   /api/export/budget and /api/export/budget-initiatives, and migrations
-   0026–0029. Keep this page in sync
+   page components in this folder, the Excel exports at
+   /api/export/budget, /api/export/budget-classes (src/lib/budgetWorkbook.ts)
+   and /api/export/budget-initiatives, and migrations 0026–0034. Keep this
+   page in sync
    when those change. Year and baseline labels are read from the real
    constants so the text can never drift from the screen.
 --------------------------------------------------------------------------- */
@@ -26,7 +27,7 @@ const TOC = [
   ["access", "2. Who can use it"],
   ["concepts", "3. The four ingredients of the budget"],
   ["tour", "4. A tour of the Budget page"],
-  ["filters", "5. Company, View & Columns filters"],
+  ["filters", "5. Company, Class, View & Columns filters"],
   ["baseline", "6. The baseline — where the numbers come from"],
   ["growth", "7. Growth assumptions"],
   ["initiatives", "8. New initiatives"],
@@ -76,7 +77,9 @@ export default async function BudgetManualPage() {
           <p className="mt-2 text-sm text-ink-600">
             A complete guide to building the calendar {year} budget: where the
             baseline comes from, how growth assumptions and new initiatives
-            shape it, how to read Budget vs Actual once the year is under
+            shape it, how it is built by QuickBooks class and rolled up to
+            each company and the consolidated budget, how to hand each class
+            its own workbook, how to read Budget vs Actual once the year is under
             way, and how every number is calculated. Print this page or save
             it as a PDF with the <em>Print / Save PDF</em> button (or{" "}
             <Kbd>Ctrl</Kbd>+<Kbd>P</Kbd> / <Kbd>⌘</Kbd>+<Kbd>P</Kbd>).
@@ -137,6 +140,15 @@ export default async function BudgetManualPage() {
                   you click <em>Save changes</em>.
                 </>,
                 <>
+                  <strong>It rolls up from classes.</strong> Every baseline
+                  amount, typed figure, and initiative belongs to one
+                  QuickBooks class. A company&rsquo;s budget is the sum of its
+                  classes, and All companies is the sum of the companies — so
+                  each class can be budgeted and handed its own workbook,
+                  while the company and consolidated budgets always tie to
+                  them.
+                </>,
+                <>
                   <strong>It is governed.</strong> New initiatives move through
                   proposed → approved (or rejected). Only approved initiatives
                   count toward the budget, and an approved initiative&rsquo;s
@@ -146,17 +158,19 @@ export default async function BudgetManualPage() {
               ]}
             />
             <Figure>
-              Ledger actuals ({baseFrom} – {baseTo})
+              Ledger actuals ({baseFrom} – {baseTo}), per account and QuickBooks class
               <br />
               &nbsp;&nbsp;→ mapped month-for-month onto {year}
               <br />
               &nbsp;&nbsp;→ × (1 + growth %) per company and category (blank category → revenue / expense default)
               <br />
-              &nbsp;&nbsp;→ any account-month you type over replaces that grown amount
+              &nbsp;&nbsp;→ any account-month you type over (in one class) replaces that class&rsquo;s grown amount
               <br />
-              &nbsp;&nbsp;+ approved new initiatives (spread from start month → end month)
+              &nbsp;&nbsp;+ approved new initiatives (each in one class, spread from start month → end month)
               <br />
-              &nbsp;&nbsp;= Budget {year}, in the Income Statement&rsquo;s layout
+              &nbsp;&nbsp;= Budget {year} per class, in the Income Statement&rsquo;s layout
+              <br />
+              &nbsp;&nbsp;Σ classes = each company&rsquo;s budget; Σ companies = All companies
               <br />
               <br />
               Budget {year} vs ledger actuals (closed months) = Budget vs Actual
@@ -210,7 +224,7 @@ export default async function BudgetManualPage() {
               rows={[
                 [
                   "Baseline",
-                  `Each revenue and expense account's actual monthly activity for the twelve months ${baseFrom} – ${baseTo}, moved onto the same calendar month of ${year}.`,
+                  `Each revenue and expense account's actual monthly activity for the twelve months ${baseFrom} – ${baseTo}, per QuickBooks class, moved onto the same calendar month of ${year}.`,
                   "Computed from the imported general ledger on every load. Nothing to enter.",
                 ],
                 [
@@ -220,7 +234,7 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "New initiatives",
-                  `Expected ${year} revenue and expense, by account, for something that is not in last year's history — a new crew, a new product line, a new lease. Spread evenly from a start month through an end month.`,
+                  `Expected ${year} revenue and expense, by account, for something that is not in last year's history — a new crew, a new product line, a new lease. Belongs to one company and one class; spread evenly from a start month through an end month.`,
                   "You create them with New Initiative; they join the budget only once approved.",
                 ],
                 [
@@ -252,6 +266,9 @@ export default async function BudgetManualPage() {
                   action buttons: <strong>Export Excel</strong>,{" "}
                   <strong>Export a company…</strong> (on All companies: one
                   company&rsquo;s budget as its own workbook),{" "}
+                  <strong>Export a class…</strong> (on All classes: one
+                  class&rsquo;s budget as its own workbook, or every class at
+                  once as a zip),{" "}
                   <strong>Income Statement</strong> (jumps to the actuals the
                   budget mirrors), and <strong>User manual</strong> (this
                   page).
@@ -259,7 +276,8 @@ export default async function BudgetManualPage() {
                 <>
                   <strong>Filter card.</strong> Pill rows for{" "}
                   <strong>Company</strong> (only when more than one QuickBooks
-                  company is connected), <strong>View</strong> (Budget or
+                  company is connected), <strong>Class</strong> (only when the
+                  ledger carries QuickBooks classes), <strong>View</strong> (Budget or
                   Budget vs Actual), and <strong>Columns</strong> (Month,
                   Quarter, Total only — Budget view only). See{" "}
                   <a href="#filters" className="text-brand-600 hover:underline">
@@ -293,8 +311,9 @@ export default async function BudgetManualPage() {
                   Actual) in the Income Statement&rsquo;s expandable layout.
                   Click any category row to expand it to its accounts; use{" "}
                   <strong>Expand all / Collapse all</strong> above the table.
-                  With one company selected, click an account&rsquo;s month or
-                  Total to type a budget figure over it. See{" "}
+                  With one company and one class selected, click an
+                  account&rsquo;s month or Total to type a budget figure over
+                  it. See{" "}
                   <a href="#statement" className="text-brand-600 hover:underline">
                     section 10
                   </a>
@@ -302,7 +321,7 @@ export default async function BudgetManualPage() {
                 </>,
                 <>
                   <strong>New initiatives panel.</strong> Every initiative for
-                  the selected companies — proposed first, then approved, then
+                  the selected companies and class — proposed first, then approved, then
                   rejected — with its totals, status, and action buttons.
                   Click an initiative&rsquo;s name to expand its description
                   and account lines, each with its monthly amount. The{" "}
@@ -327,7 +346,7 @@ export default async function BudgetManualPage() {
           </Section>
 
           {/* ------------------------------------------------------------ */}
-          <Section id="filters" title="5. Company, View & Columns filters">
+          <Section id="filters" title="5. Company, Class, View & Columns filters">
             <H3>Company</H3>
             <P>
               <strong>All companies</strong> consolidates every connected
@@ -337,6 +356,47 @@ export default async function BudgetManualPage() {
               appear in the Growth assumptions card and which initiatives are
               listed. The row is hidden entirely when only one company is
               connected.
+            </P>
+            <H3>Class — budgeting by class and the roll-up</H3>
+            <P>
+              QuickBooks classes (divisions, departments, locations — however
+              your books use them) are carried on every ledger line, and the
+              budget is built per class. The <strong>Class</strong> row lists
+              every class the selected companies budget: each class with
+              baseline activity, an initiative, or a typed figure. Ledger
+              lines with no class are grouped as <em>(no class)</em>, the
+              same label the Financials pivot uses. The row is hidden when the
+              ledger carries no classes at all.
+            </P>
+            <MTable
+              head={["Selection", "What you see"]}
+              rows={[
+                [
+                  "One company + one class",
+                  "That class's budget. This is where a class is budgeted: type figures over its accounts and add its initiatives.",
+                ],
+                [
+                  "One company + All classes",
+                  "The company roll-up: the sum of its classes, account by account and month by month.",
+                ],
+                [
+                  "All companies + one class",
+                  "That class across every company that budgets it (classes are matched by name).",
+                ],
+                [
+                  "All companies + All classes",
+                  "The consolidated budget: the sum of the companies, each the sum of its classes.",
+                ],
+              ]}
+            />
+            <P>
+              The roll-up is exact by construction — the company figure is
+              never computed separately from its classes. Growth rates are
+              per company and apply to every class (with a class selected, the
+              growth card says so): changing one moves every class of that
+              company. The summary tiles and the New initiatives panel follow
+              the Class filter. Switching to a company that doesn&rsquo;t
+              budget the selected class falls back to All classes.
             </P>
             <H3>View</H3>
             <MTable
@@ -372,7 +432,7 @@ export default async function BudgetManualPage() {
             />
             <P>
               Filters live in the page address, so a bookmarked or shared
-              link opens on the same company, view, and layout. Growth
+              link opens on the same company, class, view, and layout. Growth
               assumptions are <em>not</em> in the address — they are saved
               per company, or carried along only by the Excel export.
             </P>
@@ -437,7 +497,12 @@ export default async function BudgetManualPage() {
                   Amounts are natural-signed: positive revenue increases
                   income, positive expense increases cost. A credit memo or a
                   refund shows as a negative on its account, and is grown by
-                  the same percentage as everything else in its class.
+                  the same percentage as the rest of that account.
+                </>,
+                <>
+                  Each line keeps its <strong>QuickBooks class</strong>, so
+                  the baseline of a class is that class&rsquo;s own history,
+                  and the classes of an account add up to the account.
                 </>,
               ]}
             />
@@ -556,7 +621,7 @@ export default async function BudgetManualPage() {
                 <>
                   Negative growth is allowed and useful for a company winding
                   down a line of business. A negative default also shrinks
-                  every category of that class that has no rate of its own,
+                  every revenue (or expense) category that has no rate of its own,
                   so give the categories that should hold steady their own
                   rate.
                 </>,
@@ -570,7 +635,7 @@ export default async function BudgetManualPage() {
               A new initiative is anything you expect in {year} that history
               cannot predict: a new barge-building line, a second paint crew,
               a new facility lease, a one-time equipment overhaul. Each
-              initiative belongs to one company, runs from a chosen start
+              initiative belongs to one company and one QuickBooks class, runs from a chosen start
               month through a chosen end month, and carries an expected{" "}
               {year} amount per account.
             </P>
@@ -589,6 +654,15 @@ export default async function BudgetManualPage() {
                   Pick the <strong>Company</strong>. The account list below
                   switches to that company&rsquo;s chart of accounts, and any
                   amounts already typed are cleared.
+                </>,
+                <>
+                  Enter the <strong>Class</strong> whose budget it belongs to.
+                  The field starts on the page&rsquo;s Class filter and
+                  suggests the classes that company already budgets; type a
+                  new name for a class that has no history yet. Leave it
+                  blank for <em>(no class)</em>. Approved, the initiative adds
+                  to that class&rsquo;s budget — and so to its company and
+                  the consolidated budget.
                 </>,
                 <>
                   Pick the <strong>Starts</strong> and <strong>Ends</strong>{" "}
@@ -717,7 +791,8 @@ export default async function BudgetManualPage() {
               (or rejected) initiative&rsquo;s account lines — the message
               reads <em>&ldquo;Initiative is approved; return it to proposed
               before editing its amounts&rdquo;</em> — and to its start and
-              end months, since they decide which months carry the money.
+              end months and its class, since they decide which months and
+              which class budget carry the money.
               To change it, click{" "}
               <strong>Return to proposed</strong>, edit, and approve again.
               Returning to proposed clears the approver stamp and takes the
@@ -808,10 +883,15 @@ export default async function BudgetManualPage() {
               Growth percentages set the default for every account. When an
               account needs a specific figure — a lease that steps up in
               March, a contract that bills quarterly — type it straight into
-              the statement. Select a single company (on All companies an
-              account row merges every company&rsquo;s account of that name,
+              the statement. Select a single company and a single class (on
+              All companies an account row merges every company&rsquo;s
+              account of that name, and on All classes every class&rsquo;s,
               so a typed figure would have no single home) and the Budget
-              view, expand the category, and click the cell.
+              view, expand the category, and click the cell. A company whose
+              ledger has only one class can be typed into on All classes.
+              Typed figures belong to the class: the company and consolidated
+              views include them, and another class&rsquo;s figures are
+              untouched.
             </P>
             <MTable
               head={["Where you type", "What happens"]}
@@ -853,8 +933,8 @@ export default async function BudgetManualPage() {
                   Save button for them. The bar above the statement shows{" "}
                   <em>Saving…</em>, how many figures are typed, and any error
                   (the cell then returns to its saved value).{" "}
-                  <strong>Clear typed figures</strong> there returns the whole
-                  company to its growth defaults.
+                  <strong>Clear typed figures</strong> there returns the
+                  selected class of the company to its growth defaults.
                 </>,
                 <>
                   Quarter columns can&rsquo;t be typed into; switch Columns to{" "}
@@ -933,8 +1013,8 @@ export default async function BudgetManualPage() {
             <Formulas
               rows={[
                 [
-                  "baseline(account, m)",
-                  `sum of posted ledger lines on that account in baseline month m (${baseFrom} – ${baseTo}), natural-signed`,
+                  "baseline(account, class, m)",
+                  `sum of posted ledger lines on that account and QuickBooks class in baseline month m (${baseFrom} – ${baseTo}), natural-signed; lines with no class count as (no class)`,
                 ],
                 ["budget month", "same calendar month of the budget year (Jul→Jul, Jan→Jan)"],
               ]}
@@ -945,7 +1025,7 @@ export default async function BudgetManualPage() {
                 ["rate(account)", "the growth % set for the account's category at its company, if any"],
                 ["  … otherwise", "the company's revenue default (Revenue acct) or expense default (Expense acct, direct costs included); always the default when uncategorized"],
                 ["factor", "1 + rate ÷ 100"],
-                ["grown(account, m)", "baseline(account, m) × factor"],
+                ["grown(account, class, m)", "baseline(account, class, m) × factor   (one factor per company and category — the same in every class)"],
               ]}
             />
             <H3>3. Initiatives (approved only)</H3>
@@ -959,15 +1039,23 @@ export default async function BudgetManualPage() {
             <H3>4. Budget cell and columns</H3>
             <Formulas
               rows={[
-                ["base(account, m)", "the figure typed for that account-month, if any; otherwise grown(account, m)"],
-                ["budget(account, m)", "base(account, m) + Σ initiative(account, m) over approved initiatives"],
-                ["typed Total T", "base(account, m) × T ÷ Σ base(account, ·) for every m — or T ÷ 12 each when the base is all zero"],
+                ["base(account, class, m)", "the figure typed for that account, class, and month, if any; otherwise grown(account, class, m)"],
+                ["budget(account, class, m)", "base(account, class, m) + Σ initiative(account, m) over that class's approved initiatives"],
+                ["typed Total T", "base(account, class, m) × T ÷ Σ base(account, class, ·) for every m — or T ÷ 12 each when the base is all zero"],
                 ["Quarter column", "sum of its three months"],
                 ["Total / Budget column", "sum of all twelve months"],
                 ["% cell", "amount ÷ same column's total income"],
               ]}
             />
-            <H3>5. Statement rollups (shared with the Income Statement)</H3>
+            <H3>5. Class roll-up</H3>
+            <Formulas
+              rows={[
+                ["company(account, m)", "Σ budget(account, class, m) over the company's classes"],
+                ["All companies(account, m)", "Σ company(account, m) over the companies"],
+                ["class across companies", "Σ budget(account, class, m) over the companies that budget that class"],
+              ]}
+            />
+            <H3>6. Statement rollups (shared with the Income Statement)</H3>
             <Formulas
               rows={[
                 ["Category", "Σ its accounts' budget cells"],
@@ -976,12 +1064,12 @@ export default async function BudgetManualPage() {
                 ["Net income", "Income − Direct Costs − Operating Expenses"],
               ]}
             />
-            <H3>6. Budget vs Actual</H3>
+            <H3>7. Budget vs Actual</H3>
             <Formulas
               rows={[
                 ["closed through", "last complete calendar month of the budget year (0 before January closes)"],
                 ["YTD budget", "Σ budget(account, m) for m ≤ closed through"],
-                ["YTD actual", "Σ posted ledger lines on the account for m ≤ closed through"],
+                ["YTD actual", "Σ posted ledger lines on the account (in the selected class, if one) for m ≤ closed through"],
                 ["Variance (income)", "YTD actual − YTD budget"],
                 ["Variance (cost)", "YTD budget − YTD actual"],
                 ["Variance %", "Variance ÷ |YTD budget|"],
@@ -1069,9 +1157,9 @@ export default async function BudgetManualPage() {
             <P>
               <strong>Export Excel</strong> in the header downloads a workbook
               named{" "}
-              <em>budget-{year}-&lt;company&gt;-by-&lt;month|quarter|total&gt;.xlsx</em>{" "}
+              <em>budget-{year}-&lt;company&gt;[-&lt;class&gt;]-by-&lt;month|quarter|total&gt;.xlsx</em>{" "}
               (or <em>…-vs-actual.xlsx</em> in Budget vs Actual). It honors
-              the current Company, View, and Columns filters{" "}
+              the current Company, Class, View, and Columns filters{" "}
               <strong>and the growth rates currently on screen — defaults and
               category rates, saved or not</strong>, so the file is always
               what you were looking at.
@@ -1080,12 +1168,16 @@ export default async function BudgetManualPage() {
               head={["Sheet", "Contents"]}
               rows={[
                 [
-                  "All companies (or the selected company)",
-                  "The statement exactly as on screen, with every category expanded to its accounts as grouped outline rows (collapse them with Excel's outline buttons). Budget: amount and % pairs per column plus Total. Budget vs Actual: full-year budget, YTD budget, YTD actual, variance, variance %. On All companies this tab is consolidated. A notes line records the baseline window, growth status, and the number of approved initiatives.",
+                  "All companies (or the selected company or class)",
+                  "The statement exactly as on screen, with every category expanded to its accounts as grouped outline rows (collapse them with Excel's outline buttons). Budget: amount and % pairs per column plus Total. Budget vs Actual: full-year budget, YTD budget, YTD actual, variance, variance %. On All companies this tab is consolidated. A notes line records the class, the baseline window, growth status, and the number of approved initiatives.",
                 ],
                 [
                   "One tab per company",
-                  "On All companies only, a tab for each company follows, named after it and laid out the same way — built exactly like that company's own view on the page: its categories, its growth rates, and its approved initiatives. The company tabs add up to the All companies tab's Net income.",
+                  "On All companies only, a tab for each company follows, named after it and laid out the same way — built exactly like that company's own view on the page: its categories, its growth rates, and its approved initiatives. With a class selected, each tab is that company's budget for the class, and a company that doesn't budget the class gets no tab. The company tabs add up to the first tab's Net income.",
+                ],
+                [
+                  "One tab per class",
+                  "For a single company on All classes, a tab for each class follows the company tab — the parts the company rolls up from. The class tabs add up to the company tab.",
                 ],
                 [
                   "Assumptions",
@@ -1093,7 +1185,7 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "Initiatives",
-                  "Every initiative for the selected companies — approved first — with company, status, period (start – end month), approver, revenue, expense, and net, expanding to its account lines.",
+                  "Every initiative for the selected companies and class — approved first — with company, class, status, period (start – end month), approver, revenue, expense, and net, expanding to its account lines.",
                 ],
                 [
                   "Initiatives by month",
@@ -1101,7 +1193,7 @@ export default async function BudgetManualPage() {
                 ],
                 [
                   "Typed figures",
-                  "Only when any exist: every account-month typed over on the statement — company, account, type, month, amount. The statement tabs already include them, and their notes line counts them.",
+                  "Only when any exist: every account-month typed over on the statement for the selected companies and class — company, class, account, type, month, amount. The statement tabs already include them, and their notes line counts them.",
                 ],
               ]}
             />
@@ -1119,7 +1211,43 @@ export default async function BudgetManualPage() {
               Its statement is identical to that company&rsquo;s tab in the
               All companies workbook. Repeat for each company to produce one
               file per company. With a single company selected, Export Excel
-              already downloads that company&rsquo;s workbook.
+              already downloads that company&rsquo;s workbook. With a class
+              selected, the company file is that company&rsquo;s budget for
+              the class.
+            </P>
+            <H3>Distributing budgets by class</H3>
+            <P>
+              To hand each class owner their own budget, stay on{" "}
+              <strong>All classes</strong> and open{" "}
+              <strong>Export a class…</strong> in the header:
+            </P>
+            <Ul
+              items={[
+                <>
+                  Pick a <strong>class</strong> to download{" "}
+                  <em>budget-{year}-&lt;company&gt;-&lt;class&gt;-…xlsx</em> —
+                  the same workbook you would get by selecting that class and
+                  clicking Export Excel. It covers the companies in view (one
+                  company, or every company with a tab per company that
+                  budgets the class) and carries only that class&rsquo;s
+                  initiatives and typed figures, so it can go to the class
+                  owner as is.
+                </>,
+                <>
+                  Pick <strong>Every class — one workbook each (.zip)</strong>{" "}
+                  to download{" "}
+                  <em>budget-{year}-&lt;company&gt;-classes-…zip</em>, holding
+                  one such workbook per class, built from a single ledger read.
+                  The class workbooks add up to the company (or consolidated)
+                  workbook.
+                </>,
+              ]}
+            />
+            <P>
+              Both follow the current Company, View, and Columns filters and
+              carry the growth rates on screen, saved or not. The Assumptions
+              sheet in a class workbook shows the company rates, which apply
+              to every class.
             </P>
             <H3>Exporting initiatives by month</H3>
             <P>
@@ -1127,7 +1255,8 @@ export default async function BudgetManualPage() {
               budget, use the New initiatives panel: <strong>Export by
               month</strong> in its header downloads{" "}
               <em>initiatives-{year}-&lt;company&gt;-by-month.xlsx</em> with
-              every initiative for the selected company (or all companies),
+              every initiative for the selected company (or all companies)
+              and class,
               laid out like the <em>Initiatives by month</em> sheet above. The
               download icon on an initiative&rsquo;s row exports just that
               initiative —{" "}
@@ -1236,8 +1365,15 @@ export default async function BudgetManualPage() {
                   preview in the meeting; save when agreed.
                 </>,
                 <>
+                  <strong>Budget each class.</strong> Select each company and
+                  class in turn and have the class owner adjust the accounts
+                  they know better than history — type a month or an annual
+                  Total over the growth default. The company and consolidated
+                  budgets update with every figure.
+                </>,
+                <>
                   <strong>Collect initiatives as proposed.</strong> Have each
-                  leader enter their initiatives with a clear description and
+                  leader enter their initiatives, in their class, with a clear description and
                   realistic start and end months. Leave them proposed. The{" "}
                   <em>Proposed initiatives</em> tile becomes the agenda for the
                   approval meeting.
@@ -1252,7 +1388,9 @@ export default async function BudgetManualPage() {
                   <strong>Export the plan of record.</strong> With all growth
                   saved and initiatives decided, export All companies by Month
                   and by Total. The Assumptions sheet should read{" "}
-                  <em>Saved</em> on every line.
+                  <em>Saved</em> on every line. Then use{" "}
+                  <strong>Export a class… → Every class</strong> to produce
+                  one workbook per class for distribution.
                 </>,
                 <>
                   <strong>Review monthly.</strong> Once January closes, switch
@@ -1274,7 +1412,23 @@ export default async function BudgetManualPage() {
               />
               <Faq
                 q="I approved an initiative and the statement did not change."
-                a="Check the Company filter — an initiative only appears in the view of its own company or All companies. If the filter is right, the amounts may land in a category you have collapsed; expand it or use Expand all."
+                a="Check the Company and Class filters — an initiative only appears in the view of its own company and class, or All companies / All classes. If the filters are right, the amounts may land in a category you have collapsed; expand it or use Expand all."
+              />
+              <Faq
+                q="I changed a growth % while looking at one class and another class moved too."
+                a="Growth rates are per company and apply to every class of that company — the growth card says so when a class is selected. To change one class only, type its figures over the growth default (a month, or an account's annual Total) with that class selected, or add an initiative in that class."
+              />
+              <Faq
+                q="I can't type into the statement."
+                a="Typing needs one company, one class (unless the company's ledger has only one class), the Budget view, and the Months layout for single months. The bar above the statement says which selection is missing."
+              />
+              <Faq
+                q="A class I expect is missing from the Class row."
+                a="The row lists classes with baseline ledger activity, an initiative, or a typed figure for the companies in view. A brand-new class appears once you add an initiative for it (type its name in the initiative's Class field)."
+              />
+              <Faq
+                q="Typed figures from before classes were added now show split across classes."
+                a="Figures typed before the budget was built by class covered the whole account. When classes were introduced, each was split across the classes that account-month's baseline has activity in, in proportion to that activity, so every company and consolidated total stayed exactly the same. A month with no baseline activity went to (no class). Retype any class figure you want to set differently."
               />
               <Faq
                 q="Edit is missing on an initiative."
@@ -1332,8 +1486,8 @@ export default async function BudgetManualPage() {
           SMW Job Plans — Budget module user manual. The budget year, baseline
           window, and growth limits quoted here are read from the live
           application, so they always match the Budget page. Baseline
-          seasonality, growth, initiative spreading, and categories follow
-          the rules in sections 6–12;
+          seasonality, growth, initiative spreading, the class roll-up, and
+          categories follow the rules in sections 5–12;
           the Budget page footnote restates them in brief.
         </footer>
       </article>
@@ -1641,9 +1795,13 @@ function MockInitiativeDialog() {
           {label("Name")}
           <span className={field}>Second paint crew</span>
         </div>
-        <div className="sm:col-span-2">
+        <div>
           {label("Company")}
           <span className={field}>Precision Paint</span>
+        </div>
+        <div>
+          {label("Class")}
+          <span className={field}>Paint</span>
         </div>
         <div>
           {label("Starts")}
