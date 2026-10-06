@@ -664,7 +664,7 @@ export async function syncJobCosts(): Promise<{
   let costLines = 0;
   let invoiceCount = 0;
 
-  for (const { accessToken, realmId } of connections) {
+  for (const { accessToken, realmId, companyName } of connections) {
     const now = new Date().toISOString();
 
     // Paged read: past 1000 jobs an unpaged select truncates the map and
@@ -681,7 +681,13 @@ export async function syncJobCosts(): Promise<{
     const jobIdByQbId = new Map(
       jobRows.map((j) => [j.qb_id as string, j.id as string]),
     );
-    if (jobIdByQbId.size === 0) continue; // no jobs synced for this company yet
+    if (jobIdByQbId.size === 0) {
+      // No jobs synced for this company yet.
+      console.log(
+        `QB cost sync ${realmId} (${companyName ?? "unnamed"}): skipped — no jobs in Supabase for this company`,
+      );
+      continue;
+    }
 
     const since = `WHERE TxnDate >= '${JOB_COSTS_START_DATE}'`;
     const [
@@ -879,6 +885,9 @@ export async function syncJobCosts(): Promise<{
       }
     }
     invoiceCount += invoiceRows.length;
+    console.log(
+      `QB cost sync ${realmId} (${companyName ?? "unnamed"}): ${rows.length} cost lines + ${invoiceRows.length} invoices since ${JOB_COSTS_START_DATE}`,
+    );
   }
 
   return { costLines, invoices: invoiceCount, companies: connections.length };
