@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { z } from "zod";
 import { requireUser } from "@/lib/auth";
+import { NO_CLASS } from "@/lib/budget";
 import { createServiceClient } from "@/lib/supabase/service";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
@@ -24,6 +25,14 @@ function fail(error: { message: string }): ActionResult {
 }
 
 const firstIssue = (e: z.ZodError) => e.issues[0]?.message ?? "Invalid input";
+
+// A QuickBooks class as the budget keys it (migration 0034); blank means no
+// class.
+const classField = z
+  .string()
+  .trim()
+  .max(300, "Class name is too long")
+  .transform((v) => v || NO_CLASS);
 
 const pctField = z.coerce
   .number({ message: "Growth must be a number" })
@@ -91,9 +100,11 @@ const overridesSchema = z
     budgetYear: z.number().int(),
     realmId: z.string().min(1),
     account: z.string().trim().min(1).max(300),
+    className: classField,
     classification: z.enum(["Revenue", "Expense"]),
-    // The account's complete set of typed months; a month left out returns
-    // to its growth-based amount. Empty resets the whole account.
+    // The account × class's complete set of typed months; a month left out
+    // returns to its growth-based amount. Empty resets the account in that
+    // class.
     months: z
       .array(
         z.object({
@@ -111,9 +122,10 @@ const overridesSchema = z
     "A month can only have one amount",
   );
 
-/** Replaces one account's typed budget months (set_budget_account_overrides,
-    migration 0031). Called as each cell is committed on the budget
-    statement, so typed figures save as you go. */
+/** Replaces one account's typed budget months in one class
+    (set_budget_account_overrides, migrations 0031 / 0034). Called as each
+    cell is committed on the budget statement, so typed figures save as you
+    go. */
 export async function saveAccountOverrides(
   input: z.input<typeof overridesSchema>,
 ): Promise<ActionResult> {
@@ -128,6 +140,7 @@ export async function saveAccountOverrides(
     p_budget_year: d.budgetYear,
     p_realm_id: d.realmId,
     p_account: d.account,
+    p_class_name: d.className,
     p_classification: d.classification,
     p_months: d.months,
     p_updated_by: profile.id,
@@ -143,6 +156,7 @@ const initiativeSchema = z
     id: z.string().uuid().nullable(),
     budgetYear: z.number().int(),
     realmId: z.string().min(1, "Choose a company"),
+    className: classField,
     name: z.string().trim().min(1, "Name the initiative").max(120),
     description: z
       .string()
@@ -186,6 +200,7 @@ export async function saveInitiative(
   const header = {
     budget_year: d.budgetYear,
     realm_id: d.realmId,
+    class_name: d.className,
     name: d.name,
     description: d.description,
     start_month: d.startMonth,
@@ -243,6 +258,7 @@ export async function saveInitiative(
     details: {
       name: d.name,
       realm_id: d.realmId,
+      class_name: d.className,
       start_month: d.startMonth,
       end_month: d.endMonth,
       lines: d.lines.length,

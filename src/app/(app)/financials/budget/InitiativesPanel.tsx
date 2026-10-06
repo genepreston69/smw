@@ -7,9 +7,11 @@ import { moneyWhole } from "@/lib/format";
 import {
   INITIATIVE_STATUS_LABEL,
   MONTH_NAMES,
+  NO_CLASS,
   initiativeMonthCount,
   initiativePeriodLabel,
   initiativeTotals,
+  type BudgetClass,
   type BudgetInitiative,
   type InitiativeStatus,
 } from "@/lib/budget";
@@ -33,30 +35,48 @@ const STATUS_STYLE: Record<InitiativeStatus, string> = {
   rejected: "bg-red-50 text-red-700 border-red-200",
 };
 
-/** Initiatives by month in Excel: one initiative, or all in the company view. */
-const initiativeExportHref = (q: { id: string } | { company: string }) =>
-  `/api/export/budget-initiatives?${new URLSearchParams(q)}`;
+/** Initiatives by month in Excel: one initiative, or all in the company and
+    class view. */
+const initiativeExportHref = (
+  q: { id: string } | { company: string; cls: BudgetClass },
+) =>
+  `/api/export/budget-initiatives?${new URLSearchParams(
+    "id" in q
+      ? { id: q.id }
+      : { company: q.company, ...(q.cls !== null ? { class: q.cls } : {}) },
+  )}`;
 
 /**
- * New initiatives per company. Proposed initiatives are listed here but
- * excluded from the budget; approving one folds its account amounts into the
- * budget statement above, spread evenly over its start..end months. Approved
- * amounts and months are locked (guard triggers, migrations 0026/0029) —
- * return the initiative to proposed to edit it.
+ * New initiatives per company and class. Proposed initiatives are listed here
+ * but excluded from the budget; approving one folds its account amounts into
+ * its class's budget on the statement above, spread evenly over its
+ * start..end months. Approved amounts, months, and class are locked (guard
+ * triggers, migrations 0026/0029/0034) — return the initiative to proposed
+ * to edit it.
  */
 export function InitiativesPanel({
   budgetYear,
   company,
+  cls,
+  showClass,
   initiatives,
   companies,
   accountsByRealm,
+  classesByRealm,
 }: {
   budgetYear: number;
   /** Company filter on the page (realm id or "all"), for Export by month. */
   company: string;
+  /** Class filter on the page (null = All classes), for Export by month and
+      as the new initiative's default class. */
+  cls: BudgetClass;
+  /** Show the Class column (any company in view uses classes). */
+  showClass: boolean;
   initiatives: BudgetInitiative[];
   companies: { realmId: string; name: string }[];
   accountsByRealm: Record<string, InitiativeAccount[]>;
+  /** Each company's known classes, suggested in the dialog. */
+  classesByRealm: Record<string, string[]>;
 }) {
   const router = useRouter();
   const [editing, setEditing] = useState<BudgetInitiative | null>(null);
@@ -87,7 +107,7 @@ export function InitiativesPanel({
         </h2>
         {sorted.length > 0 && (
           <a
-            href={initiativeExportHref({ company })}
+            href={initiativeExportHref({ company, cls })}
             title="Every initiative below spread by month, led by what the approved ones add to the budget"
             className={buttonCls("secondary", "sm")}
           >
@@ -99,8 +119,8 @@ export function InitiativesPanel({
       {error && <p className="px-4 pt-2 text-sm text-bad-600">{error}</p>}
       {sorted.length === 0 ? (
         <p className="px-4 py-6 text-center text-sm text-ink-600">
-          No initiatives yet. Use New Initiative (top right of the growth assumptions) to add expected revenue and
-          expenses for a company; it joins the budget once approved.
+          No initiatives{cls !== null ? ` in ${cls}` : ""} yet. Use New Initiative (top right of the growth assumptions) to add expected revenue and
+          expenses for a company and class; it joins the budget once approved.
         </p>
       ) : (
         <Table
@@ -108,6 +128,7 @@ export function InitiativesPanel({
             <tr>
               <Th>Initiative</Th>
               <Th>Company</Th>
+              {showClass && <Th>Class</Th>}
               <Th>Period</Th>
               <Th>Status</Th>
               <Th right>Revenue</Th>
@@ -146,6 +167,13 @@ export function InitiativesPanel({
                   <td className="px-4 py-2 text-ink-600">
                     {companyName.get(i.realm_id) ?? i.realm_id}
                   </td>
+                  {showClass && (
+                    <td
+                      className={`px-4 py-2 ${i.class_name === NO_CLASS ? "text-ink-400" : "text-ink-600"}`}
+                    >
+                      {i.class_name}
+                    </td>
+                  )}
                   <td className="px-4 py-2 whitespace-nowrap text-ink-600">
                     {initiativePeriodLabel(i, budgetYear)}
                   </td>
@@ -234,7 +262,7 @@ export function InitiativesPanel({
                 </tr>
                 {isOpen && (
                   <tr className="bg-surface/30">
-                    <td colSpan={8} className="px-4 py-2 pl-10">
+                    <td colSpan={showClass ? 9 : 8} className="px-4 py-2 pl-10">
                       {i.description && (
                         <p className="mb-2 text-sm text-ink-600">{i.description}</p>
                       )}
@@ -269,6 +297,8 @@ export function InitiativesPanel({
           initial={editing}
           companies={companies}
           accountsByRealm={accountsByRealm}
+          classesByRealm={classesByRealm}
+          defaultClass={cls}
           onClose={() => setEditing(null)}
           onSaved={() => {
             setEditing(null);
@@ -288,10 +318,16 @@ export function NewInitiativeButton({
   budgetYear,
   companies,
   accountsByRealm,
+  classesByRealm,
+  defaultClass,
 }: {
   budgetYear: number;
   companies: { realmId: string; name: string }[];
   accountsByRealm: Record<string, InitiativeAccount[]>;
+  /** Each company's known classes, suggested in the dialog. */
+  classesByRealm: Record<string, string[]>;
+  /** Class the dialog starts on (the page's class filter). */
+  defaultClass: BudgetClass;
 }) {
   const router = useRouter();
   const [open, setOpen] = useState(false);
@@ -312,6 +348,8 @@ export function NewInitiativeButton({
           initial={null}
           companies={companies}
           accountsByRealm={accountsByRealm}
+          classesByRealm={classesByRealm}
+          defaultClass={defaultClass}
           onClose={() => setOpen(false)}
           onSaved={() => {
             setOpen(false);
@@ -328,6 +366,8 @@ function InitiativeDialog({
   initial,
   companies,
   accountsByRealm,
+  classesByRealm,
+  defaultClass,
   onClose,
   onSaved,
 }: {
@@ -335,10 +375,18 @@ function InitiativeDialog({
   initial: BudgetInitiative | null;
   companies: { realmId: string; name: string }[];
   accountsByRealm: Record<string, InitiativeAccount[]>;
+  classesByRealm: Record<string, string[]>;
+  defaultClass: BudgetClass;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const [realmId, setRealmId] = useState(initial?.realm_id ?? companies[0]?.realmId ?? "");
+  // Blank in the field means no class (saved as NO_CLASS).
+  const [className, setClassName] = useState(() => {
+    const c = initial ? initial.class_name : defaultClass;
+    return c === null || c === NO_CLASS ? "" : c;
+  });
+  const classOptions = (classesByRealm[realmId] ?? []).filter((c) => c !== NO_CLASS);
   const [name, setName] = useState(initial?.name ?? "");
   const [description, setDescription] = useState(initial?.description ?? "");
   const [startMonth, setStartMonth] = useState(initial?.start_month ?? 1);
@@ -394,6 +442,7 @@ function InitiativeDialog({
         id: initial?.id ?? null,
         budgetYear,
         realmId,
+        className,
         name,
         description,
         startMonth,
@@ -496,7 +545,7 @@ function InitiativeDialog({
               autoFocus
             />
           </label>
-          <label className="block sm:col-span-2">
+          <label className="block">
             {label("Company")}
             <select
               value={realmId}
@@ -512,6 +561,25 @@ function InitiativeDialog({
                 </option>
               ))}
             </select>
+          </label>
+          <label className="block">
+            {label("Class")}
+            {/* QuickBooks classes this company already budgets are suggested;
+                a new class can be typed. Blank = no class. */}
+            <input
+              type="text"
+              value={className}
+              maxLength={300}
+              list="initiative-class-options"
+              placeholder={NO_CLASS}
+              onChange={(e) => setClassName(e.target.value)}
+              className={fieldCls}
+            />
+            <datalist id="initiative-class-options">
+              {classOptions.map((c) => (
+                <option key={c} value={c} />
+              ))}
+            </datalist>
           </label>
           <label className="block">
             {label("Starts")}

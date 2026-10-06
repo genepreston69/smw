@@ -2,6 +2,7 @@ import type ExcelJS from "exceljs";
 import {
   INITIATIVE_STATUS_LABEL,
   MONTH_NAMES,
+  NO_CLASS,
   initiativeMonthCount,
   initiativePeriodLabel,
   spreadInitiativeLine,
@@ -26,7 +27,8 @@ export const sortInitiativesForExport = (initiatives: readonly BudgetInitiative[
 
 /**
  * Writes initiatives onto `sheet` with one column per budget month (Jan–Dec)
- * plus Total. Each initiative is a block — its company, status, and run, then
+ * plus Total. Each initiative is a block — its company, class (when it has
+ * one), status, and run, then
  * its revenue and expense accounts (grouped outline rows), section totals,
  * and Net — with months outside its run left blank. With `summary`, an
  * "In budget" block first totals the approved initiatives by month: exactly
@@ -109,6 +111,7 @@ export function writeInitiativesByMonth(
     const months = initiativeMonthCount(i);
     const meta = [
       opts.companyName(i.realm_id),
+      i.class_name !== NO_CLASS ? `Class ${i.class_name}` : "",
       INITIATIVE_STATUS_LABEL[i.status],
       `${initiativePeriodLabel(i, year)} (${months} month${months === 1 ? "" : "s"})`,
       i.status === "approved" && i.approved_by_name ? `Approved by ${i.approved_by_name}` : "",

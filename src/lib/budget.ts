@@ -5,6 +5,11 @@
 // admin typed over replacing its growth-based amount (migration 0031), plus
 // approved new initiatives (migrations 0026, 0029).
 //
+// The budget is built per QuickBooks class and rolls up (migration 0034):
+// every baseline cell, typed figure, and initiative belongs to one class, a
+// company's budget is the sum of its classes, and All companies is the sum of
+// the companies. Growth rates are per company and apply to every class.
+//
 // Everything here is pure: the page fetches gl_pivot cells and the budget
 // tables, and these helpers re-key them into synthetic PivotCells that feed
 // the same buildCategoryStatement as the Income Statement — so the budget
@@ -46,6 +51,35 @@ export const MONTH_NAMES = [
   "Jan", "Feb", "Mar", "Apr", "May", "Jun",
   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
+
+/** The class key for ledger lines with no QuickBooks class — gl_pivot's own
+    key for them (migration 0009), so budget classes line up with the
+    Financials pivot's Class dimension. */
+export const NO_CLASS = "(no class)";
+
+/** A budget input cell: one account × month of ledger activity in one
+    QuickBooks class (gl_pivot's shape plus the class). */
+export interface BudgetCell extends PivotCell {
+  /** QuickBooks class, keyed as gl_pivot keys it (NO_CLASS when none). */
+  class_name: string;
+}
+
+/** Class filter: one class, or null for every class (the company roll-up). */
+export type BudgetClass = string | null;
+
+/** Keeps the rows of one class; a null class keeps everything. */
+export const inBudgetClass =
+  (cls: BudgetClass) =>
+  (x: { class_name: string }): boolean =>
+    cls === null || x.class_name === cls;
+
+/** Class order everywhere: alphabetical, NO_CLASS last. */
+export const compareClasses = (a: string, b: string): number =>
+  a === b ? 0 : a === NO_CLASS ? 1 : b === NO_CLASS ? -1 : a.localeCompare(b);
+
+/** Distinct classes in compareClasses order. */
+export const sortClasses = (classes: Iterable<string>): string[] =>
+  [...new Set(classes)].sort(compareClasses);
 
 /** Baseline window: the twelve months ending June 30 of the prior year. */
 export function baselineRange(year: number): { from: string; to: string } {
@@ -165,6 +199,8 @@ export interface BudgetInitiativeLine {
 export interface BudgetInitiative {
   id: string;
   realm_id: string;
+  /** QuickBooks class the initiative budgets (NO_CLASS when none). */
+  class_name: string;
   name: string;
   description: string | null;
   /** First and last budget-year month (1–12) the amounts are spread over. */
@@ -245,21 +281,26 @@ export function budgetColLabel(colDim: BudgetColDim, key: string): string {
 /** Maps a budget month (1–12) to the output column key; null drops the month. */
 export type MonthToCol = (month: number) => string | null;
 
-/** A budget figure typed over one account-month (migration 0031). It
-    replaces that month's growth-based amount, so growth edits no longer move
-    it; approved initiatives still add on top. */
+/** A budget figure typed over one account × class × month (migrations 0031,
+    0034). It replaces that class's growth-based amount for the month, so
+    growth edits no longer move it; approved initiatives still add on top. */
 export interface BudgetOverride {
   realm_id: string;
   /** Account full name, as the statement's account rows show it. */
   account: string;
+  /** QuickBooks class the figure budgets (NO_CLASS when none). */
+  class_name: string;
   classification: "Revenue" | "Expense";
   /** Budget month, 1–12. */
   month: number;
   amount: number;
 }
 
-/** One account's budget per month before initiatives (index 0 = January). */
+/** One account's budget per month in one class, before initiatives (index
+    0 = January). */
 export interface AccountMonths {
+  account: string;
+  class_name: string;
   classification: string | null;
   account_type: string | null;
   months: number[];
@@ -272,24 +313,37 @@ export interface AccountMonths {
 
 const twelve = <T,>(v: T): T[] => Array.from({ length: 12 }, () => v);
 
+/** accountBaseMonths' key for one account in one class. */
+export const accountClassKey = (account: string, cls: string) => `${cls}\u0000${account}`;
+
 /**
- * Each account's budget per month before initiatives: its baseline month
- * (the same calendar month a year earlier, so seasonality carries forward —
- * Jul 2025 → Jul 2027, Jan 2026 → Jan 2027) grown at its category's rate,
- * looked up in the realm's own account → category map — except months typed
- * over, which take the typed figure. `overrides` are one realm's.
+ * Each account's budget per class and month before initiatives: its
+ * baseline month in that class (the same calendar month a year earlier, so
+ * seasonality carries forward — Jul 2025 → Jul 2027, Jan 2026 → Jan 2027)
+ * grown at its category's rate, looked up in the realm's own account →
+ * category map — except months typed over, which take the typed figure for
+ * that class only. Keyed by accountClassKey. `cells` and `overrides` are one
+ * realm's.
  */
 export function accountBaseMonths(
-  cells: PivotCell[],
+  cells: readonly BudgetCell[],
   assumption: BudgetAssumption | undefined,
   categoryByAccount: ReadonlyMap<string, string>,
   overrides: readonly BudgetOverride[] = [],
 ): Map<string, AccountMonths> {
   const out = new Map<string, AccountMonths>();
-  const entry = (key: string, classification: string | null, accountType: string | null) => {
+  const entry = (
+    account: string,
+    cls: string,
+    classification: string | null,
+    accountType: string | null,
+  ) => {
+    const key = accountClassKey(account, cls);
     let a = out.get(key);
     if (!a) {
       a = {
+        account,
+        class_name: cls,
         classification,
         account_type: accountType,
         months: twelve(0),
@@ -303,7 +357,7 @@ export function accountBaseMonths(
   for (const c of cells) {
     const m = Number(c.col_key.slice(5, 7)) - 1;
     if (!(m >= 0 && m < 12)) continue;
-    const a = entry(c.row_key, c.classification, c.account_type);
+    const a = entry(c.row_key, c.class_name, c.classification, c.account_type);
     const factor =
       1 + growthPct(assumption, c.classification, categoryByAccount.get(c.row_key)) / 100;
     a.months[m] += Number(c.amount) * factor;
@@ -312,7 +366,7 @@ export function accountBaseMonths(
   for (const o of overrides) {
     const m = o.month - 1;
     if (!(m >= 0 && m < 12)) continue;
-    const a = entry(o.account, o.classification, null);
+    const a = entry(o.account, o.class_name, o.classification, null);
     a.months[m] = o.amount;
     a.present[m] = true;
     a.typed[m] = true;
@@ -321,20 +375,20 @@ export function accountBaseMonths(
 }
 
 /**
- * Baseline account cells (row_dim account, col_dim month, one realm) as
- * budget cells: grown by that realm's assumptions, typed months replacing
- * the growth-based amount (accountBaseMonths), and moved onto the budget
- * columns.
+ * Baseline account cells (account × month × class, one realm) as budget
+ * cells: grown by that realm's assumptions, typed months replacing the
+ * growth-based amount of their class (accountBaseMonths), and moved onto the
+ * budget columns. Classes merge into their account's row.
  */
 export function growBaselineCells(
-  cells: PivotCell[],
+  cells: readonly BudgetCell[],
   assumption: BudgetAssumption | undefined,
   categoryByAccount: ReadonlyMap<string, string>,
   toCol: MonthToCol,
   overrides: readonly BudgetOverride[] = [],
 ): PivotCell[] {
   const out: PivotCell[] = [];
-  for (const [row_key, a] of accountBaseMonths(cells, assumption, categoryByAccount, overrides)) {
+  for (const a of accountBaseMonths(cells, assumption, categoryByAccount, overrides).values()) {
     for (let m = 0; m < 12; m++) {
       if (!a.present[m]) continue;
       const col = toCol(m + 1);
@@ -342,7 +396,7 @@ export function growBaselineCells(
       out.push({
         classification: a.classification,
         account_type: a.account_type,
-        row_key,
+        row_key: a.account,
         col_key: col,
         amount: a.months[m],
         line_count: 0,
@@ -410,7 +464,7 @@ export function initiativeCells(
 /** Re-key actual gl_pivot month cells (budget year) onto one column, keeping
     months up to `throughMonth`. */
 export function actualCells(
-  cells: PivotCell[],
+  cells: readonly PivotCell[],
   colKey: string,
   throughMonth: number,
 ): PivotCell[] {
@@ -424,20 +478,26 @@ export interface BudgetInputs {
   year: number;
   colDim: BudgetColDim;
   view: BudgetView;
+  /** One class, or null for every class (inputs of other classes are
+      ignored, so callers may pass every class's inputs). */
+  cls: BudgetClass;
   /** Budget-year months already closed (0 = none). */
   closedThrough: number;
   companies: { realmId: string; name: string }[];
   assumptions: Record<string, BudgetAssumption>;
-  /** Baseline account × month cells, one array per company (companies order). */
-  baselineByRealm: PivotCell[][];
+  /** Baseline account × month × class cells, one array per company
+      (companies order). */
+  baselineByRealm: BudgetCell[][];
   /** Each company's own account → category map (companies order): growth
       rates follow the company's categories, while categoryByAccount below
       only decides where a row shows on a consolidated statement. */
   realmCategories: ReadonlyMap<string, string>[];
-  /** YTD actual account × month cells, all companies (null = not loaded). */
-  actuals: PivotCell[] | null;
+  /** YTD actual account × month × class cells, all companies (null = not
+      loaded). */
+  actuals: BudgetCell[] | null;
   approved: BudgetInitiative[];
-  /** Account-months typed over, all companies (migration 0031). */
+  /** Account × class months typed over, all companies (migrations 0031,
+      0034). */
   overrides: readonly BudgetOverride[];
   categoryByAccount: ReadonlyMap<string, string>;
 }
@@ -456,17 +516,18 @@ export interface AssembledBudget {
 export function assembleBudget(i: BudgetInputs): AssembledBudget {
   const noCategories: ReadonlyMap<string, string> = new Map();
   const categoriesOf = (idx: number) => i.realmCategories[idx] ?? noCategories;
+  const keep = inBudgetClass(i.cls);
   const budgetCells = (toCol: MonthToCol): PivotCell[] =>
     i.companies.flatMap((c, idx) => [
       ...growBaselineCells(
-        i.baselineByRealm[idx] ?? [],
+        (i.baselineByRealm[idx] ?? []).filter(keep),
         i.assumptions[c.realmId],
         categoriesOf(idx),
         toCol,
-        i.overrides.filter((o) => o.realm_id === c.realmId),
+        i.overrides.filter((o) => o.realm_id === c.realmId && keep(o)),
       ),
       ...initiativeCells(
-        i.approved.filter((x) => x.realm_id === c.realmId),
+        i.approved.filter((x) => x.realm_id === c.realmId && keep(x)),
         toCol,
       ),
     ]);
@@ -481,7 +542,11 @@ export function assembleBudget(i: BudgetInputs): AssembledBudget {
     const fy: MonthToCol = () => "fy";
     const ytd: MonthToCol = (m) => (m <= i.closedThrough ? "budget" : null);
     variance = buildCategoryStatement(
-      [...budgetCells(fy), ...budgetCells(ytd), ...actualCells(i.actuals, "actual", i.closedThrough)],
+      [
+        ...budgetCells(fy),
+        ...budgetCells(ytd),
+        ...actualCells(i.actuals.filter(keep), "actual", i.closedThrough),
+      ],
       i.categoryByAccount,
     );
   }
@@ -496,26 +561,31 @@ export function closedMonthsOf(year: number, latestMonth: string): number {
 }
 
 /**
- * Export URL for the budget workbook. Carries every company's rates on screen
- * — saved or not — so the file matches what's on screen: its defaults as
+ * Export URL for the budget workbook — or, with `perClass`, a zip holding one
+ * workbook per class (/api/export/budget-classes). Carries the class filter
+ * (`class`, absent for every class) and every company's rates on screen —
+ * saved or not — so the file matches what's on screen: its defaults as
  * `growth=<realm>:<revenue>:<expense>` and each category rate as
  * `cgrowth=<realm>:<R|E>:<pct>:<category>` (category last, since a label may
  * contain colons).
  */
 export function budgetExportHref(s: {
   company: string;
+  cls: BudgetClass;
   cols: BudgetColDim;
   view: BudgetView;
   assumptions: BudgetAssumption[];
+  perClass?: boolean;
 }): string {
   const params = new URLSearchParams({ company: s.company, cols: s.cols, view: s.view });
+  if (s.cls !== null) params.set("class", s.cls);
   for (const a of s.assumptions) {
     params.append("growth", `${a.realm_id}:${a.revenue_growth_pct}:${a.expense_growth_pct}`);
     for (const cls of ["Revenue", "Expense"] as const)
       for (const [category, pct] of Object.entries(a.category_growth[cls]))
         params.append("cgrowth", `${a.realm_id}:${cls[0]}:${pct}:${category}`);
   }
-  return `/api/export/budget?${params}`;
+  return `/api/export/${s.perClass ? "budget-classes" : "budget"}?${params}`;
 }
 
 const validPct = (n: number) => Number.isFinite(n) && n >= -100 && n <= 1000;

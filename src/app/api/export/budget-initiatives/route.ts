@@ -8,8 +8,9 @@ import { writeInitiativesByMonth } from "@/lib/budgetInitiativeSheet";
 
 // Excel export of budget initiatives by month (/financials/budget's New
 // initiatives panel). `?id=<initiative>` exports that one initiative;
-// otherwise `?company=<realm|all>` exports every initiative for the companies
-// in view, led by what the approved ones add to the budget each month. Reads
+// otherwise `?company=<realm|all>` (and `class=<class>` when the page shows
+// one class) exports every initiative in view, led by what the approved ones
+// add to the budget each month. Reads
 // only the initiative tables — no ledger — so it's quick; the spread is the
 // budget's own (spreadInitiativeLine), so the file matches the statement.
 export async function GET(request: Request) {
@@ -51,8 +52,10 @@ export async function GET(request: Request) {
       : "all";
   const realms = id || company === "all" ? [...companyByRealm.keys()] : [company];
   const year = BUDGET_YEAR;
+  const cls = id ? null : sp.get("class");
 
   let initiatives = await loadInitiatives(db, year, realms);
+  if (cls !== null) initiatives = initiatives.filter((i) => i.class_name === cls);
   if (id) {
     initiatives = initiatives.filter((i) => i.id === id);
     if (initiatives.length === 0) {
@@ -61,7 +64,9 @@ export async function GET(request: Request) {
   }
 
   const single = id ? initiatives[0] : null;
-  const scopeLabel = company === "all" ? "All companies" : companyName(company);
+  const scopeLabel =
+    (company === "all" ? "All companies" : companyName(company)) +
+    (cls !== null ? ` — ${cls}` : "");
   const workbook = new ExcelJS.Workbook();
   writeInitiativesByMonth(workbook.addWorksheet("By month"), initiatives, {
     year,
@@ -76,7 +81,7 @@ export async function GET(request: Request) {
     s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 60) || "initiative";
   const filename = single
     ? `initiative-${year}-${slug(single.name)}-by-month.xlsx`
-    : `initiatives-${year}-${company === "all" ? "all-companies" : company}-by-month.xlsx`;
+    : `initiatives-${year}-${company === "all" ? "all-companies" : company}${cls !== null ? `-${slug(cls)}` : ""}-by-month.xlsx`;
   const buffer = await workbook.xlsx.writeBuffer();
   return new Response(Buffer.from(buffer), {
     headers: {

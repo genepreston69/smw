@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Building2, Download, Landmark, Loader2 } from "lucide-react";
+import { Building2, Download, Landmark, Layers, Loader2 } from "lucide-react";
 import { moneyWhole } from "@/lib/format";
-import type { PivotCell } from "@/lib/financials";
 import {
   MONTH_NAMES,
+  NO_CLASS,
   accountBaseMonths,
   assembleBudget,
   budgetColLabel,
@@ -13,7 +13,10 @@ import {
   respreadTotal,
   spreadInitiativeLine,
   zeroAssumption,
+  type AccountMonths,
   type BudgetAssumption,
+  type BudgetCell,
+  type BudgetClass,
   type BudgetColDim,
   type BudgetInitiative,
   type BudgetOverride,
@@ -32,9 +35,10 @@ import { saveAccountOverrides } from "./actions";
  * initiatives, and the saved growth assumptions — and the budget
  * statement is assembled here, so editing a growth % re-prices every row
  * immediately; AssumptionsEditor then asks to save or revert. With one
- * company selected, account cells can also be typed over (a month, or the
- * annual Total re-spread in the months' current shape); those figures save
- * as each cell is committed (saveAccountOverrides). Same
+ * company and one class selected, account cells can also be typed over (a
+ * month, or the annual Total re-spread in the months' current shape); those
+ * figures save per class as each cell is committed (saveAccountOverrides).
+ * Same
  * helpers and statement builder as before (src/lib/budget.ts,
  * buildCategoryStatement), so the numbers are identical to a fresh load.
  */
@@ -44,6 +48,9 @@ export function BudgetWorkspace({
   headerLinks,
   filters,
   company,
+  cls,
+  classes,
+  classesByRealm,
   year,
   colDim,
   view,
@@ -71,6 +78,12 @@ export function BudgetWorkspace({
   filters: React.ReactNode;
   /** Selected company: realm id or "all". */
   company: string;
+  /** Selected class, or null for All classes (the roll-up). */
+  cls: BudgetClass;
+  /** Every class the selected companies budget, sorted (NO_CLASS last). */
+  classes: string[];
+  /** The classes each selected company budgets. */
+  classesByRealm: Record<string, string[]>;
   year: number;
   colDim: BudgetColDim;
   view: BudgetView;
@@ -78,12 +91,14 @@ export function BudgetWorkspace({
   closedThrough: number;
   companies: { realmId: string; name: string }[];
   initialAssumptions: BudgetAssumption[];
-  /** Saved typed account-months for the selected companies. */
+  /** Saved typed account-months for the selected companies and class. */
   initialOverrides: BudgetOverride[];
-  /** Baseline account × month cells, one array per company (companies order). */
-  baselineByRealm: PivotCell[][];
-  /** YTD actual account × month cells, all companies (null = not loaded). */
-  actuals: PivotCell[] | null;
+  /** Baseline account × month × class cells, one array per company
+      (companies order). */
+  baselineByRealm: BudgetCell[][];
+  /** YTD actual account × month × class cells, all companies (null = not
+      loaded). */
+  actuals: BudgetCell[] | null;
   approved: BudgetInitiative[];
   categoryEntries: [string, string][];
   /** Each company's own account → category entries (companies order). */
@@ -139,6 +154,7 @@ export function BudgetWorkspace({
         year,
         colDim,
         view,
+        cls,
         closedThrough,
         companies,
         assumptions,
@@ -161,33 +177,72 @@ export function BudgetWorkspace({
       year,
       colDim,
       view,
+      cls,
       closedThrough,
     ],
   );
 
-  // The export carries the growth rates on screen (saved or not), so the
-  // file matches what the user is looking at.
+  // The export carries the class and the growth rates on screen (saved or
+  // not), so the file matches what the user is looking at.
+  const onScreenRates = companies.map(
+    (c) => assumptions[c.realmId] ?? zeroAssumption(c.realmId),
+  );
   const exportHref = budgetExportHref({
     company,
+    cls,
     cols: colDim,
     view,
-    assumptions: companies.map((c) => assumptions[c.realmId] ?? zeroAssumption(c.realmId)),
+    assumptions: onScreenRates,
   });
+
+  // A download link rather than navigation, so an error response can't
+  // replace the page and lose unsaved growth edits.
+  const download = (href: string) => {
+    const a = document.createElement("a");
+    a.href = href;
+    a.download = "";
+    a.click();
+  };
 
   // Company workbook: on All companies, one company's budget as its own file
   // — the same workbook that company's own view exports, carrying its rates
-  // on screen. A download link rather than navigation, so an error response
-  // can't replace the page and lose unsaved growth edits.
-  const exportCompany = (realmId: string) => {
-    const a = document.createElement("a");
-    a.href = budgetExportHref({
-      company: realmId,
-      cols: colDim,
-      view,
-      assumptions: [assumptions[realmId] ?? zeroAssumption(realmId)],
-    });
-    a.download = "";
-    a.click();
+  // on screen and the class in view. With a class selected, only companies
+  // that budget it are offered (another company's file would have nothing
+  // in that class).
+  const exportableCompanies =
+    cls === null
+      ? companies
+      : companies.filter((c) => (classesByRealm[c.realmId] ?? []).includes(cls));
+  const exportCompany = (realmId: string) =>
+    download(
+      budgetExportHref({
+        company: realmId,
+        cls,
+        cols: colDim,
+        view,
+        assumptions: [assumptions[realmId] ?? zeroAssumption(realmId)],
+      }),
+    );
+
+  // Class workbooks, for handing each class its budget: on All classes, one
+  // class's budget for the companies in view as its own file — the same
+  // workbook that class's own view exports — or every class at once as a
+  // zip of those workbooks. Picker values are "zip" or a class's index, so
+  // no class name can collide with the zip option.
+  const exportClass = (value: string) => {
+    const perClass = value === "zip";
+    const one = perClass ? null : (classes[Number(value)] ?? null);
+    if (!perClass && one === null) return;
+    download(
+      budgetExportHref({
+        company,
+        cls: one,
+        cols: colDim,
+        view,
+        assumptions: onScreenRates,
+        perClass,
+      }),
+    );
   };
 
   const colLabels = Object.fromEntries(
@@ -195,40 +250,48 @@ export function BudgetWorkspace({
   );
   const hasBaseline = baselineByRealm.some((c) => c.length > 0);
 
-  /* ---- Typing over account cells (one company, Budget view) ---------- */
+  /* ---- Typing over account cells (one company, one class) ------------ */
 
   // On All companies an account row merges every company's account of that
-  // name, so a typed figure would have no single home: editing needs one
-  // company.
+  // name, and on All classes every class's, so a typed figure would have no
+  // single home: editing needs one company and one class — the selected
+  // class, or the company's only class.
   const editRealm =
     company !== "all" && companies.length === 1 && view === "budget"
       ? companies[0].realmId
       : null;
+  const editClass: string | null =
+    editRealm === null ? null : (cls ?? (classes.length <= 1 ? (classes[0] ?? NO_CLASS) : null));
+  const canEdit = editRealm !== null && editClass !== null;
   const realmOverrides = useMemo(
-    () => (editRealm ? overrides.filter((o) => o.realm_id === editRealm) : []),
-    [overrides, editRealm],
-  );
-  // Each account's budget per month before initiatives — what a field opens
-  // with, and the shape a typed Total re-spreads in.
-  const baseMonths = useMemo(
     () =>
-      editRealm
-        ? accountBaseMonths(
-            baselineByRealm[0] ?? [],
-            assumptions[editRealm],
-            realmCategories[0] ?? new Map(),
-            realmOverrides,
-          )
-        : new Map(),
-    [editRealm, baselineByRealm, assumptions, realmCategories, realmOverrides],
+      editRealm && editClass !== null
+        ? overrides.filter((o) => o.realm_id === editRealm && o.class_name === editClass)
+        : [],
+    [overrides, editRealm, editClass],
   );
-  // Approved initiatives per account and month, shown in cell tooltips (they
-  // add on top of a typed figure).
+  // Each account's budget per month in the class before initiatives — what a
+  // field opens with, and the shape a typed Total re-spreads in. Keyed by
+  // account (one class).
+  const baseMonths = useMemo(() => {
+    const out = new Map<string, AccountMonths>();
+    if (!editRealm || editClass === null) return out;
+    const grown = accountBaseMonths(
+      (baselineByRealm[0] ?? []).filter((c) => c.class_name === editClass),
+      assumptions[editRealm],
+      realmCategories[0] ?? new Map(),
+      realmOverrides,
+    );
+    for (const a of grown.values()) out.set(a.account, a);
+    return out;
+  }, [editRealm, editClass, baselineByRealm, assumptions, realmCategories, realmOverrides]);
+  // Approved initiatives per account and month in the class, shown in cell
+  // tooltips (they add on top of a typed figure).
   const initiativeMonths = useMemo(() => {
     const out = new Map<string, { classification: "Revenue" | "Expense"; months: number[] }>();
-    if (!editRealm) return out;
+    if (!editRealm || editClass === null) return out;
     for (const i of approved) {
-      if (i.realm_id !== editRealm) continue;
+      if (i.realm_id !== editRealm || i.class_name !== editClass) continue;
       for (const l of i.lines) {
         let a = out.get(l.account_name);
         if (!a) out.set(l.account_name, (a = { classification: l.classification, months: Array(12).fill(0) }));
@@ -236,7 +299,7 @@ export function BudgetWorkspace({
       }
     }
     return out;
-  }, [editRealm, approved]);
+  }, [editRealm, editClass, approved]);
 
   // Column key → budget month (1–12), "total", or null (a quarter: not
   // editable).
@@ -246,7 +309,7 @@ export function BudgetWorkspace({
   };
 
   const commitCell = (account: string, colKey: string, value: number | null) => {
-    if (!editRealm) return;
+    if (!editRealm || editClass === null) return;
     const at = monthOf(colKey);
     if (at === null) return;
     const base = baseMonths.get(account);
@@ -255,7 +318,8 @@ export function BudgetWorkspace({
         ? "Revenue"
         : "Expense";
     const all = overridesRef.current;
-    const isThis = (o: BudgetOverride) => o.realm_id === editRealm && o.account === account;
+    const isThis = (o: BudgetOverride) =>
+      o.realm_id === editRealm && o.account === account && o.class_name === editClass;
     const previous = all.filter(isThis);
     const typed = new Map(previous.map((o) => [o.month, o.amount]));
     if (at === "total") {
@@ -269,6 +333,7 @@ export function BudgetWorkspace({
     const next: BudgetOverride[] = [...typed].map(([month, amount]) => ({
       realm_id: editRealm,
       account,
+      class_name: editClass,
       classification,
       month,
       amount,
@@ -277,12 +342,14 @@ export function BudgetWorkspace({
     setSaveError(null);
     setSaving((n) => n + 1);
     const seq = ++commitSeq.current;
-    latestCommit.current.set(account, seq);
+    const commitKey = `${editClass}\u0000${account}`;
+    latestCommit.current.set(commitKey, seq);
     saveQueue.current = saveQueue.current.then(async () => {
       const result = await saveAccountOverrides({
         budgetYear: year,
         realmId: editRealm,
         account,
+        className: editClass,
         classification,
         months: next.map(({ month, amount }) => ({ month, amount })),
       }).catch((e: unknown) => ({
@@ -292,7 +359,7 @@ export function BudgetWorkspace({
       if (!result.ok) {
         // Put the account back the way it was before this edit — unless a
         // newer edit to it is queued — and say why.
-        if (latestCommit.current.get(account) === seq)
+        if (latestCommit.current.get(commitKey) === seq)
           setOverrides([
             ...overridesRef.current.filter((o) => !isThis(o)),
             ...previous,
@@ -303,7 +370,7 @@ export function BudgetWorkspace({
     });
   };
 
-  const cellEditor: StatementCellEditor | undefined = editRealm
+  const cellEditor: StatementCellEditor | undefined = canEdit
     ? {
         editable: (account, colKey) =>
           monthOf(colKey) !== null &&
@@ -339,11 +406,12 @@ export function BudgetWorkspace({
     : undefined;
 
   const typedCount = realmOverrides.length;
+  const classNote = editClass !== null && classes.length > 1 ? ` in ${editClass}` : "";
   const clearTyped = () => {
-    if (!editRealm) return;
+    if (!editRealm || editClass === null) return;
     if (
       !window.confirm(
-        `Clear all ${typedCount} typed figure${typedCount === 1 ? "" : "s"} for this company? Every account returns to its growth default.`,
+        `Clear all ${typedCount} typed figure${typedCount === 1 ? "" : "s"} for this company${classNote}? Every account returns to its growth default.`,
       )
     )
       return;
@@ -357,12 +425,12 @@ export function BudgetWorkspace({
         title={title}
         subtitle={subtitle}
         action={
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <a href={exportHref} className={buttonCls("secondary")}>
               <Download size={15} strokeWidth={2} />
               Export Excel
             </a>
-            {company === "all" && companies.length > 1 && (
+            {company === "all" && companies.length > 1 && exportableCompanies.length > 0 && (
               <label
                 className={`${buttonCls("secondary")} relative cursor-pointer`}
                 title="Download one company's budget as its own Excel workbook"
@@ -383,9 +451,37 @@ export function BudgetWorkspace({
                   <option value="" disabled>
                     Choose a company
                   </option>
-                  {companies.map((c) => (
+                  {exportableCompanies.map((c) => (
                     <option key={c.realmId} value={c.realmId}>
                       {c.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
+            {cls === null && classes.length > 1 && (
+              <label
+                className={`${buttonCls("secondary")} relative cursor-pointer`}
+                title="Download one class's budget as its own Excel workbook, or every class's as a zip — to hand each class its budget"
+              >
+                <Layers size={15} strokeWidth={2} />
+                Export a class…
+                {/* Same invisible-select pattern as Export a company…. */}
+                <select
+                  value=""
+                  onChange={(e) => {
+                    if (e.target.value) exportClass(e.target.value);
+                  }}
+                  aria-label="Export one class's budget to Excel"
+                  className="absolute inset-0 cursor-pointer opacity-0"
+                >
+                  <option value="" disabled>
+                    Choose a class
+                  </option>
+                  <option value="zip">Every class — one workbook each (.zip)</option>
+                  {classes.map((c, i) => (
+                    <option key={c} value={String(i)}>
+                      {c}
                     </option>
                   ))}
                 </select>
@@ -400,6 +496,11 @@ export function BudgetWorkspace({
       <AssumptionsEditor
         budgetYear={year}
         action={assumptionsAction}
+        note={
+          cls !== null
+            ? `Growth rates are per company and apply to every class — changing one re-prices the whole company, not just ${cls}.`
+            : undefined
+        }
         companies={companies}
         initial={companies.map(
           (c) =>
@@ -461,15 +562,17 @@ export function BudgetWorkspace({
             >
               <span>
                 {saveError ??
-                  (editRealm
+                  (canEdit
                     ? colDim === "quarter"
-                      ? "Click an account's Total to type an annual figure (switch Columns to Months to type single months). Typed figures stay put when growth rates change; clear one to return to the growth default."
-                      : "Click an account's month or Total to type a budget figure. Typed cells are highlighted and stay put when growth rates change; clear one to return to the growth default. A typed Total re-spreads in the months' current shape."
+                      ? `Click an account's Total to type an annual figure${classNote} (switch Columns to Months to type single months). Typed figures stay put when growth rates change; clear one to return to the growth default.`
+                      : `Click an account's month or Total to type a budget figure${classNote}. Typed cells are highlighted and stay put when growth rates change; clear one to return to the growth default. A typed Total re-spreads in the months' current shape.`
                     : company === "all"
-                      ? "Select a single company to type budget figures into account cells."
-                      : null)}
+                      ? `Select a single company${cls === null && classes.length > 1 ? " and a class" : ""} to type budget figures into account cells.`
+                      : editRealm
+                        ? "Select a class to type budget figures into account cells — typed figures are kept per class."
+                        : null)}
               </span>
-              {editRealm && (
+              {canEdit && (
                 <span className="flex items-center gap-3">
                   {saving > 0 ? (
                     <span className="flex items-center gap-1.5">

@@ -7,9 +7,13 @@ import {
   BUDGET_COL_DIMS,
   BUDGET_VIEWS,
   BUDGET_YEAR,
+  NO_CLASS,
   baselineRange,
   growthCategories,
+  inBudgetClass,
   initiativeTotals,
+  sortClasses,
+  type BudgetClass,
   type BudgetColDim,
   type BudgetView,
 } from "@/lib/budget";
@@ -30,11 +34,15 @@ import {
 // their accounts' categories; proposed ones are listed but excluded until
 // approved. The Budget vs Actual view compares year-to-date budget with
 // ledger actuals once budget-year months close.
+//
+// The budget is built per QuickBooks class (migration 0034): the Class filter
+// shows one class's budget; All classes is the company roll-up (the sum of
+// its classes), and All companies the consolidation of the companies.
 
 export default async function BudgetPage({
   searchParams,
 }: {
-  searchParams: Promise<{ company?: string; cols?: string; view?: string }>;
+  searchParams: Promise<{ company?: string; cols?: string; view?: string; class?: string }>;
 }) {
   const sp = await searchParams;
   await requireAdmin();
@@ -65,20 +73,35 @@ export default async function BudgetPage({
   const realms =
     company === "all" ? companies.map((c) => c.realm_id) : [company];
 
+  const data = await loadBudget(supabase, { year, company, realms, view });
+  const { accountRows } = data;
+
+  // Classes in view: every class any selected company budgets. A class the
+  // selection doesn't have (e.g. after switching company) falls back to All
+  // classes.
+  const classes = sortClasses(realms.flatMap((r) => data.classesByRealm[r] ?? []));
+  const cls: BudgetClass =
+    sp.class !== undefined && classes.includes(sp.class) ? sp.class : null;
+  const keep = inBudgetClass(cls);
+  const initiatives = data.initiatives.filter(keep);
+
   const href = (
-    overrides: Partial<{ company: string; cols: BudgetColDim; view: BudgetView }>,
+    overrides: Partial<{
+      company: string;
+      cols: BudgetColDim;
+      view: BudgetView;
+      cls: BudgetClass;
+    }>,
   ) => {
-    const s = { company, cols: colDim, view, ...overrides };
+    const s = { company, cols: colDim, view, cls, ...overrides };
     const params = new URLSearchParams();
     if (s.company !== "all") params.set("company", s.company);
+    if (s.cls !== null) params.set("class", s.cls);
     if (s.cols !== "month") params.set("cols", s.cols);
     if (s.view !== "budget") params.set("view", s.view);
     const q = params.toString();
     return q ? `/financials/budget?${q}` : "/financials/budget";
   };
-
-  const data = await loadBudget(supabase, { year, company, realms, view });
-  const { accountRows, initiatives } = data;
 
   // Accounts offered in the New Initiative dialog, per company.
   const accountsByRealm: Record<string, InitiativeAccount[]> = {};
@@ -145,6 +168,20 @@ export default async function BudgetPage({
               ))}
             </>,
           )}
+        {classes.some((c) => c !== NO_CLASS) &&
+          pillGroup(
+            "Class",
+            <>
+              <Link href={href({ cls: null })} className={pill(cls === null)}>
+                All classes
+              </Link>
+              {classes.map((c) => (
+                <Link key={c} href={href({ cls: c })} className={pill(cls === c)}>
+                  {c}
+                </Link>
+              ))}
+            </>,
+          )}
         {pillGroup(
           "View",
           BUDGET_VIEWS.map((v) => (
@@ -168,8 +205,8 @@ export default async function BudgetPage({
   return (
     <div>
       <BudgetWorkspace
-        title={`Budget ${year}`}
-        subtitle={`Calendar ${year} budget built from ${monthLabel(baseline.from)} – ${monthLabel(baseline.to)} actuals, grown by each company's assumptions, plus approved new initiatives. Click a category to expand its accounts; with one company selected, click an account's month or Total to type a figure over it.`}
+        title={cls === null ? `Budget ${year}` : `Budget ${year} — ${cls}`}
+        subtitle={`Calendar ${year} budget built from ${monthLabel(baseline.from)} – ${monthLabel(baseline.to)} actuals by QuickBooks class, grown by each company's assumptions, plus approved new initiatives — classes roll up to each company, and companies to the consolidated budget. Click a category to expand its accounts; with one company and one class selected, click an account's month or Total to type a figure over it.`}
         headerLinks={
           <>
             <Link href="/financials/statement" className={buttonCls("secondary")}>
@@ -188,15 +225,19 @@ export default async function BudgetPage({
         }
         filters={filters}
         company={company}
+        cls={cls}
+        classes={classes}
+        classesByRealm={data.classesByRealm}
         year={year}
         colDim={colDim}
         view={view}
         closedThrough={data.closedThrough}
         companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
         initialAssumptions={data.assumptions}
-        initialOverrides={data.overrides}
-        baselineByRealm={data.baselineByRealm}
-        actuals={data.actuals}
+        // Only the selected class's inputs cross to the browser.
+        initialOverrides={data.overrides.filter(keep)}
+        baselineByRealm={data.baselineByRealm.map((cells) => cells.filter(keep))}
+        actuals={data.actuals?.filter(keep) ?? null}
         approved={initiatives.filter((i) => i.status === "approved")}
         categoryEntries={[...data.categoryByAccount.entries()]}
         realmCategoryEntries={data.realmCategories.map((m) => [...m.entries()])}
@@ -210,6 +251,8 @@ export default async function BudgetPage({
             budgetYear={year}
             companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
             accountsByRealm={accountsByRealm}
+            classesByRealm={data.classesByRealm}
+            defaultClass={cls}
           />
         }
       />
@@ -217,9 +260,12 @@ export default async function BudgetPage({
       <InitiativesPanel
         budgetYear={year}
         company={company}
+        cls={cls}
+        showClass={classes.some((c) => c !== NO_CLASS)}
         initiatives={initiatives}
         companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
         accountsByRealm={accountsByRealm}
+        classesByRealm={data.classesByRealm}
       />
 
       <p className="mt-3 text-xs text-ink-400">
@@ -232,8 +278,12 @@ export default async function BudgetPage({
         spread each account&rsquo;s amount evenly from their start month
         through their end month and are folded into those accounts&rsquo; categories
         only once approved; proposed and rejected initiatives never touch the
-        budget totals. Categories and the direct-cost split work exactly as on
-        the{" "}
+        budget totals. Every baseline amount, typed figure, and initiative
+        belongs to one QuickBooks class (lines with none are{" "}
+        &ldquo;{NO_CLASS}&rdquo;): a company&rsquo;s budget is the sum of its
+        classes and All companies the sum of the companies; growth rates are
+        per company and apply to every class. Categories and the direct-cost
+        split work exactly as on the{" "}
         <Link href="/financials/statement" className="underline">
           Income Statement
         </Link>

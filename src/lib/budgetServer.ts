@@ -2,12 +2,15 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
-import { lastDayOfMonth, latestMonth, type PivotCell } from "@/lib/financials";
+import { lastDayOfMonth, latestMonth } from "@/lib/financials";
 import {
+  NO_CLASS,
   baselineRange,
   closedMonthsOf,
   emptyCategoryGrowth,
+  sortClasses,
   type BudgetAssumption,
+  type BudgetCell,
   type BudgetInitiative,
   type BudgetOverride,
   type BudgetView,
@@ -34,19 +37,24 @@ export interface LoadedBudget {
   realms: string[];
   /** True when YTD actuals were loaded (variance view with a closed month). */
   wantActuals: boolean;
-  baselineByRealm: PivotCell[][];
-  /** YTD actual account cells, all realms, or null when not loaded. */
-  actuals: PivotCell[] | null;
+  /** Baseline account × month × class cells per realm (realms order). */
+  baselineByRealm: BudgetCell[][];
+  /** YTD actual account × class cells, all realms, or null when not loaded. */
+  actuals: BudgetCell[] | null;
   /** The same YTD actual cells split per realm (realms order), or null. */
-  actualsByRealm: PivotCell[][] | null;
+  actualsByRealm: BudgetCell[][] | null;
   accountRows: BudgetAccount[];
   /** Saved assumptions per realm, category rates included (missing realms
       default to 0%). */
   assumptions: BudgetAssumption[];
   /** Initiatives for the selected realms, every status. */
   initiatives: BudgetInitiative[];
-  /** Account-months typed over for the selected realms (migration 0031). */
+  /** Account × class months typed over for the selected realms (migrations
+      0031, 0034). */
   overrides: BudgetOverride[];
+  /** Each realm's budget classes — every class with baseline or YTD actual
+      activity, an initiative, or a typed figure — sorted, NO_CLASS last. */
+  classesByRealm: Record<string, string[]>;
   /** Account → category for the statement's rows (first realm wins on All
       companies, as on the Income Statement). */
   categoryByAccount: Map<string, string>;
@@ -69,11 +77,11 @@ export async function loadBudget(
   const closedThrough = closedMonthsOf(year, latestMonth());
 
   // One budget_ledger_summary call per window (migration 0027): a single
-  // ledger scan returning account × month cells for every realm as one JSON
-  // row. Paged gl_pivot calls re-ran the whole aggregation per 1000-row
-  // page, per company, and timed the page out. Cells come back split per
-  // realm (in `realms` order) in gl_pivot's shape.
-  const ledger = async (from: string, to: string): Promise<PivotCell[][]> => {
+  // ledger scan returning account × month × class cells (migration 0034) for
+  // every realm as one JSON row. Paged gl_pivot calls re-ran the whole
+  // aggregation per 1000-row page, per company, and timed the page out.
+  // Cells come back split per realm (in `realms` order) in gl_pivot's shape.
+  const ledger = async (from: string, to: string): Promise<BudgetCell[][]> => {
     const { data, error } = await db.rpc("budget_ledger_summary", {
       p_start: `${from}-01`,
       p_end: lastDayOfMonth(to),
@@ -82,11 +90,11 @@ export async function loadBudget(
     });
     if (error) throw new Error(error.message);
     const summary = (data ?? { accounts: [] }) as {
-      accounts: [string, string, string | null, string, string, number | string][];
+      accounts: [string, string, string | null, string, string, number | string, string?][];
     };
     const idx = new Map(realms.map((r, i) => [r, i]));
-    const accounts: PivotCell[][] = realms.map(() => []);
-    for (const [realm, classification, accountType, account, month, amount] of summary.accounts)
+    const accounts: BudgetCell[][] = realms.map(() => []);
+    for (const [realm, classification, accountType, account, month, amount, cls] of summary.accounts)
       accounts[idx.get(realm)!]?.push({
         classification,
         account_type: accountType,
@@ -94,6 +102,7 @@ export async function loadBudget(
         col_key: month,
         amount,
         line_count: 0,
+        class_name: cls || NO_CLASS,
       });
     return accounts;
   };
@@ -145,11 +154,12 @@ export async function loadBudget(
       fetchAllRows((fromRow, toRow) =>
         db
           .from("budget_account_overrides")
-          .select("realm_id, account, classification, month, amount")
+          .select("realm_id, account, class_name, classification, month, amount")
           .eq("budget_year", year)
           .in("realm_id", realms)
           .order("realm_id")
           .order("account")
+          .order("class_name")
           .order("month")
           .range(fromRow, toRow),
       ) as Promise<(Omit<BudgetOverride, "amount"> & { amount: number | string })[]>,
@@ -184,6 +194,19 @@ export async function loadBudget(
     if (!categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
   }
 
+  const overrides = overrideRows.map((o) => ({ ...o, amount: Number(o.amount) }));
+  const classesByRealm: Record<string, string[]> = Object.fromEntries(
+    realms.map((r, i) => [
+      r,
+      sortClasses([
+        ...baselineLedger[i].map((c) => c.class_name),
+        ...(actualLedger?.[i] ?? []).map((c) => c.class_name),
+        ...initiatives.filter((x) => x.realm_id === r).map((x) => x.class_name),
+        ...overrides.filter((o) => o.realm_id === r).map((o) => o.class_name),
+      ]),
+    ]),
+  );
+
   return {
     year,
     closedThrough,
@@ -195,7 +218,8 @@ export async function loadBudget(
     accountRows,
     assumptions,
     initiatives,
-    overrides: overrideRows.map((o) => ({ ...o, amount: Number(o.amount) })),
+    overrides,
+    classesByRealm,
     categoryByAccount,
     realmCategories,
   };
@@ -214,7 +238,7 @@ export async function loadInitiatives(
   const { data, error } = await db
     .from("budget_initiatives")
     .select(
-      "id, realm_id, name, description, start_month, end_month, status, created_at, approved_at, approved_by, budget_initiative_lines (account_name, classification, annual_amount)",
+      "id, realm_id, class_name, name, description, start_month, end_month, status, created_at, approved_at, approved_by, budget_initiative_lines (account_name, classification, annual_amount)",
     )
     .eq("budget_year", year)
     .order("created_at");
@@ -245,6 +269,7 @@ export async function loadInitiatives(
   return rawInitiatives.map((i) => ({
     id: i.id,
     realm_id: i.realm_id,
+    class_name: i.class_name || NO_CLASS,
     name: i.name,
     description: i.description,
     start_month: i.start_month,
