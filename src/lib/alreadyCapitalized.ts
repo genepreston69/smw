@@ -210,6 +210,19 @@ export function capScheduleWindow(
   };
 }
 
+/**
+ * A failed schedule read as a sentence for the page / export. The usual cause
+ * is the database update not being applied yet (PostgREST reports a missing
+ * function as "Could not find the function … in the schema cache").
+ */
+export function capScheduleErrorMessage(message: string): string {
+  if (/capitalized_labor_entries|cap_labor_account|schema cache|does not exist/i.test(message))
+    return "The Already Capitalized schedule needs its database updates: run supabase/migrations/0032_already_capitalized.sql and then 0033_already_capitalized_index_scan.sql in the Supabase SQL editor, then reload this page.";
+  if (/statement timeout|canceling statement/i.test(message))
+    return "The ledger query took too long. Make sure supabase/migrations/0033_already_capitalized_index_scan.sql has been applied (it limits the read to the selected year), then reload.";
+  return `The schedule couldn't be loaded: ${message}`;
+}
+
 /** The year a request asked for, if it is one the schedule covers; else
     the current year. */
 export function capScheduleYear(param: string | undefined, now: Date = new Date()): number {
