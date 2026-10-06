@@ -3,7 +3,13 @@ import { Archive, Download, Layers, ScrollText, Wrench } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { money } from "@/lib/format";
-import { capScheduleYear, capScheduleYears } from "@/lib/alreadyCapitalized";
+import {
+  capScheduleErrorMessage,
+  capScheduleWindow,
+  capScheduleYear,
+  capScheduleYears,
+  type CapSchedule,
+} from "@/lib/alreadyCapitalized";
 import { loadCapSchedule } from "@/lib/alreadyCapitalizedServer";
 import {
   Card,
@@ -36,10 +42,22 @@ export default async function AlreadyCapitalizedPage({
   const years = capScheduleYears();
   const year = capScheduleYear(yearParam);
 
-  const [{ data: connRows }, { period, schedule }] = await Promise.all([
+  const [{ data: connRows }, loaded] = await Promise.all([
     supabase.from("qb_connection_status").select("realm_id, company_name"),
-    loadCapSchedule(supabase, year),
+    // A failed read renders as a banner, not a 500 — and is logged, since a
+    // banner leaves no trace in the platform logs otherwise.
+    loadCapSchedule(supabase, year).catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      console.error(`Already Capitalized: schedule read failed: ${message}`);
+      return { error: capScheduleErrorMessage(message) };
+    }),
   ]);
+  const loadError = "error" in loaded ? loaded.error : null;
+  const period = "error" in loaded ? capScheduleWindow(year) : loaded.period;
+  const schedule: CapSchedule =
+    "error" in loaded
+      ? { entries: [], byAsset: [], total: 0, jobCount: 0 }
+      : loaded.schedule;
   const companyName: Record<string, string> = Object.fromEntries(
     ((connRows ?? []) as { realm_id: string; company_name: string | null }[]).map((c) => [
       c.realm_id,
@@ -84,6 +102,12 @@ export default async function AlreadyCapitalizedPage({
         }
       />
 
+      {loadError && (
+        <p className="mb-6 rounded-lg border border-warn-700/25 bg-warn-50 px-4 py-3 text-sm text-warn-700">
+          {loadError}
+        </p>
+      )}
+
       <div className="mb-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <StatTile
           label={`Labor capitalized (${period.label})`}
@@ -111,7 +135,7 @@ export default async function AlreadyCapitalizedPage({
         />
       </div>
 
-      {entries.length === 0 ? (
+      {loadError ? null : entries.length === 0 ? (
         <Card>
           <EmptyState icon={Archive} title={`No labor capitalized in ${period.label}`}>
             Journal entries that credit wages or employer payroll taxes and

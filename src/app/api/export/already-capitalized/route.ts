@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import {
   CAP_LINE_KIND_LABELS,
   capLineSide,
+  capScheduleErrorMessage,
   capScheduleYear,
 } from "@/lib/alreadyCapitalized";
 import { loadCapSchedule } from "@/lib/alreadyCapitalizedServer";
@@ -39,10 +40,18 @@ export async function GET(request: Request) {
   const db = createServiceClient();
   const year = capScheduleYear(new URL(request.url).searchParams.get("year") ?? undefined);
 
-  const [{ data: connRows }, { period, schedule }] = await Promise.all([
-    db.from("qb_connection_status").select("realm_id, company_name"),
-    loadCapSchedule(db, year),
-  ]);
+  let loaded: Awaited<ReturnType<typeof loadCapSchedule>>;
+  try {
+    loaded = await loadCapSchedule(db, year);
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`Already Capitalized export: schedule read failed: ${message}`);
+    return NextResponse.json({ error: capScheduleErrorMessage(message) }, { status: 503 });
+  }
+  const { period, schedule } = loaded;
+  const { data: connRows } = await db
+    .from("qb_connection_status")
+    .select("realm_id, company_name");
   const companyName = new Map(
     ((connRows ?? []) as { realm_id: string; company_name: string | null }[]).map((c) => [
       c.realm_id,
