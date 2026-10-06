@@ -81,6 +81,52 @@ export const compareClasses = (a: string, b: string): number =>
 export const sortClasses = (classes: Iterable<string>): string[] =>
   [...new Set(classes)].sort(compareClasses);
 
+/** Class key of cells merged across classes (mergeClasses) — internal, never
+    a QuickBooks class name, never displayed or saved. */
+const MERGED_CLASSES = "\u0000merged";
+
+/**
+ * Cells with their classes merged, one cell per account × month (and
+ * classification), for views of All classes — where the statement shows only
+ * the classes' sum — so the page ships the browser a fraction of the cells.
+ * Accounts in `keepSplit` (one company's accounts with a typed figure) keep
+ * their classes apart, since a typed figure replaces only its own class's
+ * slice. Growth is one rate per company and category, the same in every
+ * class, so merging moves no total. A merged cell whose parts were all one
+ * class keeps that class (so a single-class company stays editable).
+ */
+export function mergeClasses(
+  cells: readonly BudgetCell[],
+  keepSplit: ReadonlySet<string> = new Set(),
+): BudgetCell[] {
+  const out: BudgetCell[] = [];
+  const merged = new Map<string, BudgetCell>();
+  for (const c of cells) {
+    if (keepSplit.has(c.row_key)) {
+      out.push(c);
+      continue;
+    }
+    const key = [c.classification, c.account_type, c.row_key, c.col_key].join("\u0000");
+    const m = merged.get(key);
+    if (!m) merged.set(key, { ...c, amount: Number(c.amount) });
+    else {
+      m.amount = Number(m.amount) + Number(c.amount);
+      m.line_count += c.line_count;
+      if (m.class_name !== c.class_name) m.class_name = MERGED_CLASSES;
+    }
+  }
+  return [...out, ...merged.values()];
+}
+
+/** A Budget page load failure as a message an admin can act on. */
+export function budgetLoadErrorMessage(message: string): string {
+  if (/class_name|budget_ledger_summary|schema cache|does not exist/i.test(message))
+    return "The Budget needs its database updates: run supabase/migrations/0034_budget_by_class.sql and then 0035_budget_ledger_index_scan.sql in the Supabase SQL editor, then reload this page.";
+  if (/statement timeout|canceling statement/i.test(message))
+    return "The ledger query took too long. Make sure supabase/migrations/0035_budget_ledger_index_scan.sql has been applied (it limits the read to the budget's months), then reload.";
+  return `The budget couldn't be loaded: ${message}`;
+}
+
 /** Baseline window: the twelve months ending June 30 of the prior year. */
 export function baselineRange(year: number): { from: string; to: string } {
   return { from: `${year - 2}-07`, to: `${year - 1}-06` };

@@ -1415,6 +1415,10 @@ export default async function BudgetManualPage() {
                 a="Check the Company and Class filters — an initiative only appears in the view of its own company and class, or All companies / All classes. If the filters are right, the amounts may land in a category you have collapsed; expand it or use Expand all."
               />
               <Faq
+                q="The Budget page shows a yellow banner instead of the budget."
+                a="The banner says what failed. If it asks for database updates, an administrator needs to run the named migration files (for classes: 0034_budget_by_class.sql, then 0035_budget_ledger_index_scan.sql) in the Supabase SQL editor; then reload the page."
+              />
+              <Faq
                 q="I changed a growth % while looking at one class and another class moved too."
                 a="Growth rates are per company and apply to every class of that company — the growth card says so when a class is selected. To change one class only, type its figures over the growth default (a month, or an account's annual Total) with that class selected, or add an initiative in that class."
               />
