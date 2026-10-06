@@ -9,16 +9,19 @@ import {
   BUDGET_YEAR,
   NO_CLASS,
   baselineRange,
+  budgetLoadErrorMessage,
   growthCategories,
   inBudgetClass,
   initiativeTotals,
+  mergeClasses,
   sortClasses,
+  type BudgetCell,
   type BudgetClass,
   type BudgetColDim,
   type BudgetView,
 } from "@/lib/budget";
 import { loadBudget } from "@/lib/budgetServer";
-import { buttonCls } from "@/components/ui";
+import { PageHeader, buttonCls } from "@/components/ui";
 import { BudgetWorkspace } from "./BudgetWorkspace";
 import {
   InitiativesPanel,
@@ -73,7 +76,23 @@ export default async function BudgetPage({
   const realms =
     company === "all" ? companies.map((c) => c.realm_id) : [company];
 
-  const data = await loadBudget(supabase, { year, company, realms, view });
+  // A failed read renders as a banner, not a 500 — and is logged, since a
+  // banner leaves no trace in the platform logs otherwise.
+  let data: Awaited<ReturnType<typeof loadBudget>>;
+  try {
+    data = await loadBudget(supabase, { year, company, realms, view });
+  } catch (e) {
+    const message = e instanceof Error ? e.message : String(e);
+    console.error(`Budget: load failed: ${message}`);
+    return (
+      <div>
+        <PageHeader title={`Budget ${year}`} subtitle="The budget couldn't be loaded." />
+        <p className="mb-6 rounded-lg border border-warn-700/25 bg-warn-50 px-4 py-3 text-sm text-warn-700">
+          {budgetLoadErrorMessage(message)}
+        </p>
+      </div>
+    );
+  }
   const { accountRows } = data;
 
   // Classes in view: every class any selected company budgets. A class the
@@ -84,6 +103,20 @@ export default async function BudgetPage({
     sp.class !== undefined && classes.includes(sp.class) ? sp.class : null;
   const keep = inBudgetClass(cls);
   const initiatives = data.initiatives.filter(keep);
+
+  // Only what the view shows crosses to the browser: one class's cells, or —
+  // on All classes, where the statement shows only the classes' sum — the
+  // cells merged across classes (accounts with a typed figure stay split, as
+  // the figure replaces only its own class's slice). Same totals either way.
+  const forBrowser = (cells: BudgetCell[], realmId: string | null) =>
+    cls !== null
+      ? cells.filter(keep)
+      : mergeClasses(
+          cells,
+          new Set(
+            data.overrides.filter((o) => o.realm_id === realmId).map((o) => o.account),
+          ),
+        );
 
   const href = (
     overrides: Partial<{
@@ -234,10 +267,10 @@ export default async function BudgetPage({
         closedThrough={data.closedThrough}
         companies={realms.map((r) => ({ realmId: r, name: companyByRealm.get(r) ?? r }))}
         initialAssumptions={data.assumptions}
-        // Only the selected class's inputs cross to the browser.
         initialOverrides={data.overrides.filter(keep)}
-        baselineByRealm={data.baselineByRealm.map((cells) => cells.filter(keep))}
-        actuals={data.actuals?.filter(keep) ?? null}
+        baselineByRealm={data.baselineByRealm.map((cells, i) => forBrowser(cells, realms[i]))}
+        // Actuals are never typed over, so they merge fully.
+        actuals={data.actuals ? forBrowser(data.actuals, null) : null}
         approved={initiatives.filter((i) => i.status === "approved")}
         categoryEntries={[...data.categoryByAccount.entries()]}
         realmCategoryEntries={data.realmCategories.map((m) => [...m.entries()])}

@@ -90,30 +90,41 @@ alter table public.budget_account_overrides add column class_name text;
 alter table public.budget_account_overrides drop constraint budget_account_overrides_pkey;
 
 -- Split every existing (whole-account) figure across its classes.
+--
+-- One read of the ledger: gl_lines' date index leads with org_id
+-- (gl_lines_date_idx: org_id, txn_date), so the baseline window is scoped to
+-- the organization with bounds evaluated once (the subselects), letting the
+-- index range-scan just those months — not the whole ledger, every year and
+-- every superseded sync generation (the lesson of migration 0033).
 insert into public.budget_account_overrides
   (org_id, budget_year, realm_id, account, class_name, classification, month, amount,
    updated_by, updated_at)
-with keys as (
-  select distinct org_id, budget_year, realm_id, account
+with todo as (
+  select *
   from public.budget_account_overrides
   where class_name is null
 ),
--- Baseline activity per account × class × budget month: the twelve months
--- ending June 30 of the prior year, each mapped to its calendar month
--- (src/lib/budget.ts, baselineRange / accountBaseMonths).
+keys as (
+  select distinct realm_id, account from todo
+),
+bounds as (
+  select min(budget_year) as first_year, max(budget_year) as last_year from todo
+),
+-- Baseline activity per account × class × ledger month inside the baseline
+-- windows (the twelve months ending June 30 of the year before each budget
+-- year — src/lib/budget.ts, baselineRange), for the accounts typed over.
 base as (
-  select k.org_id, k.budget_year, k.realm_id, k.account,
-         extract(month from f.txn_date)::int as month,
+  select f.realm_id,
+         f.account_full_name as account,
+         f.month,
          coalesce(nullif(f.class_name, ''), '(no class)') as class_name,
          sum(f.amount) as amount
-  from keys k
-  join public.gl_line_facts f
-    on f.org_id = k.org_id
-   and f.realm_id = k.realm_id
-   and f.account_full_name = k.account
-   and f.txn_date >= make_date(k.budget_year - 2, 7, 1)
-   and f.txn_date < make_date(k.budget_year - 1, 7, 1)
-  group by 1, 2, 3, 4, 5, 6
+  from public.gl_line_facts f
+  where f.org_id = (select public.default_org_id())
+    and f.txn_date >= (select make_date(first_year - 2, 7, 1) from bounds)
+    and f.txn_date < (select make_date(last_year - 1, 7, 1) from bounds)
+    and (f.realm_id, f.account_full_name) in (select realm_id, account from keys)
+  group by 1, 2, 3, 4
   having abs(sum(f.amount)) >= 0.005
 ),
 shares as (
@@ -125,14 +136,15 @@ shares as (
            else abs(b.amount) / sum(abs(b.amount)) over (
              partition by o.org_id, o.budget_year, o.realm_id, o.account, o.month)
          end as share
-  from public.budget_account_overrides o
+  from todo o
+  -- Budget month m comes from the same calendar month of the baseline:
+  -- July–December of budget_year − 2, January–June of budget_year − 1.
   left join base b
-    on b.org_id = o.org_id
-   and b.budget_year = o.budget_year
-   and b.realm_id = o.realm_id
+    on b.realm_id = o.realm_id
    and b.account = o.account
-   and b.month = o.month
-  where o.class_name is null
+   and b.month = make_date(
+         case when o.month >= 7 then o.budget_year - 2 else o.budget_year - 1 end,
+         o.month, 1)
 ),
 rounded as (
   select s.*,
