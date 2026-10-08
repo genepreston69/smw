@@ -2,6 +2,18 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
+import { lastDayOfMonth, latestMonth } from "@/lib/financials";
+import { BALANCE_HISTORY_START, monthsBetween } from "@/lib/balanceSheet";
+import {
+  REPORT_CELL_LIMIT,
+  REPORT_TRUNCATED_CELLS,
+  mentionsTruncation,
+  parseBalanceSheetReport,
+  type QboReport,
+  type QboReportColData,
+  type QboReportRow,
+  type ReportBalance,
+} from "@/lib/qboReports";
 
 // ---------------------------------------------------------------------------
 // QuickBooks Online OAuth2 + API client.
@@ -391,7 +403,9 @@ const JOB_COSTS_START_DATE = "2025-01-01";
 // them archived, gl_line_facts keeps them visible outside the generation
 // scheme, and prune_gl_lines never touches them. Balance-sheet accounts on
 // the Financials page show activity since 2023-01-01 (frozen history plus
-// this import window), not ending balances.
+// this import window), not ending balances — month-end balances come from
+// QuickBooks' BalanceSheet report instead (syncBalanceSheet, below), with
+// month ends before this date frozen the same way.
 const FINANCIALS_START_DATE = "2025-01-01";
 
 // Direct-cost buckets for the per-job transaction history.
@@ -917,31 +931,6 @@ interface QboAccount {
   CurrentBalance?: number;
 }
 
-interface QboReportColData {
-  value?: string;
-  id?: string;
-}
-
-interface QboReportRow {
-  type?: string; // "Section" | "Data"
-  ColData?: QboReportColData[];
-  Header?: { ColData?: QboReportColData[] };
-  Summary?: { ColData?: QboReportColData[] };
-  Rows?: { Row?: QboReportRow[] };
-}
-
-interface QboReport {
-  Header?: { Option?: { Name?: string; Value?: string }[] };
-  Columns?: {
-    Column?: {
-      ColTitle?: string;
-      ColType?: string;
-      MetaData?: { Name?: string; Value?: string }[];
-    }[];
-  };
-  Rows?: { Row?: QboReportRow[] };
-}
-
 interface GlLine {
   accountQbId: string | null;
   accountName: string;
@@ -1003,20 +992,9 @@ async function fetchGeneralLedger(
   return res.json();
 }
 
-// The Reports API caps a response at 400,000 cells and, past that, does not
-// fail: the report just stops, ending with an "Unable to display more data.
-// Please reduce the date range." row. The GeneralLedger report lists accounts
-// in chart order — balance sheet, income, cost of goods sold, expenses, then
-// other income / other expense — so a cut-off window silently loses the
-// accounts at the end (interest expense among them). A report that carries
-// the notice, or that comes close enough to the cap that it may have been
-// cut without one, counts as truncated.
-const REPORT_CELL_LIMIT = 400_000;
-const REPORT_TRUNCATED_CELLS = REPORT_CELL_LIMIT * 0.95;
-const REPORT_TRUNCATED_TEXT = "unable to display more data";
-
-const mentionsTruncation = (text: string | undefined) =>
-  !!text && text.toLowerCase().includes(REPORT_TRUNCATED_TEXT);
+// Truncation at the Reports API's cell limit (REPORT_CELL_LIMIT,
+// mentionsTruncation in src/lib/qboReports.ts) silently drops the accounts at
+// the end of the chart, so every report parser checks for it.
 
 // The report nests a Section per account (sub-accounts nest deeper), with
 // data rows aligned to the requested columns. Beginning-balance and summary
@@ -1302,4 +1280,169 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
     glLines: lineCount,
     companies: connections.length,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Balance sheet: QuickBooks' own month-end balances (migration 0036)
+//
+// gl_lines is activity only, and QuickBooks computes Retained Earnings and
+// Net Income rather than posting them, so balances come from the
+// BalanceSheet report itself — every account's balance at every month end —
+// and the Balance Sheet page ties to QuickBooks by construction.
+// ---------------------------------------------------------------------------
+
+async function fetchBalanceSheetReport(
+  accessToken: string,
+  realmId: string,
+  startDate: string,
+  endDate: string,
+): Promise<QboReport> {
+  const params = new URLSearchParams({
+    start_date: startDate,
+    end_date: endDate,
+    accounting_method: "Accrual",
+    summarize_column_by: "Month",
+    minorversion: "75",
+  });
+  const res = await fetch(
+    `${apiBase()}/v3/company/${realmId}/reports/BalanceSheet?${params}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    },
+  );
+  if (!res.ok) {
+    const tid = res.headers.get("intuit_tid");
+    const detail = `${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`;
+    console.error(`QuickBooks BalanceSheet report failed: ${detail}`);
+    throw new Error(`QuickBooks BalanceSheet report failed: ${detail}`);
+  }
+  return res.json();
+}
+
+/**
+ * Month-end balances for `months` (ascending "YYYY-MM"). Like the ledger, a
+ * report cut off at the cell limit is re-fetched in halves until each piece
+ * fits; a single month that still doesn't fit fails the sync rather than
+ * storing a balance sheet with accounts missing.
+ */
+async function fetchMonthEndBalances(
+  accessToken: string,
+  realmId: string,
+  months: string[],
+): Promise<ReportBalance[]> {
+  const first = months[0];
+  const last = months[months.length - 1];
+  const { balances, truncated } = parseBalanceSheetReport(
+    await fetchBalanceSheetReport(accessToken, realmId, `${first}-01`, lastDayOfMonth(last)),
+    months,
+  );
+  if (!truncated) return balances;
+  if (months.length === 1) {
+    throw new Error(
+      `QuickBooks BalanceSheet report for ${first} exceeds the report API's ${REPORT_CELL_LIMIT.toLocaleString("en-US")}-cell limit even for a single month`,
+    );
+  }
+  const half = Math.ceil(months.length / 2);
+  console.log(
+    `QB balance sheet ${realmId} ${first}..${last} hit the report cell limit; re-fetching in two halves`,
+  );
+  return [
+    ...(await fetchMonthEndBalances(accessToken, realmId, months.slice(0, half))),
+    ...(await fetchMonthEndBalances(accessToken, realmId, months.slice(half))),
+  ];
+}
+
+/**
+ * Import QuickBooks' month-end balances for every balance-sheet account,
+ * from BALANCE_HISTORY_START (January 2023, where the frozen ledger history
+ * starts) through the last complete month (the in-progress month is omitted
+ * across Financials). Month ends from FINANCIALS_START_DATE on are refreshed
+ * on every sync; earlier ones are frozen audited history, loaded by a
+ * company's first sync and never replaced (replace_gl_balances enforces it). Pass a realmId to import one company —
+ * the nightly sync runs one step per company, like the ledger.
+ */
+export async function syncBalanceSheet(realmId?: string): Promise<{
+  balances: number;
+  months: number;
+  companies: number;
+}> {
+  let connections = await getValidConnections();
+  if (realmId) {
+    connections = connections.filter((c) => c.realmId === realmId);
+    if (connections.length === 0) {
+      throw new Error(`No connected QuickBooks company for realm ${realmId}`);
+    }
+  }
+  const supabase = createServiceClient();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("id")
+    .order("created_at")
+    .limit(1)
+    .single();
+  if (!org) throw new Error("No organization found");
+
+  const windowStart = FINANCIALS_START_DATE.slice(0, 7);
+  const lastMonth = latestMonth();
+  let balanceCount = 0;
+  let monthCount = 0;
+
+  for (const { accessToken, realmId, companyName } of connections) {
+    // Frozen history is loaded only while the company has none stored.
+    const { count, error: countError } = await supabase
+      .from("gl_balances")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", org.id)
+      .eq("realm_id", realmId)
+      .lt("month", FINANCIALS_START_DATE);
+    if (countError) throw new Error(`Balance lookup failed: ${countError.message}`);
+    const fromMonth = (count ?? 0) > 0 ? windowStart : BALANCE_HISTORY_START;
+    const months = monthsBetween(fromMonth, lastMonth);
+    if (months.length === 0) continue;
+
+    const balances = await fetchMonthEndBalances(accessToken, realmId, months);
+
+    // History in one call, so it lands whole or not at all; the refreshed
+    // window in yearly calls to keep each request small. Each call replaces
+    // its months in one transaction.
+    const history = months.filter((m) => m < windowStart);
+    const window = months.filter((m) => m >= windowStart);
+    const batches = [
+      ...(history.length > 0 ? [history] : []),
+      ...Array.from({ length: Math.ceil(window.length / 12) }, (_, i) =>
+        window.slice(i * 12, i * 12 + 12),
+      ),
+    ];
+    for (const batch of batches) {
+      const from = `${batch[0]}-01`;
+      const to = `${batch[batch.length - 1]}-01`;
+      const { data: written, error } = await supabase.rpc("replace_gl_balances", {
+        p_org_id: org.id,
+        p_realm_id: realmId,
+        p_from: from,
+        p_to: to,
+        p_rows: balances
+          .filter((b) => b.month >= from && b.month <= to)
+          .map((b) => ({
+            month: b.month,
+            account_key: b.accountKey,
+            account_qb_id: b.accountQbId,
+            account_name: b.accountName,
+            section: b.section,
+            amount: b.amount,
+          })),
+      });
+      if (error) throw new Error(`Balance sheet save failed: ${error.message}`);
+      balanceCount += (written as number | null) ?? 0;
+    }
+    monthCount = Math.max(monthCount, months.length);
+    console.log(
+      `QB balance sheet ${realmId} (${companyName ?? "unnamed"}): ${balances.length} account balances over ${months.length} month ends (${months[0]}..${lastMonth})`,
+    );
+  }
+
+  return { balances: balanceCount, months: monthCount, companies: connections.length };
 }
