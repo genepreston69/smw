@@ -2,24 +2,23 @@ import Link from "next/link";
 import { BookOpen, Download, Landmark } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { moneyWhole } from "@/lib/format";
 import {
-  COL_DIMS,
-  MONTH_PARAM,
-  SCOPE_CLASSIFICATIONS,
+  STATEMENT_COL_DIMS,
   UNCATEGORIZED,
-  buildCategoryStatement,
-  clampMonth,
   defaultFrom,
-  lastDayOfMonth,
   latestMonth,
   monthLabel,
   pivotColLabel,
   statementExportHref,
-  type ColDim,
-  type PivotCell,
 } from "@/lib/financials";
+import { NO_CLASS } from "@/lib/budget";
+import {
+  loadStatement,
+  statementState,
+  type LoadedStatement,
+  type StatementState,
+} from "@/lib/statementServer";
 import {
   Card,
   EmptyState,
@@ -28,12 +27,15 @@ import {
   buttonCls,
 } from "@/components/ui";
 import { StatementTable } from "./StatementTable";
+import { ClassSelect } from "./ClassSelect";
 
 // Expandable income statement grouped by the Category assigned to each
 // account on the Chart of Accounts page. Same ledger slice as the Financials
 // pivot (gl_pivot, account rows, Revenue + Expense): each category row
 // subtotals its member accounts and expands to show them. Amounts are the
 // ledger as booked — no allocations or eliminations — so it ties to QB.
+// One QuickBooks class at a time (Class dropdown, default All classes), with
+// months as columns by default; All classes is the sum of every class.
 
 export default async function IncomeStatementPage({
   searchParams,
@@ -43,6 +45,7 @@ export default async function IncomeStatementPage({
     from?: string;
     to?: string;
     cols?: string;
+    class?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -64,89 +67,61 @@ export default async function IncomeStatementPage({
     companies.map((c) => [c.realm_id, c.company_name ?? `Company ${c.realm_id}`]),
   );
 
-  const company =
-    sp.company && companyByRealm.has(sp.company) ? sp.company : "all";
-  // The in-progress month is omitted app-wide: params are clamped to the
-  // last complete month and the pickers stop there too.
-  const from = MONTH_PARAM.test(sp.from ?? "") ? clampMonth(sp.from!) : defaultFrom();
-  const to = MONTH_PARAM.test(sp.to ?? "") ? clampMonth(sp.to!) : latestMonth();
-  const colDim = COL_DIMS.some((d) => d.key === sp.cols)
-    ? (sp.cols as ColDim)
-    : "month";
+  const state = statementState(
+    (k) => sp[k as keyof typeof sp],
+    new Set(companyByRealm.keys()),
+  );
+  const { company, from, to, cols: colDim, cls } = state;
   const maxMonth = latestMonth();
 
-  const href = (
-    overrides: Partial<{ company: string; from: string; to: string; cols: ColDim }>,
-  ) => {
-    const s = { company, from, to, cols: colDim, ...overrides };
+  const href = (overrides: Partial<StatementState>) => {
+    const s = { ...state, ...overrides };
     const params = new URLSearchParams();
     if (s.company !== "all") params.set("company", s.company);
     if (s.from !== defaultFrom()) params.set("from", s.from);
     if (s.to !== latestMonth()) params.set("to", s.to);
     if (s.cols !== "month") params.set("cols", s.cols);
+    if (s.cls !== null) params.set("class", s.cls);
     const q = params.toString();
     return q ? `/financials/statement?${q}` : "/financials/statement";
   };
 
-  const [cells, accountRows] = await Promise.all([
-    fetchAllRows((fromRow, toRow) =>
-      supabase
-        .rpc("gl_pivot", {
-          p_start: `${from}-01`,
-          p_end: lastDayOfMonth(to),
-          p_row_dim: "account",
-          p_col_dim: colDim,
-          p_realm_id: company === "all" ? null : company,
-          p_classifications: SCOPE_CLASSIFICATIONS.pl,
-        })
-        .order("row_key")
-        .order("col_key")
-        .order("classification")
-        .order("account_type")
-        .range(fromRow, toRow),
-    ) as Promise<PivotCell[]>,
-    fetchAllRows((fromRow, toRow) =>
-      supabase
-        .from("gl_accounts")
-        .select("realm_id, name, fully_qualified_name, category")
-        .in("classification", ["Revenue", "Expense"])
-        .order("id")
-        .range(fromRow, toRow),
-    ) as Promise<
-      {
-        realm_id: string;
-        name: string;
-        fully_qualified_name: string | null;
-        category: string | null;
-      }[]
-    >,
-  ]);
-
-  // gl_pivot's account row key is the account's full name, merged across
-  // companies under "All companies" — map name → category the same way,
-  // first assigned category winning if realms ever disagree.
-  const categoryByAccount = new Map<string, string>();
-  for (const a of accountRows) {
-    if (!a.category) continue;
-    if (company !== "all" && a.realm_id !== company) continue;
-    const key = a.fully_qualified_name ?? a.name;
-    if (!categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
+  let loaded: LoadedStatement | null = null;
+  let loadError: string | null = null;
+  try {
+    loaded = await loadStatement(
+      supabase,
+      state,
+      companies.map((c) => c.realm_id),
+    );
+  } catch (e) {
+    loadError = e instanceof Error ? e.message : String(e);
   }
+  const statement = loaded?.statement;
+  const hasData = (loaded?.cellCount ?? 0) > 0;
 
-  const statement = buildCategoryStatement(cells, categoryByAccount);
+  // The class in view stays listed even when it has no activity in this
+  // period or company, so the dropdown always shows what's selected.
+  const classes = [...(loaded?.classes ?? [])];
+  if (cls !== null && !classes.includes(cls)) classes.push(cls);
+  const classLabel = (c: string) => (c === NO_CLASS ? "No class assigned" : c);
+  const classOptions = [
+    { value: "all", label: "All classes", href: href({ cls: null }) },
+    ...classes.map((c) => ({ value: c, label: classLabel(c), href: href({ cls: c }) })),
+  ];
 
   const colLabels = Object.fromEntries(
-    statement.colKeys.map((k) => [k, pivotColLabel(colDim, k, companyByRealm)]),
+    (statement?.colKeys ?? []).map((k) => [k, pivotColLabel(colDim, k, companyByRealm)]),
   );
-  const uncategorizedCount = [
-    statement.income,
-    statement.directCosts,
-    statement.expenses,
-  ]
+  const uncategorizedCount = (
+    statement ? [statement.income, statement.directCosts, statement.expenses] : []
+  )
     .flatMap((s) => s.groups)
     .filter((g) => g.label === UNCATEGORIZED)
     .reduce((n, g) => n + g.rows.length, 0);
-  const periodHint = `${monthLabel(from)} – ${monthLabel(to)}`;
+  const periodHint = `${monthLabel(from)} – ${monthLabel(to)}${
+    cls !== null ? ` · ${classLabel(cls)}` : ""
+  }`;
 
   const pill = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -174,11 +149,11 @@ export default async function IncomeStatementPage({
     <div>
       <PageHeader
         title="Income Statement"
-        subtitle="Income and expenses grouped by the Category assigned to each account. Click a category to expand its accounts."
+        subtitle="Income and expenses grouped by the Category assigned to each account, for one class at a time. Click a category to expand its accounts."
         action={
           <div className="flex items-center gap-2">
             <a
-              href={statementExportHref({ company, from, to, cols: colDim })}
+              href={statementExportHref({ company, from, to, cols: colDim, cls })}
               className={buttonCls("secondary")}
             >
               <Download size={15} strokeWidth={2} />
@@ -211,9 +186,20 @@ export default async function IncomeStatementPage({
               ))}
             </>,
           )}
+        <div className={filterRowCls}>
+          {filterLabel("Class")}
+          <div className="flex flex-wrap items-center gap-3 py-0.5">
+            <ClassSelect value={cls ?? "all"} options={classOptions} />
+            <span className="text-xs text-ink-400">
+              {cls === null
+                ? "Every class combined. Pick a class to see its own statement."
+                : "This class only. All classes is the sum of every class."}
+            </span>
+          </div>
+        </div>
         {pillGroup(
           "Columns",
-          COL_DIMS.map((d) => (
+          STATEMENT_COL_DIMS.map((d) => (
             <Link key={d.key} href={href({ cols: d.key })} className={pill(colDim === d.key)}>
               {d.label}
             </Link>
@@ -223,6 +209,7 @@ export default async function IncomeStatementPage({
           {filterLabel("Period")}
           {company !== "all" && <input type="hidden" name="company" value={company} />}
           {colDim !== "month" && <input type="hidden" name="cols" value={colDim} />}
+          {cls !== null && <input type="hidden" name="class" value={cls} />}
           <div className="flex flex-wrap items-center gap-2 py-0.5">
             <input
               type="month"
@@ -248,7 +235,13 @@ export default async function IncomeStatementPage({
         </form>
       </div>
 
-      {cells.length > 0 && (
+      {loadError && (
+        <div className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          The ledger could not be loaded: {loadError}
+        </div>
+      )}
+
+      {statement && hasData && (
         <div
           className={`mb-4 grid gap-4 sm:grid-cols-2 ${statement.grossProfit ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
         >
@@ -278,10 +271,11 @@ export default async function IncomeStatementPage({
       )}
 
       <Card pad={false}>
-        {cells.length === 0 ? (
+        {!statement || !hasData ? (
           <EmptyState icon={Landmark} title="No ledger data for this selection">
-            Run a QuickBooks sync in Settings to import the general ledger, or
-            widen the period filter.
+            {cls !== null
+              ? "This class has no income or expense activity in the selected period and company. Pick another class or widen the period."
+              : "Run a QuickBooks sync in Settings to import the general ledger, or widen the period filter."}
           </EmptyState>
         ) : (
           <StatementTable
@@ -308,7 +302,10 @@ export default async function IncomeStatementPage({
         allocations between categories and no intercompany eliminations, so
         amounts are the same natural-signed ledger activity as the Financials
         pivot and QuickBooks, and Net income matches both for the same
-        filters. The % column after each amount is the common-size view: the
+        filters. The Class dropdown shows one QuickBooks class at a time;
+        lines with no class are under &ldquo;No class assigned&rdquo;, and All
+        classes is simply every class added together, so the class statements
+        always sum to it. The % column after each amount is the common-size view: the
         amount as a percent of the same column&rsquo;s total income (columns
         with no income show a dash).
       </p>

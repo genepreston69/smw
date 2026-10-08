@@ -2,27 +2,18 @@ import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import {
-  COL_DIMS,
-  MONTH_PARAM,
-  SCOPE_CLASSIFICATIONS,
-  buildCategoryStatement,
-  clampMonth,
-  defaultFrom,
-  lastDayOfMonth,
-  latestMonth,
   monthLabel,
   pivotColLabel,
-  type ColDim,
-  type PivotCell,
   type StatementSection,
   type StatementTotals,
 } from "@/lib/financials";
+import { NO_CLASS } from "@/lib/budget";
+import { loadStatement, statementState } from "@/lib/statementServer";
 
 // Excel export of the category income statement: same query params as
-// /financials/statement, same gl_pivot slice and buildCategoryStatement
-// assembly — the file always matches the statement on screen, with account
+// /financials/statement (including the Class dropdown), same loadStatement
+// read and buildCategoryStatement assembly — the file always matches the statement on screen, with account
 // rows nested under their category via Excel row grouping.
 export async function GET(request: Request) {
   const supabase = await createClient();
@@ -62,70 +53,11 @@ export async function GET(request: Request) {
   );
 
   const sp = new URL(request.url).searchParams;
-  const company =
-    sp.get("company") && companyByRealm.has(sp.get("company")!)
-      ? sp.get("company")!
-      : "all";
-  // Same clamp as the statement page: the in-progress month is omitted
-  // app-wide, so the export can't reach it either.
-  const from = MONTH_PARAM.test(sp.get("from") ?? "")
-    ? clampMonth(sp.get("from")!)
-    : defaultFrom();
-  const to = MONTH_PARAM.test(sp.get("to") ?? "")
-    ? clampMonth(sp.get("to")!)
-    : latestMonth();
-  const colDim = COL_DIMS.some((d) => d.key === sp.get("cols"))
-    ? (sp.get("cols") as ColDim)
-    : "month";
-
-  // Same slices as the statement page: the account pivot plus the account
-  // categories.
-  const [cells, accountRows] = await Promise.all([
-    fetchAllRows((fromRow, toRow) =>
-      db
-        .rpc("gl_pivot", {
-          p_start: `${from}-01`,
-          p_end: lastDayOfMonth(to),
-          p_row_dim: "account",
-          p_col_dim: colDim,
-          p_realm_id: company === "all" ? null : company,
-          p_classifications: SCOPE_CLASSIFICATIONS.pl,
-        })
-        .order("row_key")
-        .order("col_key")
-        .order("classification")
-        .order("account_type")
-        .range(fromRow, toRow),
-    ) as Promise<PivotCell[]>,
-    fetchAllRows((fromRow, toRow) =>
-      db
-        .from("gl_accounts")
-        .select("realm_id, name, fully_qualified_name, category")
-        .in("classification", ["Revenue", "Expense"])
-        .order("id")
-        .range(fromRow, toRow),
-    ) as Promise<
-      {
-        realm_id: string;
-        name: string;
-        fully_qualified_name: string | null;
-        category: string | null;
-      }[]
-    >,
-  ]);
-
-  // Same name → category mapping as the page: gl_pivot's account row key is
-  // the account's full name, merged across companies under "All companies",
-  // first assigned category winning if realms ever disagree.
-  const categoryByAccount = new Map<string, string>();
-  for (const a of accountRows) {
-    if (!a.category) continue;
-    if (company !== "all" && a.realm_id !== company) continue;
-    const key = a.fully_qualified_name ?? a.name;
-    if (!categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
-  }
-
-  const statement = buildCategoryStatement(cells, categoryByAccount);
+  const state = statementState((k) => sp.get(k), new Set(companyByRealm.keys()));
+  const { company, from, to, cols: colDim, cls } = state;
+  const { statement } = await loadStatement(db, state, [...companyByRealm.keys()]);
+  const classLabel =
+    cls === null ? "All classes" : cls === NO_CLASS ? "No class assigned" : `Class: ${cls}`;
 
   const showRowTotal = colDim !== "total";
   const colLabels = statement.colKeys.map((k) =>
@@ -142,6 +74,7 @@ export async function GET(request: Request) {
   sheet.addRow([
     [
       company === "all" ? "All companies" : companyByRealm.get(company),
+      classLabel,
       `${monthLabel(from)} – ${monthLabel(to)}`,
       "Grouped by the Category assigned to each account on the Chart of Accounts page",
       "Amounts are natural signed ledger activity",
@@ -217,11 +150,15 @@ export async function GET(request: Request) {
   };
 
   const buffer = await workbook.xlsx.writeBuffer();
+  const classSlug =
+    cls === null
+      ? ""
+      : `-${(cls === NO_CLASS ? "no-class" : cls).toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "class"}`;
   return new Response(Buffer.from(buffer), {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="income-statement-by-${colDim}-${from}-to-${to}.xlsx"`,
+      "Content-Disposition": `attachment; filename="income-statement${classSlug}-by-${colDim}-${from}-to-${to}.xlsx"`,
     },
   });
 }
