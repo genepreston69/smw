@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 import { buttonCls } from "@/components/ui";
 
 // Two separate sync sessions: customers/jobs/costs/invoices in one request,
-// and the general-ledger import one company at a time (one invocation for
-// everything exceeds Vercel's function window). Separate buttons keep each
+// and the general-ledger import one company at a time — each company's ledger,
+// then its month-end balance sheet, in requests of their own (one invocation
+// for everything exceeds Vercel's function window). Separate buttons keep each
 // run short and let a failed ledger import be retried without redoing the
 // main sync. They still share one busy flag: every sync refreshes the
 // QuickBooks OAuth tokens and QBO rotates refresh tokens, so two runs at
@@ -64,8 +65,9 @@ export function QbSyncButtons({ companies }: { companies: SyncCompany[] }) {
     setMessage(null);
     let glAccounts = 0;
     let glLines = 0;
-    // One request per company; a failure skips to the next company instead
-    // of aborting, so one slow ledger can't block the rest.
+    let balanceCompanies = 0;
+    // One request per company (and per balance sheet); a failure skips to the
+    // next one instead of aborting, so one slow ledger can't block the rest.
     const failed: string[] = [];
     for (const [i, c] of companies.entries()) {
       setMessage(
@@ -78,9 +80,21 @@ export function QbSyncButtons({ companies }: { companies: SyncCompany[] }) {
       } catch (e) {
         failed.push(`${c.label} — ${e instanceof Error ? e.message : "failed"}`);
       }
+      setMessage(
+        `Importing balance sheet: ${c.label} (${i + 1} of ${companies.length})…`,
+      );
+      try {
+        await post("/api/qb/sync-balance-sheet", { realmId: c.realmId });
+        balanceCompanies += 1;
+      } catch (e) {
+        failed.push(
+          `${c.label} balance sheet — ${e instanceof Error ? e.message : "failed"}`,
+        );
+      }
     }
+    const plural = (n: number) => (n === 1 ? "company" : "companies");
     setMessage(
-      `Imported ${glLines} ledger lines across ${glAccounts} accounts from ${companies.length - failed.length} of ${companies.length} ${companies.length === 1 ? "company" : "companies"}.${
+      `Imported ${glLines} ledger lines across ${glAccounts} accounts, and month-end balances for ${balanceCompanies} of ${companies.length} ${plural(companies.length)}.${
         failed.length > 0
           ? ` Failed: ${failed.join("; ")}. Run "Sync general ledger" again to retry.`
           : ""
