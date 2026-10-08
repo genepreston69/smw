@@ -33,6 +33,13 @@ export const COL_DIMS: { key: ColDim; label: string }[] = [
   { key: "total", label: "Total only" },
 ];
 
+/** Column choices on the Income Statement. Classes are never columns there:
+    the statement shows one class at a time, picked from its Class dropdown. */
+export type StatementColDim = Exclude<ColDim, "class">;
+export const STATEMENT_COL_DIMS = COL_DIMS.filter(
+  (d): d is { key: StatementColDim; label: string } => d.key !== "class",
+);
+
 export const SCOPES: { key: Scope; label: string }[] = [
   { key: "pl", label: "Net income" },
   { key: "income", label: "Income only" },
@@ -130,7 +137,9 @@ export function statementExportHref(s: {
   company: string;
   from: string;
   to: string;
-  cols: ColDim;
+  cols: StatementColDim;
+  /** QuickBooks class, or null for All classes. */
+  cls: string | null;
 }): string {
   const params = new URLSearchParams({
     company: s.company,
@@ -138,6 +147,7 @@ export function statementExportHref(s: {
     to: s.to,
     cols: s.cols,
   });
+  if (s.cls !== null) params.set("class", s.cls);
   return `/api/export/statement?${params}`;
 }
 
