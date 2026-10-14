@@ -12,12 +12,16 @@ import {
 import { requireUser } from "@/lib/auth";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { money } from "@/lib/format";
+import { monthLabel } from "@/lib/financials";
 import {
   capLaborAmounts,
   capLaborBucket,
-  capLaborWindow,
+  capLaborByMonth,
+  capLaborHref,
+  capLaborPeriod,
   CAP_LABOR_BUCKET_LABELS,
   type CapLaborBucket,
+  type CapLaborPeriodParams,
 } from "@/lib/capitalizedLabor";
 import {
   Card,
@@ -30,6 +34,7 @@ import {
   buttonCls,
 } from "@/components/ui";
 import { CapLaborRows, type CapLaborRowData } from "./CapLaborRows";
+import { PeriodPicker } from "./PeriodPicker";
 
 interface JobRow {
   id: string;
@@ -41,24 +46,29 @@ interface JobRow {
 export default async function CapitalizedLaborPage({
   searchParams,
 }: {
-  searchParams: Promise<{ tab?: string }>;
+  searchParams: Promise<{ tab?: string } & CapLaborPeriodParams>;
 }) {
-  const { tab } = await searchParams;
+  const { tab, ...periodParams } = await searchParams;
   const activeTab: CapLaborBucket | "all" =
     tab === "nonbillable" || tab === "intercompany" ? tab : "all";
 
-  const href = (t: CapLaborBucket | "all") =>
-    t === "all" ? "/capitalized-labor" : `/capitalized-labor?tab=${t}`;
-
-  // Capitalized labor is calculated for the calendar year to date only —
-  // Jan 1 through today. Earlier entries are never read, so they can't move
+  // One calendar year, one month, or a month range — the current year to
+  // date by default. Entries outside it are never read, so they can't move
   // any number on the page.
-  const ytd = capLaborWindow();
+  const period = capLaborPeriod(periodParams);
+
+  // Tab links keep the period; period links keep the tab.
+  const tabParam = activeTab === "all" ? null : activeTab;
+  const href = (t: CapLaborBucket | "all") =>
+    capLaborHref("/capitalized-labor", period.params, {
+      tab: t === "all" ? null : t,
+    });
+  const exportQuery = capLaborHref("", period.params);
 
   const { supabase } = await requireUser();
   // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
   // cap; .order("id") tie-breaks for stable pages.
-  const [jobData, { data: connRows }, lineRows, { data: benefitData, error: benefitError }] =
+  const [jobData, { data: connRows }, lineRows, benefit] =
     await Promise.all([
       fetchAllRows((from, to) =>
         supabase
@@ -77,22 +87,34 @@ export default async function CapitalizedLaborPage({
         supabase
           .from("cap_labor_lines")
           .select("id, job_id, qb_txn_id, txn_date, amount, treatment")
-          .gte("txn_date", ytd.from)
-          .lte("txn_date", ytd.to)
+          .gte("txn_date", period.from)
+          .lte("txn_date", period.to)
           .order("id")
           .range(from, to),
       ),
-      // Employee-benefit allocation per job — the same figure as the Jobs
-      // dashboard's column — summed over the year to date in one statement
-      // (migration 0024). It is month-grain, so the current month counts in
-      // full. Reading the month-grain view row by row instead re-ran the
-      // whole allocation once per page of results, which blew the statement
-      // timeout.
-      supabase.rpc("job_benefit_allocation_summary", {
-        p_from: ytd.from,
-        p_to: ytd.toMonth,
-      }),
+      // Employee-benefit allocation per job per month — the same figure as
+      // the Jobs dashboard's column — for the period's months, read from the
+      // precomputed cache (migration 0025: an indexed scan, never the live
+      // derivation, which blows the statement timeout). It is month-grain,
+      // so a partial month counts in full.
+      fetchAllRows((from, to) =>
+        supabase
+          .from("job_benefit_allocation_cache")
+          .select("job_id, month, amount")
+          .gte("month", `${period.fromMonth}-01`)
+          .lte("month", `${period.toMonth}-01`)
+          .order("job_id")
+          .order("month")
+          .range(from, to),
+      ).then(
+        (rows) => ({ rows, error: null }),
+        (e: unknown) => ({
+          rows: [] as { job_id: string; month: string; amount: number | null }[],
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      ),
     ]);
+  const benefitError = benefit.error;
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),
@@ -102,17 +124,12 @@ export default async function CapitalizedLaborPage({
   // A failed allocation read renders as a banner, not a 500, which means it
   // leaves no trace in the platform logs unless it is written there.
   if (benefitError) {
-    console.error(
-      `Capitalized Labor: benefit allocation read failed: ${benefitError.message}` +
-        ` (code ${benefitError.code ?? "none"})`,
-    );
+    console.error(`Capitalized Labor: benefit allocation read failed: ${benefitError}`);
   }
 
-  // The summary comes back as compact [job, amount] tuples for the window.
-  const summary = (benefitData ?? {}) as { period?: [string, number][] };
   const benefitByJob = new Map<string, number>();
-  for (const [jobId, amount] of summary.period ?? []) {
-    benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + Number(amount ?? 0));
+  for (const b of benefit.rows) {
+    benefitByJob.set(b.job_id, (benefitByJob.get(b.job_id) ?? 0) + Number(b.amount ?? 0));
   }
 
   // Labor posted is wages plus employer taxes posted to the job, net of
@@ -143,8 +160,8 @@ export default async function CapitalizedLaborPage({
     }
   }
 
-  // Candidate jobs: journal-entry labor posted this year to a non-billable
-  // or intercompany job. Jobs with no labor this year aren't listed.
+  // Candidate jobs: journal-entry labor posted in the period to a
+  // non-billable or intercompany job. Jobs with no labor in it aren't listed.
   const candidates: (CapLaborRowData & { amount: number })[] = [];
   for (const j of (jobData ?? []) as unknown as JobRow[]) {
     const agg = aggByJob.get(j.id);
@@ -180,6 +197,25 @@ export default async function CapitalizedLaborPage({
   const intercompany = candidates.filter((c) => c.bucket === "intercompany");
   const rows = activeTab === "all" ? candidates : activeTab === "nonbillable" ? nonBillable : intercompany;
 
+  // The period month by month, for the jobs on the active tab. A one-month
+  // period has nothing to break down, so the card is left out.
+  const visibleJobs = new Set(rows.map((r) => r.id));
+  const byMonth =
+    period.fromMonth === period.toMonth
+      ? null
+      : capLaborByMonth(
+          period,
+          lineRows as {
+            job_id: string;
+            qb_txn_id: string;
+            txn_date: string | null;
+            amount: number | null;
+            treatment: string;
+          }[],
+          benefit.rows,
+          (jobId) => visibleJobs.has(jobId),
+        );
+
   const sumNet = (list: { amount: number }[]) =>
     list.reduce((s, c) => s + c.amount, 0);
   const postedTotal = candidates.reduce((s, c) => s + (c.postedAmount ?? 0), 0);
@@ -193,7 +229,7 @@ export default async function CapitalizedLaborPage({
   );
   const entryCount = (list: { entryCount: number }[]) =>
     list.reduce((s, c) => s + c.entryCount, 0);
-  const periodLabel = ytd.label;
+  const periodLabel = period.label;
 
   const tabCls = (active: boolean) =>
     `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
@@ -206,18 +242,18 @@ export default async function CapitalizedLaborPage({
     <div>
       <PageHeader
         title="Capitalized Labor"
-        subtitle={`Labor posted by journal entry to non-billable (EQP) or intercompany jobs — wages plus the employer's share of payroll taxes that may belong in a capital account rather than job cost, calculated for ${ytd.label} (Jan 1 through today) only. Withholdings from employees' checks are never counted. Labor moved to an asset account counts as already capitalized; the net is what still awaits review. Click a job to see the entries, and see the methodology summary at the bottom of the page.`}
+        subtitle={`Labor posted by journal entry to non-billable (EQP) or intercompany jobs — wages plus the employer's share of payroll taxes that may belong in a capital account rather than job cost — for ${period.label}. Pick a year, a month, or a range of months below. Withholdings from employees' checks are never counted. Labor moved to an asset account counts as already capitalized; the net is what still awaits review. Click a job to see the entries, and see the methodology summary at the bottom of the page.`}
         action={
           <div className="flex gap-2">
             <a
-              href="/api/export/capitalized-labor-workbook"
+              href={`/api/export/capitalized-labor-workbook${exportQuery}`}
               className={buttonCls("secondary")}
             >
               <Download size={15} strokeWidth={2} />
               Download Excel
             </a>
             <a
-              href="/api/export/capitalized-labor"
+              href={`/api/export/capitalized-labor${exportQuery}`}
               className={buttonCls("secondary")}
             >
               <Download size={15} strokeWidth={2} />
@@ -227,11 +263,17 @@ export default async function CapitalizedLaborPage({
         }
       />
 
+      <PeriodPicker
+        path="/capitalized-labor"
+        period={period}
+        keep={{ tab: tabParam }}
+      />
+
       {benefitError && (
         // Never let a failed allocation read read as "no benefits allocated".
         <p className="mb-6 rounded-lg border border-warn-700/25 bg-warn-50 px-4 py-3 text-sm text-warn-700">
           Benefit allocation couldn&rsquo;t be loaded, so those columns are
-          blank: {benefitError.message}
+          blank: {benefitError}
         </p>
       )}
 
@@ -298,13 +340,72 @@ export default async function CapitalizedLaborPage({
         </Link>
       </div>
 
+      {byMonth && (
+        <Card className="mb-6" pad={false}>
+          <div className="px-6 pt-5">
+            <CardTitle>By month</CardTitle>
+          </div>
+          <Table
+            head={
+              <tr>
+                <Th>Month</Th>
+                <Th right>Jobs</Th>
+                <Th right>Entries</Th>
+                <Th right>Labor posted</Th>
+                <Th right>Already capitalized</Th>
+                <Th right>Awaiting review</Th>
+                <Th right>Benefit allocation</Th>
+              </tr>
+            }
+          >
+            {byMonth.rows.map((m) => (
+              <tr key={m.month} className="hover:bg-surface/60">
+                <td className="px-4 py-2.5 font-medium">
+                  {/* Each month opens that month on its own. */}
+                  <Link
+                    href={capLaborHref("/capitalized-labor", { month: m.month }, { tab: tabParam })}
+                    className="text-ink-900 hover:text-brand-700"
+                  >
+                    {monthLabel(m.month)}
+                  </Link>
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-ink-600">{m.jobs || "—"}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-ink-600">{m.entries || "—"}</td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-ink-600">
+                  {m.entries ? money(m.posted) : "—"}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-ink-600">
+                  {m.capitalized ? money(m.capitalized) : "—"}
+                </td>
+                <td className="px-4 py-2.5 text-right font-medium tabular-nums text-ink-900">
+                  {m.entries ? money(m.net) : "—"}
+                </td>
+                <td className="px-4 py-2.5 text-right tabular-nums text-ink-600">
+                  {m.benefits ? money(m.benefits) : "—"}
+                </td>
+              </tr>
+            ))}
+            <tr className="border-t-2 border-line font-semibold text-ink-900">
+              <td className="px-4 py-2.5">Total</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">{byMonth.total.jobs}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">{byMonth.total.entries}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">{money(byMonth.total.posted)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">{money(byMonth.total.capitalized)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">{money(byMonth.total.net)}</td>
+              <td className="px-4 py-2.5 text-right tabular-nums">{money(byMonth.total.benefits)}</td>
+            </tr>
+          </Table>
+        </Card>
+      )}
+
       {/* clip off so the sticky header can escape the card while scrolling */}
       <Card pad={false} clip={false}>
         {rows.length === 0 ? (
-          <EmptyState icon={HardHat} title="No capitalized labor found">
+          <EmptyState icon={HardHat} title={`No capitalized labor in ${period.label}`}>
             Journal entries that post wages or employer payroll taxes to
-            non-billable (EQP) or intercompany jobs will appear here. Connect
-            QuickBooks in Settings and run a sync.
+            non-billable (EQP) or intercompany jobs will appear here. Pick
+            another period above, or connect QuickBooks in Settings and run a
+            sync.
           </EmptyState>
         ) : (
           <Table
@@ -324,7 +425,13 @@ export default async function CapitalizedLaborPage({
               </tr>
             }
           >
-            <CapLaborRows jobs={rows} showCompany={showCompany} />
+            {/* Keyed by period so expanded jobs reload for a new period. */}
+            <CapLaborRows
+              key={period.fileTag}
+              jobs={rows}
+              showCompany={showCompany}
+              period={period.params}
+            />
           </Table>
         )}
       </Card>
@@ -347,9 +454,11 @@ export default async function CapitalizedLaborPage({
               balance-sheet lines and never count, debit or credit. Payroll
               service fees, bills, purchases, and time entries are excluded.
               Reversals and corrections net against labor posted. Only entries
-              dated in the <strong>calendar year to date</strong> (Jan 1,{" "}
-              {ytd.year} through today) are counted — the dashboard, the
-              journal-entry drill-down, and both downloads alike.
+              dated in the <strong>selected period</strong> — the current
+              calendar year to date unless you pick a year, a month, or a
+              range of months, back to January 2023 — are counted: the
+              dashboard, the journal-entry drill-down, and both downloads
+              alike.
             </p>
           </div>
           <div>
@@ -363,7 +472,7 @@ export default async function CapitalizedLaborPage({
               are operating work and never qualify. Precision Paint jobs for
               Superior Marine Ways are excluded — those allocations are
               capitalized wages, already handled. Only jobs with journal-entry
-              labor this year are listed.
+              labor in the selected period are listed.
             </p>
           </div>
           <div>
@@ -394,7 +503,8 @@ export default async function CapitalizedLaborPage({
               per month, Employee Benefits &times; Direct Labor &divide;
               (Direct Labor + Salaries &amp; Wages) from the Income Statement,
               distributed across jobs pro-rata by direct-labor cost, summed
-              over the year to date. It covers all of a job&rsquo;s direct
+              over the months of the selected period (a partial month counts
+              in full). It covers all of a job&rsquo;s direct
               labor (not just journal entries) and is shown for context — a
               capitalization entry may need to carry this burden along with
               the labor. It is not included in the Awaiting review amounts.

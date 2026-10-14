@@ -3,7 +3,8 @@
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import {
-  capLaborWindow,
+  capLaborPeriod,
+  type CapLaborPeriodParams,
   type CapLaborTreatment,
 } from "@/lib/capitalizedLabor";
 
@@ -27,15 +28,20 @@ export type CapLaborLinesResult =
 /**
  * Journal-entry labor lines for one job, newest first (RLS: any signed-in
  * user) — the lines the dashboard counts (cap_labor_lines, migration 0030):
- * wages and employer taxes, never withholdings, dated in the calendar year to
- * date. Only journal entries count — bills, purchases, and time entries are
- * regular job cost, not capitalization candidates.
+ * wages and employer taxes, never withholdings, dated in the period on screen
+ * (the page's own period params, re-parsed here). Only journal entries count —
+ * bills, purchases, and time entries are regular job cost, not capitalization
+ * candidates.
  */
 export async function getCapLaborLines(
   jobId: string,
+  periodParams: CapLaborPeriodParams = {},
 ): Promise<CapLaborLinesResult> {
   const supabase = await createClient();
-  const ytd = capLaborWindow();
+  // Callers can send anything; capLaborPeriod drops what it can't use.
+  const period = capLaborPeriod(
+    periodParams && typeof periodParams === "object" ? periodParams : {},
+  );
   let data: CapLaborLine[];
   try {
     // Paged read: heavy payroll allocation can exceed Supabase's 1000-row
@@ -47,8 +53,8 @@ export async function getCapLaborLines(
           "id, txn_date, qb_txn_id, qb_doc_number, description, category, amount, treatment",
         )
         .eq("job_id", jobId)
-        .gte("txn_date", ytd.from)
-        .lte("txn_date", ytd.to)
+        .gte("txn_date", period.from)
+        .lte("txn_date", period.to)
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),
