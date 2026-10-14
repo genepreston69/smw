@@ -4,7 +4,7 @@ import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { csvResponse, toCsv } from "@/lib/csv";
 import {
   capLaborBucket,
-  capLaborWindow,
+  capLaborPeriodFromSearch,
   CAP_LABOR_BUCKET_LABELS,
   CAP_LABOR_TREATMENT_LABELS,
   yearOf,
@@ -14,13 +14,13 @@ import { shortDate } from "@/lib/format";
 
 // Line-level export of capitalized-labor candidates: every counted
 // journal-entry labor line (wages and employer taxes — never withholdings;
-// cap_labor_lines, migration 0030) dated in the calendar year to date and
-// posted to a non-billable or intercompany job, one row per line, so
-// accounting can build the capitalization entry from it. Must bucket
-// identically to the dashboard
+// cap_labor_lines, migration 0030) dated in the dashboard's period (the same
+// year / month / from-to params, parsed by capLaborPeriod) and posted to a
+// non-billable or intercompany job, one row per line, so accounting can build
+// the capitalization entry from it. Must bucket identically to the dashboard
 // (src/app/(app)/capitalized-labor/) — the rule lives in
 // src/lib/capitalizedLabor.ts.
-export async function GET() {
+export async function GET(request: Request) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -29,7 +29,7 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const ytd = capLaborWindow();
+  const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
 
   // Paged reads so the CSV includes every row past Supabase's 1000-row cap.
   const [jobs, { data: connRows }, lines] = await Promise.all([
@@ -50,8 +50,8 @@ export async function GET() {
         .select(
           "id, job_id, qb_txn_id, qb_doc_number, txn_date, description, category, amount, treatment",
         )
-        .gte("txn_date", ytd.from)
-        .lte("txn_date", ytd.to)
+        .gte("txn_date", period.from)
+        .lte("txn_date", period.to)
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),
@@ -92,6 +92,7 @@ export async function GET() {
       "Customer",
       "Type",
       "Year",
+      "Month",
       "Date",
       "Journal Entry",
       "Account",
@@ -110,9 +111,10 @@ export async function GET() {
           job.realm_id ? (companyByRealm.get(job.realm_id) ?? job.realm_id) : "",
           job.customer?.display_name,
           CAP_LABOR_BUCKET_LABELS[bucket],
-          // Calendar year, so the export pivots by year the same way the
-          // dashboard's by-year breakdown splits the totals.
+          // Calendar year and month, so the export pivots the same way the
+          // dashboard's by-month breakdown splits the totals.
           l.txn_date ? String(yearOf(l.txn_date as string) ?? "") : "",
+          l.txn_date ? (l.txn_date as string).slice(0, 7) : "",
           l.txn_date ? shortDate(l.txn_date as string) : "",
           (l.qb_doc_number as string | null) ?? `#${l.qb_txn_id}`,
           l.category as string | null,
@@ -128,5 +130,5 @@ export async function GET() {
     }),
   );
 
-  return csvResponse(csv, `capitalized-labor-${ytd.year}-ytd.csv`);
+  return csvResponse(csv, `capitalized-labor-${period.fileTag}.csv`);
 }

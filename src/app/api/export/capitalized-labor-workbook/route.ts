@@ -5,21 +5,24 @@ import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import {
   capLaborAmounts,
   capLaborBucket,
-  capLaborWindow,
+  capLaborByMonth,
+  capLaborPeriodFromSearch,
   CAP_LABOR_BUCKET_LABELS,
   CAP_LABOR_TREATMENT_LABELS,
   yearOf,
   type CapLaborTreatment,
 } from "@/lib/capitalizedLabor";
 import { shortDate } from "@/lib/format";
+import { monthLabel } from "@/lib/financials";
 
 // Excel workbook for the Capitalized Labor dashboard: a Jobs sheet mirroring
-// the dashboard table and a Journal Lines sheet with the line-level detail
-// accounting builds the capitalization entry from — both calendar year to
-// date, like the dashboard. Must bucket identically to the dashboard
-// (src/app/(app)/capitalized-labor/) and the CSV export — the rule lives in
-// src/lib/capitalizedLabor.ts.
-export async function GET() {
+// the dashboard table, a By Month sheet mirroring its by-month breakdown, and
+// a Journal Lines sheet with the line-level detail accounting builds the
+// capitalization entry from — all for the dashboard's period (the same year /
+// month / from-to params, parsed by capLaborPeriod). Must bucket identically
+// to the dashboard (src/app/(app)/capitalized-labor/) and the CSV export —
+// the rule lives in src/lib/capitalizedLabor.ts.
+export async function GET(request: Request) {
   const supabase = await createClient();
   const {
     data: { user },
@@ -28,10 +31,10 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const ytd = capLaborWindow();
+  const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
 
   // Paged reads so the workbook includes every row past Supabase's 1000-row cap.
-  const [jobs, { data: connRows }, lines, { data: benefitData }] = await Promise.all([
+  const [jobs, { data: connRows }, lines, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -51,31 +54,33 @@ export async function GET() {
         .select(
           "id, job_id, qb_txn_id, qb_doc_number, txn_date, description, category, amount, treatment",
         )
-        .gte("txn_date", ytd.from)
-        .lte("txn_date", ytd.to)
+        .gte("txn_date", period.from)
+        .lte("txn_date", period.to)
         .order("txn_date", { ascending: false, nullsFirst: false })
         .order("id")
         .range(from, to),
     ),
-    // Employee-benefit allocation per job over the year to date, in one
-    // statement (migration 0024) — same figure as the dashboard's Benefit
-    // allocation column. Reading the month-grain view row by row instead
-    // re-ran the whole allocation once per page of results.
-    supabase.rpc("job_benefit_allocation_summary", {
-      p_from: ytd.from,
-      p_to: ytd.toMonth,
-    }),
+    // Employee-benefit allocation per job per month for the period's months,
+    // from the precomputed cache (migration 0025) — same read and figure as
+    // the dashboard's Benefit allocation column.
+    fetchAllRows((from, to) =>
+      supabase
+        .from("job_benefit_allocation_cache")
+        .select("job_id, month, amount")
+        .gte("month", `${period.fromMonth}-01`)
+        .lte("month", `${period.toMonth}-01`)
+        .order("job_id")
+        .order("month")
+        .range(from, to),
+    ),
   ]);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),
   );
-  // Compact [job, amount] tuples for the window.
-  const benefitPeriod =
-    ((benefitData ?? {}) as { period?: [string, number][] }).period ?? [];
   const benefitByJob = new Map<string, number>();
-  for (const [jobId, raw] of benefitPeriod) {
-    benefitByJob.set(jobId, (benefitByJob.get(jobId) ?? 0) + Number(raw ?? 0));
+  for (const b of benefitRows) {
+    benefitByJob.set(b.job_id, (benefitByJob.get(b.job_id) ?? 0) + Number(b.amount ?? 0));
   }
 
   interface JobRow {
@@ -173,7 +178,7 @@ export async function GET() {
     });
   }
   const totalRow = jobsSheet.addRow({
-    job: `Total — ${ytd.label}`,
+    job: `Total — ${period.label}`,
     entries: summaryRows.reduce((s, r) => s + r.agg.entryIds.size, 0),
     posted: summaryRows.reduce((s, r) => s + r.agg.posted, 0),
     capitalized: summaryRows.reduce((s, r) => s + r.agg.capitalized, 0),
@@ -185,6 +190,39 @@ export async function GET() {
   });
   totalRow.font = { bold: true };
 
+  // The dashboard's by-month breakdown, over every candidate job (the
+  // workbook isn't scoped to a tab).
+  const byMonth = capLaborByMonth(
+    period,
+    lines as {
+      job_id: string;
+      qb_txn_id: string;
+      txn_date: string | null;
+      amount: number | null;
+      treatment: string;
+    }[],
+    benefitRows,
+    (jobId) => aggByJob.has(jobId),
+  );
+  const monthSheet = workbook.addWorksheet("By Month");
+  monthSheet.columns = [
+    { header: "Month", key: "month", width: 14 },
+    { header: "Jobs", key: "jobs", width: 8 },
+    { header: "Entries", key: "entries", width: 9 },
+    { header: "Labor Posted", key: "posted", width: 14, style: { numFmt: moneyFmt } },
+    { header: "Already Capitalized", key: "capitalized", width: 18, style: { numFmt: moneyFmt } },
+    { header: "Awaiting Review", key: "net", width: 15, style: { numFmt: moneyFmt } },
+    { header: "Benefit Allocation", key: "benefits", width: 17, style: { numFmt: moneyFmt } },
+  ];
+  monthSheet.getRow(1).font = { bold: true };
+  monthSheet.views = [{ state: "frozen", ySplit: 1 }];
+  for (const m of byMonth.rows) {
+    monthSheet.addRow({ ...m, month: monthLabel(m.month) });
+  }
+  monthSheet.addRow({ ...byMonth.total, month: `Total — ${period.label}` }).font = {
+    bold: true,
+  };
+
   const linesSheet = workbook.addWorksheet("Journal Lines");
   linesSheet.columns = [
     { header: "Job", key: "job", width: 32 },
@@ -192,6 +230,7 @@ export async function GET() {
     { header: "Customer", key: "customer", width: 28 },
     { header: "Type", key: "type", width: 14 },
     { header: "Year", key: "year", width: 8 },
+    { header: "Month", key: "month", width: 9 },
     { header: "Date", key: "date", width: 12 },
     { header: "Journal Entry", key: "entry", width: 14 },
     { header: "Account", key: "account", width: 28 },
@@ -215,6 +254,7 @@ export async function GET() {
       customer: job.customer?.display_name ?? "",
       type: CAP_LABOR_BUCKET_LABELS[bucket],
       year: yearOf(l.txn_date as string | null),
+      month: l.txn_date ? (l.txn_date as string).slice(0, 7) : "",
       date: l.txn_date ? shortDate(l.txn_date as string) : "",
       entry: (l.qb_doc_number as string | null) ?? `#${l.qb_txn_id}`,
       account: (l.category as string | null) ?? "",
@@ -233,7 +273,7 @@ export async function GET() {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="capitalized-labor-${ytd.year}-ytd.xlsx"`,
+      "Content-Disposition": `attachment; filename="capitalized-labor-${period.fileTag}.xlsx"`,
     },
   });
 }
