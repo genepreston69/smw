@@ -93,6 +93,76 @@ export function configToValues(c: BargeConfig): BargeConfigValues {
   };
 }
 
+export type ConfigNumericKey = Exclude<keyof BargeConfigValues, "name">;
+
+/** The configuration inputs, grouped and labeled as the Rough Quote Builder
+    shows them; the rough-quote export lists them the same way. */
+export const CONFIG_FIELD_GROUPS: {
+  title: string;
+  fields: { key: ConfigNumericKey; label: string; hint?: string; step?: number }[];
+}[] = [
+  {
+    title: "Principal dimensions",
+    fields: [
+      { key: "length_ft", label: "Length", hint: "ft", step: 5 },
+      { key: "beam_ft", label: "Beam", hint: "ft", step: 2 },
+      { key: "depth_ft", label: "Depth", hint: "ft", step: 0.5 },
+      { key: "spud_wells", label: "Spud wells", hint: "count — crane-ready", step: 1 },
+    ],
+  },
+  {
+    title: "Structure — TSG-calibrated defaults",
+    fields: [
+      { key: "deck_plate_in", label: "Deck / bottom plate", hint: "inches", step: 0.0625 },
+      { key: "side_plate_in", label: "Side shell plate", hint: "inches", step: 0.0625 },
+      { key: "bhd_plate_in", label: "Bulkhead plate", hint: "inches", step: 0.0625 },
+      { key: "long_bhd_spacing_ft", label: "Long. BHD spacing", hint: "ft — TSG: 11'", step: 0.5 },
+      { key: "wt_bhd_spacing_ft", label: "WT BHD spacing", hint: "ft — TSG: ~30'", step: 1 },
+      { key: "plate_allowance_pct", label: "Plate allowance", hint: "% — rakes, spud wells, laps (TSG-calib. 22%)", step: 1 },
+      { key: "framing_pct", label: "Framing & trusses", hint: "% of plate wt (TSG-calib. 39%)", step: 1 },
+      { key: "yield_pct", label: "Purchase yield", hint: "% — engineer's list runs 80–100", step: 1 },
+    ],
+  },
+  {
+    title: "Market rates — challenge these",
+    fields: [
+      { key: "steel_per_lb", label: "Steel price", hint: "$/lb blended — industry ≈$0.55", step: 0.01 },
+      { key: "hours_per_ton", label: "Hours per net ton", hint: "first-article 25–35; serial 10–15; yard claim 8.7", step: 1 },
+      { key: "labor_rate", label: "Labor rate", hint: "$/hr — industry burdened ≈$45; payroll $33.86", step: 1 },
+      { key: "blast_per_sqft", label: "Blast & paint", hint: "$/sqft exterior (TSG-calib. $4.00)", step: 0.25 },
+      { key: "spud_well_cost", label: "Spud well package", hint: "$ per well incl. spud (calib. $18K)", step: 500 },
+      { key: "fittings_per_sqft", label: "Fittings & hatches", hint: "$/sqft of deck (calib. $4.50)", step: 0.25 },
+      { key: "target_pct", label: "Target contribution", hint: "% — sets suggested price", step: 1 },
+    ],
+  },
+];
+
+/** Parse raw input strings into configuration values: anything blank,
+    negative, or non-numeric falls back to the default. One rule for the
+    builder's form and the rough-quote export's URL, so the file matches the
+    screen. */
+export function parseConfigValues(
+  name: string,
+  raw: (key: ConfigNumericKey) => string | null | undefined,
+): BargeConfigValues {
+  const out = { ...DEFAULT_CONFIG, name };
+  for (const g of CONFIG_FIELD_GROUPS)
+    for (const f of g.fields) {
+      const n = parseFloat(raw(f.key) ?? "");
+      out[f.key] = Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG[f.key];
+    }
+  return out;
+}
+
+/** The rough-quote Excel export for the inputs on screen, saved or not. */
+export function roughExportHref(v: BargeConfigValues): string {
+  const params = new URLSearchParams();
+  if (v.name.trim()) params.set("name", v.name.trim());
+  for (const g of CONFIG_FIELD_GROUPS)
+    for (const f of g.fields) params.set(f.key, String(v[f.key]));
+  return `/api/export/barge-rough?${params}`;
+}
+
 export interface BargeQuote {
   id: string;
   config_id: string | null;
@@ -270,6 +340,40 @@ export function computeQuote(q: QuoteInputs): QuoteComputed {
   };
 }
 
+/** Direct contribution (overhead excluded) or fully absorbed (overhead on labor). */
+export type BargeCostView = "direct" | "full";
+
+/** Sensitivity grid axes: multipliers on the blended steel price (columns)
+    and on total labor hours (rows). */
+export const SENSITIVITY_STEEL_MULTS = [0.85, 0.925, 1.0, 1.075, 1.15];
+export const SENSITIVITY_HOUR_MULTS = [0.7, 0.85, 1.0, 1.15, 1.3];
+
+/** Margin at the sales price as labor hours (rows) and steel price (columns)
+    flex — the workbench's sensitivity grid and the quote export's. Overhead
+    scales with hours in the fully-absorbed view. */
+export function marginSensitivity(
+  t: Pick<BargeQuoteTotals, "steel_cost" | "labor_cost" | "overhead_cost" | "fitout_cost">,
+  q: { contingency_pct: number; sales_price: number },
+  view: BargeCostView,
+): number[][] {
+  return SENSITIVITY_HOUR_MULTS.map((hm) =>
+    SENSITIVITY_STEEL_MULTS.map((sm) => {
+      const steel = t.steel_cost * sm;
+      const laborCost = t.labor_cost * hm;
+      const overhead = view === "direct" ? 0 : t.overhead_cost * hm;
+      const total =
+        (steel + laborCost + t.fitout_cost + overhead) *
+        (1 + q.contingency_pct / 100);
+      return q.sales_price > 0 ? (q.sales_price - total) / q.sales_price : 0;
+    }),
+  );
+}
+
+/** Traffic-light fill for a sensitivity cell: < 0% red, 0–10% amber,
+    10–20% light green, > 20% green. */
+export const sensitivityColor = (m: number) =>
+  m < 0 ? "#c94f35" : m < 0.1 ? "#e0a13f" : m < 0.2 ? "#8fb573" : "#3f7d55";
+
 /* ---------------------------------------------------------------------------
    Rough-quote parametric model. Shell and bulkhead plate from geometry at the
    entered scantling thicknesses (steel = 40.8 lb/sqft per inch of thickness);
@@ -369,6 +473,29 @@ export function computeRoughQuote(c: BargeConfigValues): RoughQuote {
     netLbs, netTons, orderedLbs, steelCost, hours, laborCost,
     blastCost, spudsCost, fittingsCost, directCost, suggestedPrice,
   };
+}
+
+/** The suggested price as the builder shows it: rounded to the nearest $5,000. */
+export const roundedSuggestedPrice = (r: RoughQuote) =>
+  Math.round(r.suggestedPrice / 5000) * 5000;
+
+/** The steel rows of the rough-quote build-up (net lbs) — the builder's
+    table and the rough-quote export. */
+export function roughBuildUp(
+  c: BargeConfigValues,
+  r: RoughQuote,
+): { label: string; lbs: number }[] {
+  const lbs = (n: number) => Math.round(n).toLocaleString("en-US");
+  return [
+    { label: `Deck plate — ${c.deck_plate_in}" × ${lbs(r.deckArea)} sqft`, lbs: r.wDeck },
+    { label: `Bottom plate — ${c.deck_plate_in}"`, lbs: r.wBottom },
+    { label: `Side shell — ${c.side_plate_in}" × ${lbs(r.sideArea)} sqft`, lbs: r.wSide },
+    { label: `Ends & headlog — ${c.deck_plate_in}" basis`, lbs: r.wEnds },
+    { label: `Long. bulkheads × ${r.longBhds} — ${c.bhd_plate_in}"`, lbs: r.wLongBhd },
+    { label: `WT bulkheads × ${r.wtBhds} — ${c.bhd_plate_in}"`, lbs: r.wWtBhd },
+    { label: `Plate allowance (${c.plate_allowance_pct}%) — rakes, spud wells, laps`, lbs: r.wAllowance },
+    { label: `Framing & trusses (${c.framing_pct}% of plate)`, lbs: r.wFraming },
+  ];
 }
 
 /** TSG phase allocation shares for splitting parametric hours into phases. */

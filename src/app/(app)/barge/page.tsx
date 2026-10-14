@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Anchor, BookOpen, Calculator, ChevronDown, Plus } from "lucide-react";
+import { Anchor, BookOpen, Calculator, ChevronDown, Download, Plus } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { moneyWhole, shortDate } from "@/lib/format";
 import { StatusBadge } from "@/components/StatusBadge";
@@ -91,6 +91,16 @@ export default async function BargeProgramPage() {
               <Calculator size={16} strokeWidth={2} />
               Rough quote builder
             </Link>
+            {quotes.length > 0 && (
+              <a
+                href="/api/export/barge-quotes"
+                title="Download every quote as an Excel workbook: a summary sheet plus one detailed sheet per quote"
+                className={buttonCls("secondary")}
+              >
+                <Download size={16} strokeWidth={2} />
+                Export all quotes
+              </a>
+            )}
             <details className="group relative">
               <summary className={`${buttonCls("primary")} cursor-pointer list-none [&::-webkit-details-marker]:hidden`}>
                 <Plus size={16} strokeWidth={2} />

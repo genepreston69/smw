@@ -274,6 +274,14 @@ export default async function BargeManualPage() {
                   builder (section 5).
                 </>,
                 <>
+                  <strong>Export all quotes</strong> — downloads an Excel
+                  workbook: an <em>All Quotes</em> summary sheet (one row per
+                  quote, with both direct and fully-absorbed margins; click a
+                  name to jump to it), followed by one detailed sheet per
+                  quote — the same sheet the workbench&rsquo;s{" "}
+                  <strong>Export Excel</strong> produces (section 10).
+                </>,
+                <>
                   <strong>New quote</strong> — opens a menu of starting
                   points: the two reference takeoffs, a blank quote, and one
                   entry for each saved configuration (section 9).
@@ -343,6 +351,13 @@ export default async function BargeManualPage() {
                 </>,
               ]}
             />
+            <P>
+              <strong>Export Excel</strong> (top-right corner) downloads the
+              estimate exactly as it stands on screen — headline numbers,
+              every input with its hint, the build-up table, and the geometry
+              — whether or not you have saved the configuration. Anyone can
+              export; nothing is saved by exporting.
+            </P>
             <Callout>
               The defaults are deliberately conservative — industry-benchmark
               steel prices and first-of-a-kind labor hours. The idea is that
@@ -700,8 +715,13 @@ export default async function BargeManualPage() {
                   number (once a quote has been resubmitted), the quote name
                   (click and type to rename while editable), the{" "}
                   <strong>Direct contribution / Fully absorbed</strong> view
-                  toggle (section 13), and the <strong>Duplicate</strong> and{" "}
-                  <strong>Delete</strong> buttons.
+                  toggle (section 13), and the <strong>Export Excel</strong>,{" "}
+                  <strong>Duplicate</strong>, and <strong>Delete</strong>{" "}
+                  buttons. Export Excel downloads the <em>saved</em> quote on
+                  one sheet — pricing inputs, the P&amp;L in both cost views
+                  side by side, the steel takeoff with section subtotals,
+                  labor by phase, both sensitivity grids, and the approval
+                  history. Save first if you want unsaved edits included.
                 </>,
                 <>
                   <strong>Five result tiles</strong> — the headline numbers,

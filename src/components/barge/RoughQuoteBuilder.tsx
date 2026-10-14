@@ -3,7 +3,7 @@
 import { useMemo, useState, useTransition } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { ArrowLeft, ArrowRight, Save } from "lucide-react";
+import { ArrowLeft, ArrowRight, Download, Save } from "lucide-react";
 import {
   createBargeQuoteFromConfig,
   saveBargeConfig,
@@ -11,56 +11,20 @@ import {
 import { Alert, Card, CardTitle, PageHeader, StatTile, buttonCls } from "@/components/ui";
 import { moneyWhole } from "@/lib/format";
 import {
+  CONFIG_FIELD_GROUPS,
   DEFAULT_CONFIG,
   computeRoughQuote,
   configToValues,
+  parseConfigValues,
+  roughBuildUp,
+  roughExportHref,
+  roundedSuggestedPrice,
   type BargeConfig,
   type BargeConfigValues,
+  type ConfigNumericKey,
 } from "@/lib/barge";
 
-type NumericKey = Exclude<keyof BargeConfigValues, "name">;
-
-const FIELD_GROUPS: {
-  title: string;
-  fields: { key: NumericKey; label: string; hint?: string; step?: number }[];
-}[] = [
-  {
-    title: "Principal dimensions",
-    fields: [
-      { key: "length_ft", label: "Length", hint: "ft", step: 5 },
-      { key: "beam_ft", label: "Beam", hint: "ft", step: 2 },
-      { key: "depth_ft", label: "Depth", hint: "ft", step: 0.5 },
-      { key: "spud_wells", label: "Spud wells", hint: "count — crane-ready", step: 1 },
-    ],
-  },
-  {
-    title: "Structure — TSG-calibrated defaults",
-    fields: [
-      { key: "deck_plate_in", label: "Deck / bottom plate", hint: "inches", step: 0.0625 },
-      { key: "side_plate_in", label: "Side shell plate", hint: "inches", step: 0.0625 },
-      { key: "bhd_plate_in", label: "Bulkhead plate", hint: "inches", step: 0.0625 },
-      { key: "long_bhd_spacing_ft", label: "Long. BHD spacing", hint: "ft — TSG: 11'", step: 0.5 },
-      { key: "wt_bhd_spacing_ft", label: "WT BHD spacing", hint: "ft — TSG: ~30'", step: 1 },
-      { key: "plate_allowance_pct", label: "Plate allowance", hint: "% — rakes, spud wells, laps (TSG-calib. 22%)", step: 1 },
-      { key: "framing_pct", label: "Framing & trusses", hint: "% of plate wt (TSG-calib. 39%)", step: 1 },
-      { key: "yield_pct", label: "Purchase yield", hint: "% — engineer's list runs 80–100", step: 1 },
-    ],
-  },
-  {
-    title: "Market rates — challenge these",
-    fields: [
-      { key: "steel_per_lb", label: "Steel price", hint: "$/lb blended — industry ≈$0.55", step: 0.01 },
-      { key: "hours_per_ton", label: "Hours per net ton", hint: "first-article 25–35; serial 10–15; yard claim 8.7", step: 1 },
-      { key: "labor_rate", label: "Labor rate", hint: "$/hr — industry burdened ≈$45; payroll $33.86", step: 1 },
-      { key: "blast_per_sqft", label: "Blast & paint", hint: "$/sqft exterior (TSG-calib. $4.00)", step: 0.25 },
-      { key: "spud_well_cost", label: "Spud well package", hint: "$ per well incl. spud (calib. $18K)", step: 500 },
-      { key: "fittings_per_sqft", label: "Fittings & hatches", hint: "$/sqft of deck (calib. $4.50)", step: 0.25 },
-      { key: "target_pct", label: "Target contribution", hint: "% — sets suggested price", step: 1 },
-    ],
-  },
-];
-
-const QUICK_SETS: Partial<Record<NumericKey, { label: string; value: number }[]>> = {
+const QUICK_SETS: Partial<Record<ConfigNumericKey, { label: string; value: number }[]>> = {
   steel_per_lb: [
     { label: "industry $0.55", value: 0.55 },
     { label: "yard-quote $0.78", value: 0.78 },
@@ -74,9 +38,9 @@ const QUICK_SETS: Partial<Record<NumericKey, { label: string; value: number }[]>
 
 const fmtLbs = (n: number) => Math.round(n).toLocaleString("en-US");
 
-function toFields(v: BargeConfigValues): Record<NumericKey, string> {
-  const out = {} as Record<NumericKey, string>;
-  for (const g of FIELD_GROUPS)
+function toFields(v: BargeConfigValues): Record<ConfigNumericKey, string> {
+  const out = {} as Record<ConfigNumericKey, string>;
+  for (const g of CONFIG_FIELD_GROUPS)
     for (const f of g.fields) out[f.key] = String(v[f.key]);
   return out;
 }
@@ -98,19 +62,14 @@ export function RoughQuoteBuilder({
   const initial = configs.find((c) => c.id === initialConfigId) ?? null;
   const [configId, setConfigId] = useState<string | null>(initial?.id ?? null);
   const [name, setName] = useState(initial?.name ?? "");
-  const [fields, setFields] = useState<Record<NumericKey, string>>(
+  const [fields, setFields] = useState<Record<ConfigNumericKey, string>>(
     toFields(initial ? configToValues(initial) : DEFAULT_CONFIG),
   );
 
-  const values: BargeConfigValues = useMemo(() => {
-    const out = { ...DEFAULT_CONFIG, name };
-    for (const g of FIELD_GROUPS)
-      for (const f of g.fields) {
-        const n = parseFloat(fields[f.key]);
-        out[f.key] = Number.isFinite(n) && n >= 0 ? n : DEFAULT_CONFIG[f.key];
-      }
-    return out;
-  }, [fields, name]);
+  const values: BargeConfigValues = useMemo(
+    () => parseConfigValues(name, (key) => fields[key]),
+    [fields, name],
+  );
 
   const r = useMemo(() => computeRoughQuote(values), [values]);
   const contribution = r.suggestedPrice - r.directCost;
@@ -142,16 +101,7 @@ export function RoughQuoteBuilder({
     });
   }
 
-  const buildUp: { label: string; lbs: number }[] = [
-    { label: `Deck plate — ${values.deck_plate_in}" × ${fmtLbs(r.deckArea)} sqft`, lbs: r.wDeck },
-    { label: `Bottom plate — ${values.deck_plate_in}"`, lbs: r.wBottom },
-    { label: `Side shell — ${values.side_plate_in}" × ${fmtLbs(r.sideArea)} sqft`, lbs: r.wSide },
-    { label: `Ends & headlog — ${values.deck_plate_in}" basis`, lbs: r.wEnds },
-    { label: `Long. bulkheads × ${r.longBhds} — ${values.bhd_plate_in}"`, lbs: r.wLongBhd },
-    { label: `WT bulkheads × ${r.wtBhds} — ${values.bhd_plate_in}"`, lbs: r.wWtBhd },
-    { label: `Plate allowance (${values.plate_allowance_pct}%) — rakes, spud wells, laps`, lbs: r.wAllowance },
-    { label: `Framing & trusses (${values.framing_pct}% of plate)`, lbs: r.wFraming },
-  ];
+  const buildUp = roughBuildUp(values, r);
 
   return (
     <div>
@@ -159,10 +109,20 @@ export function RoughQuoteBuilder({
         title="Rough Quote Builder"
         subtitle="Dimensions to a priced estimate in seconds. Save the parameter set as a configuration to reuse it from the New Quote menu. Defaults are deliberately conservative — industry-benchmark steel and first-article hours — so every number states the case that must be beaten."
         action={
-          <Link href="/barge" className={buttonCls("secondary")}>
-            <ArrowLeft size={16} strokeWidth={2} />
-            Barge Program
-          </Link>
+          <div className="flex flex-wrap items-center gap-2">
+            <a
+              href={roughExportHref(values)}
+              title="Download the inputs, build-up, and priced estimate on screen as an Excel workbook"
+              className={buttonCls("secondary")}
+            >
+              <Download size={16} strokeWidth={2} />
+              Export Excel
+            </a>
+            <Link href="/barge" className={buttonCls("secondary")}>
+              <ArrowLeft size={16} strokeWidth={2} />
+              Barge Program
+            </Link>
+          </div>
         }
       />
 
@@ -194,7 +154,7 @@ export function RoughQuoteBuilder({
             </div>
           )}
 
-          {FIELD_GROUPS.map((g) => (
+          {CONFIG_FIELD_GROUPS.map((g) => (
             <div key={g.title} className="mb-5">
               <p className="mb-2 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-brand-600">
                 {g.title}
@@ -297,7 +257,7 @@ export function RoughQuoteBuilder({
             />
             <StatTile
               label={`Price @ ${values.target_pct}%`}
-              value={moneyWhole(Math.round(r.suggestedPrice / 5000) * 5000)}
+              value={moneyWhole(roundedSuggestedPrice(r))}
               hint={`${moneyWhole(contribution)} contribution`}
             />
           </div>
@@ -387,7 +347,7 @@ export function RoughQuoteBuilder({
                   </td>
                   <td />
                   <td className="px-6 py-2 text-right tabular-nums">
-                    {moneyWhole(Math.round(r.suggestedPrice / 5000) * 5000)}
+                    {moneyWhole(roundedSuggestedPrice(r))}
                   </td>
                 </tr>
               </tbody>
