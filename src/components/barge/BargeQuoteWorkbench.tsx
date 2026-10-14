@@ -7,6 +7,7 @@ import {
   ArrowLeft,
   Check,
   Copy,
+  Download,
   MessageSquareWarning,
   Plus,
   Send,
@@ -36,9 +37,14 @@ import {
   BARGE_LINE_UNITS,
   BARGE_SECTIONS,
   BARGE_SECTION_LABELS,
+  SENSITIVITY_HOUR_MULTS,
+  SENSITIVITY_STEEL_MULTS,
   computeQuote,
   computeSteelLine,
+  marginSensitivity,
+  sensitivityColor,
   type BargeApproval,
+  type BargeCostView,
   type BargeLaborPhase,
   type BargeQuote,
   type BargeSection,
@@ -137,9 +143,6 @@ function toInputs(d: DraftState): QuoteInputs {
 }
 
 const fmtLbs = (n: number) => Math.round(n).toLocaleString("en-US");
-const marginColor = (m: number) =>
-  m < 0 ? "#c94f35" : m < 0.1 ? "#e0a13f" : m < 0.2 ? "#8fb573" : "#3f7d55";
-
 const inputCls =
   "rounded-lg border border-line bg-white px-2 py-1 text-sm tabular-nums focus:border-brand-500 focus:outline-none focus:ring-2 focus:ring-brand-500/20 disabled:bg-surface disabled:text-ink-600";
 
@@ -160,7 +163,7 @@ export function BargeQuoteWorkbench(props: Props) {
   const [, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [mode, setMode] = useState<"direct" | "full">("direct");
+  const [mode, setMode] = useState<BargeCostView>("direct");
   const [comment, setComment] = useState("");
 
   const isCreator = quote.created_by === me.id;
@@ -270,21 +273,9 @@ export function BargeQuoteWorkbench(props: Props) {
 
   // --- sensitivity grid: steel $/lb multiplier × labor-hours multiplier ----
   const blendedRate = r.ordered_lbs > 0 ? r.steel_cost / r.ordered_lbs : 0;
-  const steelMults = [0.85, 0.925, 1.0, 1.075, 1.15];
-  const hourMults = [0.7, 0.85, 1.0, 1.15, 1.3];
-  const sensitivity = hourMults.map((hm) =>
-    steelMults.map((sm) => {
-      const steel = r.steel_cost * sm;
-      const laborCost = r.labor_cost * hm;
-      const overhead = mode === "direct" ? 0 : r.overhead_cost * hm;
-      const total =
-        (steel + laborCost + r.fitout_cost + overhead) *
-        (1 + inputs.contingency_pct / 100);
-      return inputs.sales_price > 0
-        ? (inputs.sales_price - total) / inputs.sales_price
-        : 0;
-    }),
-  );
+  const steelMults = SENSITIVITY_STEEL_MULTS;
+  const hourMults = SENSITIVITY_HOUR_MULTS;
+  const sensitivity = marginSensitivity(r, inputs, mode);
 
   // --- P&L rows -------------------------------------------------------------
   const plRows: { label: string; amount: number }[] = [];
@@ -366,6 +357,18 @@ export function BargeQuoteWorkbench(props: Props) {
               </button>
             ))}
           </div>
+          <a
+            href={`/api/export/barge-quote?id=${quote.id}`}
+            title={
+              dirty
+                ? "Exports the saved quote — save first to include your unsaved changes"
+                : "Download the takeoff, labor, P&L (both cost views), and sensitivity grids as an Excel workbook"
+            }
+            className={buttonCls("secondary", "sm")}
+          >
+            <Download size={13} strokeWidth={2} />
+            Export Excel
+          </a>
           <button
             onClick={() => run(() => duplicateBargeQuote(quote.id))}
             disabled={busy}
@@ -919,7 +922,7 @@ export function BargeQuoteWorkbench(props: Props) {
                             className={`px-2 py-1.5 font-medium text-white ${
                               current ? "outline outline-2 -outline-offset-2 outline-navy-900" : ""
                             }`}
-                            style={{ background: marginColor(m) }}
+                            style={{ background: sensitivityColor(m) }}
                           >
                             {(m * 100).toFixed(0)}%
                           </td>
