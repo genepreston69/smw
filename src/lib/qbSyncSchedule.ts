@@ -2,6 +2,7 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import {
+  syncBalanceSheet,
   syncCustomersAndJobs,
   syncGeneralLedger,
   syncJobCosts,
@@ -12,9 +13,10 @@ import type { QbSyncStep, QbSyncStepKind } from "@/lib/types";
 // Nightly QuickBooks sync — the worker half of migration 0024
 //
 // A run is a queue of ordered steps (customers/jobs, then costs/invoices, then
-// one general-ledger import per connected company). Postgres owns the queue's
-// rules; this module decides which steps a run contains, runs one at a time,
-// and reports what happened. /api/cron/qb-sync is the only caller.
+// one general-ledger import per connected company, then one balance-sheet
+// import per company). Postgres owns the queue's rules; this module decides
+// which steps a run contains, runs one at a time, and reports what happened.
+// /api/cron/qb-sync is the only caller.
 // ---------------------------------------------------------------------------
 
 /** Timezone the 4 AM schedule is expressed in. */
@@ -101,15 +103,46 @@ export async function planSteps(): Promise<StepPlan[]> {
   const companies = data ?? [];
   if (companies.length === 0) return [];
 
+  const companyName = (c: { realm_id: string; company_name: string | null }) =>
+    c.company_name ?? `Company ${c.realm_id}`;
   return [
     { kind: "customers_jobs", realm_id: null, label: "Customers & jobs" },
     { kind: "job_costs", realm_id: null, label: "Actual costs & invoices" },
     ...companies.map((c) => ({
       kind: "general_ledger" as const,
       realm_id: c.realm_id,
-      label: `General ledger — ${c.company_name ?? `Company ${c.realm_id}`}`,
+      label: `General ledger — ${companyName(c)}`,
     })),
+    // Last, so a balance-sheet failure never delays a ledger import.
+    ...((await balanceSheetReady())
+      ? companies.map((c) => ({
+          kind: "balance_sheet" as const,
+          realm_id: c.realm_id,
+          label: `Balance sheet — ${companyName(c)}`,
+        }))
+      : []),
   ];
+}
+
+/**
+ * Whether migration 0036 is applied. Until it is, a balance_sheet step would
+ * fail the step-kind check and keep the whole run from being created — so
+ * the run simply leaves those steps out. (0036 allows the step kind before
+ * it creates gl_balances, so the table existing means both are in place.)
+ */
+async function balanceSheetReady(): Promise<boolean> {
+  const supabase = createServiceClient();
+  const { error } = await supabase
+    .from("gl_balances")
+    .select("id", { head: true })
+    .limit(1);
+  if (error) {
+    console.warn(
+      `Nightly sync: skipping balance-sheet steps until migration 0036 is applied (${error.message})`,
+    );
+    return false;
+  }
+  return true;
 }
 
 /** Creates today's scheduled run, or returns null if it already exists. */
@@ -172,6 +205,11 @@ async function executeStep(step: QbSyncStep): Promise<Record<string, number>> {
       if (!step.realm_id) throw new Error("General-ledger step has no realm");
       const r = await syncGeneralLedger(step.realm_id);
       return { glAccounts: r.accounts, glLines: r.glLines };
+    }
+    case "balance_sheet": {
+      if (!step.realm_id) throw new Error("Balance-sheet step has no realm");
+      const r = await syncBalanceSheet(step.realm_id);
+      return { balances: r.balances, months: r.months };
     }
   }
 }

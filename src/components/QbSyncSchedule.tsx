@@ -33,7 +33,9 @@ function summarize(step: QbSyncStep): string | null {
       ? [count(r.customers, "customer"), count(r.jobs, "job")]
       : step.kind === "job_costs"
         ? [count(r.costLines, "cost line"), count(r.invoices, "invoice")]
-        : [count(r.glLines, "ledger line"), count(r.glAccounts, "account")];
+        : step.kind === "balance_sheet"
+          ? [count(r.balances, "balance"), count(r.months, "month end")]
+          : [count(r.glLines, "ledger line"), count(r.glAccounts, "account")];
   const kept = parts.filter(Boolean);
   return kept.length > 0 ? kept.join(" · ") : null;
 }
@@ -64,8 +66,9 @@ export function QbSyncSchedule({
           {scheduleLabel} {zoneLabel} time
         </span>
         : customers and jobs, then actual costs and invoices, then the general
-        ledger for each connected company. Manual syncs stay available above and
-        are never blocked by the scheduled one.
+        ledger and the month-end balance sheet for each connected company.
+        Manual syncs stay available above and are never blocked by the
+        scheduled one.
       </p>
 
       {run ? (

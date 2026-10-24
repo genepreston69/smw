@@ -1,0 +1,50 @@
+import { NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
+import { syncBalanceSheet } from "@/lib/quickbooks";
+
+// Month-end balance-sheet import for ONE company per request — the "Sync
+// general ledger" button calls it after each company's ledger, keeping every
+// request well inside Vercel's function window (same split as sync-ledger).
+export const maxDuration = 300;
+
+export async function POST(request: Request) {
+  const supabase = await createClient();
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (profile?.role !== "admin") {
+    return NextResponse.json(
+      { error: "Only admins can run a sync" },
+      { status: 403 },
+    );
+  }
+
+  const body = await request.json().catch(() => null);
+  const realmId = typeof body?.realmId === "string" ? body.realmId : null;
+  if (!realmId) {
+    return NextResponse.json({ error: "Missing realmId" }, { status: 400 });
+  }
+
+  try {
+    const result = await syncBalanceSheet(realmId);
+    return NextResponse.json({
+      ok: true,
+      balances: result.balances,
+      months: result.months,
+    });
+  } catch (e) {
+    return NextResponse.json(
+      { error: e instanceof Error ? e.message : "Balance sheet sync failed" },
+      { status: 500 },
+    );
+  }
+}

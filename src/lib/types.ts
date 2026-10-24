@@ -128,7 +128,11 @@ export interface ApprovalThreshold {
 }
 
 // Scheduled QuickBooks sync (migration 0024).
-export type QbSyncStepKind = "customers_jobs" | "job_costs" | "general_ledger";
+export type QbSyncStepKind =
+  | "customers_jobs"
+  | "job_costs"
+  | "general_ledger"
+  | "balance_sheet"; // migration 0036
 
 export interface QbSyncRun {
   id: string;

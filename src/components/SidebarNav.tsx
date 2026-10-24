@@ -16,6 +16,7 @@ import {
   Percent,
   BookOpen,
   Rows3,
+  Columns2,
   Scale,
   Wallet,
   Settings,
@@ -82,6 +83,12 @@ const SECTIONS: NavSection[] = [
         href: "/financials/statement",
         label: "Income Statement",
         icon: Rows3,
+        adminOnly: true,
+      },
+      {
+        href: "/financials/balance-sheet",
+        label: "Balance Sheet",
+        icon: Columns2,
         adminOnly: true,
       },
       {
