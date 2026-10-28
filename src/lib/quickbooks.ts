@@ -316,11 +316,11 @@ interface QboExpenseLine {
   DetailType?: string;
   ItemBasedExpenseLineDetail?: {
     CustomerRef?: { value: string };
-    ItemRef?: { name?: string };
+    ItemRef?: { value?: string; name?: string };
   };
   AccountBasedExpenseLineDetail?: {
     CustomerRef?: { value: string };
-    AccountRef?: { name?: string };
+    AccountRef?: { value?: string; name?: string };
   };
 }
 
@@ -330,7 +330,18 @@ interface QboTxn {
   DocNumber?: string;
   VendorRef?: { name?: string };
   EntityRef?: { name?: string };
+  /** Purchase only: true for a credit-card credit (a refund), not a charge. */
+  Credit?: boolean;
   Line?: QboExpenseLine[];
+}
+
+// Products and services, for the account an item-based purchase line posts
+// to: a stock item's inventory asset, otherwise its expense account.
+interface QboItem {
+  Id: string;
+  Type?: string;
+  ExpenseAccountRef?: { value?: string };
+  AssetAccountRef?: { value?: string };
 }
 
 interface QboTimeActivity {
@@ -410,6 +421,24 @@ function isCapitalAssetAccount(account: QboAccount | undefined): boolean {
     account?.Classification === "Asset" &&
     CAPITAL_ASSET_TYPES.has(account.AccountType ?? "")
   );
+}
+
+// The account a bill / purchase line posts to: an account-based line names
+// it; an item-based line posts to its item's purchase account — the inventory
+// asset for a stock item, the expense account otherwise. Capitalized
+// Materials (cap_material_lines, migration 0036) counts only lines that
+// reached an expense account.
+function expenseLineAccountId(
+  line: QboExpenseLine,
+  itemById: Map<string, QboItem>,
+): string | null {
+  if (line.ItemBasedExpenseLineDetail) {
+    const item = itemById.get(line.ItemBasedExpenseLineDetail.ItemRef?.value ?? "");
+    const ref =
+      item?.Type === "Inventory" ? item.AssetAccountRef : item?.ExpenseAccountRef;
+    return ref?.value ?? null;
+  }
+  return line.AccountBasedExpenseLineDetail?.AccountRef?.value ?? null;
 }
 
 // Item-based lines are purchased goods (materials); account-based lines are
@@ -597,13 +626,15 @@ export async function syncCustomersAndJobs(): Promise<{
 }
 
 // ---------------------------------------------------------------------------
-// Actual job costs: bill/purchase lines tagged to a job in QuickBooks
+// Actual job costs: bill/purchase/vendor-credit lines tagged to a job in QuickBooks
 // ---------------------------------------------------------------------------
 
 function extractJobCostRows(
   txns: QboTxn[],
-  txnType: "Bill" | "Purchase",
+  txnType: "Bill" | "Purchase" | "VendorCredit",
   jobIdByQbId: Map<string, string>,
+  accountById: Map<string, QboAccount>,
+  itemById: Map<string, QboItem>,
   orgId: string,
   realmId: string,
   now: string,
@@ -611,6 +642,9 @@ function extractJobCostRows(
   const rows = [];
   for (const txn of txns) {
     const vendor = txn.VendorRef?.name ?? txn.EntityRef?.name ?? null;
+    // A vendor credit or a credit-card credit refunds cost, so it counts
+    // against the job — the same sign rule as a journal-entry credit.
+    const sign = txnType === "VendorCredit" || txn.Credit ? -1 : 1;
     for (const line of txn.Line ?? []) {
       const detail =
         line.ItemBasedExpenseLineDetail ?? line.AccountBasedExpenseLineDetail;
@@ -618,6 +652,7 @@ function extractJobCostRows(
       if (!customerQbId) continue;
       const jobId = jobIdByQbId.get(customerQbId);
       if (!jobId) continue; // tagged to a top-level customer, not a job
+      const accountId = expenseLineAccountId(line, itemById);
       rows.push({
         org_id: orgId,
         realm_id: realmId,
@@ -634,7 +669,11 @@ function extractJobCostRows(
           line.AccountBasedExpenseLineDetail?.AccountRef?.name ??
           null,
         cost_type: classifyCostType(line),
-        amount: line.Amount ?? 0,
+        amount: sign * (line.Amount ?? 0),
+        qb_account_id: accountId,
+        account_classification: accountId
+          ? (accountById.get(accountId)?.Classification ?? null)
+          : null,
         last_synced_at: now,
       });
     }
@@ -643,8 +682,8 @@ function extractJobCostRows(
 }
 
 /**
- * Import actual costs (bill/purchase lines tagged to jobs) and invoiced
- * revenue (invoices billed to jobs) for all companies.
+ * Import actual costs (bill/purchase/vendor-credit lines tagged to jobs) and
+ * invoiced revenue (invoices billed to jobs) for all companies.
  */
 export async function syncJobCosts(): Promise<{
   costLines: number;
@@ -693,16 +732,23 @@ export async function syncJobCosts(): Promise<{
     const [
       bills,
       purchases,
+      vendorCredits,
       timeActivities,
       qbInvoices,
       journalEntries,
       accounts,
+      items,
     ] = [
       await qboQuery<QboTxn>(accessToken, realmId, `SELECT * FROM Bill ${since}`),
       await qboQuery<QboTxn>(
         accessToken,
         realmId,
         `SELECT * FROM Purchase ${since}`,
+      ),
+      await qboQuery<QboTxn>(
+        accessToken,
+        realmId,
+        `SELECT * FROM VendorCredit ${since}`,
       ),
       await qboQuery<QboTimeActivity>(
         accessToken,
@@ -719,16 +765,24 @@ export async function syncJobCosts(): Promise<{
         realmId,
         `SELECT * FROM JournalEntry ${since}`,
       ),
-      // The chart of accounts, so journal lines carry their account's
-      // classification (Capitalized Labor counts only expense-side payroll
-      // lines) and capitalization entries can be told apart.
+      // The chart of accounts, so journal and bill / purchase lines carry
+      // their account's classification (Capitalized Labor and Capitalized
+      // Materials count only expense-side lines) and capitalization entries
+      // can be told apart.
       await qboQuery<QboAccount>(
         accessToken,
         realmId,
         "SELECT * FROM Account WHERE Active IN (true, false)",
       ),
+      // Products and services, for the account an item-based line posts to.
+      await qboQuery<QboItem>(
+        accessToken,
+        realmId,
+        "SELECT * FROM Item WHERE Active IN (true, false)",
+      ),
     ];
     const accountById = new Map(accounts.map((a) => [a.Id, a]));
+    const itemById = new Map(items.map((i) => [i.Id, i]));
 
     const timeRows = [];
     for (const t of timeActivities) {
@@ -807,16 +861,24 @@ export async function syncJobCosts(): Promise<{
       }
     }
 
-    const rows = [
-      ...extractJobCostRows(bills, "Bill", jobIdByQbId, org.id, realmId, now),
-      ...extractJobCostRows(
-        purchases,
-        "Purchase",
+    const expenseRows = (
+      txns: QboTxn[],
+      txnType: "Bill" | "Purchase" | "VendorCredit",
+    ) =>
+      extractJobCostRows(
+        txns,
+        txnType,
         jobIdByQbId,
+        accountById,
+        itemById,
         org.id,
         realmId,
         now,
-      ),
+      );
+    const rows = [
+      ...expenseRows(bills, "Bill"),
+      ...expenseRows(purchases, "Purchase"),
+      ...expenseRows(vendorCredits, "VendorCredit"),
       ...timeRows,
       ...journalRows,
     ];

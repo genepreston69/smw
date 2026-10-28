@@ -12,6 +12,7 @@ import {
   Wrench,
   HardHat,
   Archive,
+  Package,
   Landmark,
   Percent,
   BookOpen,
@@ -65,6 +66,12 @@ const SECTIONS: NavSection[] = [
         label: "Already Capitalized",
         icon: Archive,
         adminOnly: true,
+      },
+      {
+        // Everything expensed on non-billable jobs, every QB company.
+        href: "/capitalized-materials",
+        label: "Capitalized Materials",
+        icon: Package,
       },
     ],
   },
