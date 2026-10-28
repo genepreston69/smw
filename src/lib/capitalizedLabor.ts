@@ -93,10 +93,11 @@ export function capLaborBucket(j: {
 /* ---------------------------------------------------------------------------
    Period. Capitalized labor is viewed for one calendar year, one month, or a
    range of months — the current year to date unless the URL picks another —
-   on both Capitalized Labor pages, the job drill-down, and every export, so
-   the window lives here and each of them parses the same URL params with
-   capLaborPeriod. Imported history starts Jan 2023 (frozen pre-audit job
-   costs and ledger lines persist back to then); nothing runs past today.
+   on both Capitalized Labor pages and Capitalized Materials, their job
+   drill-downs, and every export, so the window lives here and each of them
+   parses the same URL params with capLaborPeriod. Imported history starts
+   Jan 2023 (frozen pre-audit job costs and ledger lines persist back to
+   then); nothing runs past today.
    Dates are UTC, matching the database (current_date is UTC on Supabase),
    and YYYY-MM-DD strings compare as dates.
 --------------------------------------------------------------------------- */
