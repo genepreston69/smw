@@ -132,6 +132,26 @@ export function baselineRange(year: number): { from: string; to: string } {
   return { from: `${year - 2}-07`, to: `${year - 1}-06` };
 }
 
+/**
+ * Baseline cells with December replaced by November: year-end adjusting
+ * entries are always booked in December, so its actuals are no guide to a
+ * normal month. Every December cell is dropped and each November cell (same
+ * account, class, and amount) is copied onto December — an account with no
+ * November activity budgets nothing for December. loadBudget applies this to
+ * the baseline only, so the page and every export share it; actuals (Budget
+ * vs Actual) stay as booked.
+ */
+export function decemberFromNovember(cells: readonly BudgetCell[]): BudgetCell[] {
+  const out: BudgetCell[] = [];
+  for (const c of cells) {
+    const month = c.col_key.slice(5, 7);
+    if (month === "12") continue;
+    out.push(c);
+    if (month === "11") out.push({ ...c, col_key: `${c.col_key.slice(0, 5)}12` });
+  }
+  return out;
+}
+
 export type GrowthClass = "Revenue" | "Expense";
 
 /** Category growth % by classification, then category label (exactly as
