@@ -375,7 +375,7 @@ export function buildBudgetWorkbook(
       `Budget ${year} — ${label}`,
       [
         classNote,
-        `Baseline ${baselineLabel} actuals mapped onto ${year}`,
+        `Baseline ${baselineLabel} actuals mapped onto ${year} (December uses November's amounts — December carries the year-end adjusting entries)`,
         growthNote,
         typedNote,
         approvedCount ? `Includes ${approvedCount} approved initiative(s)` : "",

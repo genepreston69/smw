@@ -304,7 +304,9 @@ export default async function BudgetPage({
       <p className="mt-3 text-xs text-ink-400">
         Each {year} month starts from the same calendar month of the baseline
         ({monthLabel(baseline.from)} → Jul {year}, {monthLabel(`${year - 1}-01`)}{" "}
-        → Jan {year}), so seasonality carries forward. Each account grows at
+        → Jan {year}), so seasonality carries forward &mdash; except
+        December, which uses November&rsquo;s baseline amounts because
+        year-end adjusting entries are always booked in December. Each account grows at
         its category&rsquo;s rate for its company; a category left blank, and
         any uncategorized account, grows at the company&rsquo;s revenue or
         expense default. New initiatives
