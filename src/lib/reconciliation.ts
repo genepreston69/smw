@@ -285,11 +285,25 @@ export function parsePlWorkbook(grid: GridValue[][]): ParsedPl {
         stack = stack.slice(0, idx);
         continue;
       }
-      if (norm.startsWith("total for ")) continue;
+      // A total nothing is open for is still a subtotal, never an account:
+      // "Total for <group>" always, and a statement section's own total.
+      if (norm.startsWith("total for ") || SECTION_LABELS.has(target)) continue;
     }
 
     if (!hasAmount) {
-      if (SECTION_LABELS.has(norm) || stack.length === 0) stack = [label];
+      // A parent account can carry its section's name — QuickBooks' default
+      // chart has "Cost of goods sold" (parent of "Cost of labor - COGS")
+      // inside the Cost of Goods Sold section. Inside that section the
+      // repeated label is the parent's group, closed by its own "Total for
+      // …" row; treating it as a fresh section would let that total close
+      // the section early and leave the section's total reading as an
+      // account row.
+      const sameNameGroup =
+        stack.length > 0 &&
+        normalize(stack[0]) === norm &&
+        totalTargets.has(norm);
+      if (sameNameGroup) stack.push(label);
+      else if (SECTION_LABELS.has(norm) || stack.length === 0) stack = [label];
       else if (totalTargets.has(norm)) stack.push(label);
       continue;
     }
