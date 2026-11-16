@@ -75,6 +75,22 @@ interface TokenResponse {
   x_refresh_token_expires_in: number;
 }
 
+/**
+ * A token request Intuit answered with a refusal. `permanent` is true only
+ * for `invalid_grant` — the refresh token is expired or revoked and nothing
+ * but reconnecting the company fixes it. Everything else (5xx, rate limits,
+ * and network failures, which never get this far) is worth retrying.
+ */
+export class QbTokenError extends Error {
+  constructor(
+    message: string,
+    readonly permanent: boolean,
+  ) {
+    super(message);
+    this.name = "QbTokenError";
+  }
+}
+
 async function tokenRequest(body: URLSearchParams): Promise<TokenResponse> {
   const auth = Buffer.from(`${clientId()}:${clientSecret()}`).toString("base64");
   const res = await fetch(TOKEN_URL, {
@@ -89,9 +105,13 @@ async function tokenRequest(body: URLSearchParams): Promise<TokenResponse> {
   if (!res.ok) {
     // intuit_tid identifies the request in Intuit's logs for support cases.
     const tid = res.headers.get("intuit_tid");
-    const detail = `${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`;
+    const text = await res.text();
+    const detail = `${res.status} ${text}${tid ? ` (intuit_tid: ${tid})` : ""}`;
     console.error(`QuickBooks token request failed: ${detail}`);
-    throw new Error(`QuickBooks token request failed: ${detail}`);
+    throw new QbTokenError(
+      `QuickBooks token request failed: ${detail}`,
+      res.status === 400 && text.includes("invalid_grant"),
+    );
   }
   return res.json();
 }
@@ -160,6 +180,7 @@ export async function saveConnection(opts: {
       ).toISOString(),
       connected_by: opts.connectedBy,
       status: "connected",
+      last_sync_error: null,
     },
     { onConflict: "org_id,realm_id" },
   );
@@ -228,17 +249,29 @@ interface ConnectionRow {
   access_token: string;
   refresh_token: string;
   access_token_expires_at: string;
+  status: string;
 }
 
-/** All connected companies, each with a valid access token (refreshed if expired). */
+/**
+ * Every company that can sync right now, each with a valid access token
+ * (refreshed if expired).
+ *
+ * Connections marked `error` are tried again rather than skipped: a refresh
+ * that works puts the company back to `connected`, so one bad morning never
+ * drops a company for good. A company whose refresh token Intuit has
+ * definitively refused is left out — the others still sync — and stays
+ * `error` until an admin reconnects it. A transient failure (network, 5xx)
+ * throws without touching the connection, so the caller's retry gets a
+ * clean second attempt.
+ */
 export async function getValidConnections(): Promise<
   { accessToken: string; realmId: string; companyName: string | null }[]
 > {
   const supabase = createServiceClient();
   const { data: conns, error } = await supabase
     .from("qb_connections")
-    .select("id, realm_id, company_name, access_token, refresh_token, access_token_expires_at")
-    .eq("status", "connected")
+    .select("id, realm_id, company_name, access_token, refresh_token, access_token_expires_at, status")
+    .in("status", ["connected", "error"])
     .order("created_at");
   if (error) throw new Error(error.message);
   if (!conns || conns.length === 0) {
@@ -247,11 +280,23 @@ export async function getValidConnections(): Promise<
 
   const results = [];
   for (const conn of conns as ConnectionRow[]) {
+    let accessToken: string;
+    try {
+      accessToken = await validAccessToken(conn);
+    } catch (e) {
+      if (e instanceof QbTokenError && e.permanent) continue;
+      throw e;
+    }
     results.push({
-      accessToken: await validAccessToken(conn),
+      accessToken,
       realmId: conn.realm_id,
       companyName: conn.company_name,
     });
+  }
+  if (results.length === 0) {
+    throw new Error(
+      "QuickBooks needs to be reconnected: every company's authorization has expired or been revoked",
+    );
   }
   return results;
 }
@@ -259,37 +304,52 @@ export async function getValidConnections(): Promise<
 async function validAccessToken(conn: ConnectionRow): Promise<string> {
   const supabase = createServiceClient();
   const expiresAt = new Date(conn.access_token_expires_at).getTime();
-  if (expiresAt - Date.now() > 60_000) {
+  // A connection in `error` always goes back to Intuit: its stored access
+  // token is not trusted until a refresh succeeds.
+  if (conn.status === "connected" && expiresAt - Date.now() > 60_000) {
     return conn.access_token;
   }
 
+  let tokens: TokenResponse;
   try {
-    const tokens = await refreshTokens(conn.refresh_token);
-    const now = Date.now();
-    await supabase
-      .from("qb_connections")
-      .update({
-        access_token: tokens.access_token,
-        refresh_token: tokens.refresh_token,
-        access_token_expires_at: new Date(
-          now + tokens.expires_in * 1000,
-        ).toISOString(),
-        refresh_token_expires_at: new Date(
-          now + tokens.x_refresh_token_expires_in * 1000,
-        ).toISOString(),
-      })
-      .eq("id", conn.id);
-    return tokens.access_token;
+    tokens = await refreshTokens(conn.refresh_token);
   } catch (e) {
-    await supabase
-      .from("qb_connections")
-      .update({
-        status: "error",
-        last_sync_error: e instanceof Error ? e.message : "Token refresh failed",
-      })
-      .eq("id", conn.id);
+    // Only Intuit saying the grant is dead takes a company out of the sync.
+    // A network blip or a 5xx leaves it connected for the next attempt.
+    if (e instanceof QbTokenError && e.permanent) {
+      await supabase
+        .from("qb_connections")
+        .update({
+          status: "error",
+          last_sync_error: `Reconnect this company — QuickBooks no longer accepts its authorization. ${e.message}`,
+        })
+        .eq("id", conn.id);
+    }
     throw e;
   }
+
+  const now = Date.now();
+  const { error } = await supabase
+    .from("qb_connections")
+    .update({
+      access_token: tokens.access_token,
+      refresh_token: tokens.refresh_token,
+      access_token_expires_at: new Date(now + tokens.expires_in * 1000).toISOString(),
+      refresh_token_expires_at: new Date(
+        now + tokens.x_refresh_token_expires_in * 1000,
+      ).toISOString(),
+      status: "connected",
+      last_sync_error: null,
+    })
+    .eq("id", conn.id);
+  if (error) {
+    // QuickBooks rotates refresh tokens, so an unsaved one can strand the
+    // connection later. This run can still use the access token it just got.
+    console.error(
+      `QuickBooks tokens for realm ${conn.realm_id} could not be saved: ${error.message}`,
+    );
+  }
+  return tokens.access_token;
 }
 
 // ---------------------------------------------------------------------------
@@ -1328,7 +1388,9 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
   if (realmId) {
     connections = connections.filter((c) => c.realmId === realmId);
     if (connections.length === 0) {
-      throw new Error(`No connected QuickBooks company for realm ${realmId}`);
+      throw new Error(
+        `QuickBooks company ${realmId} is not syncing — reconnect it in Settings`,
+      );
     }
   }
   const supabase = createServiceClient();
