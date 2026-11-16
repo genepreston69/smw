@@ -27,6 +27,19 @@ export async function GET(request: NextRequest) {
   } = await supabase.auth.getUser();
   if (!user) return NextResponse.redirect(new URL("/login", origin));
 
+  // Same gate as /api/qb/connect. The state cookie only proves this browser
+  // started *a* flow, not that an admin did — without this, any signed-in
+  // user could finish one and attach a QuickBooks company.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("role")
+    .eq("id", user.id)
+    .single();
+  if (profile?.role !== "admin") {
+    settings.searchParams.set("qb_error", "Only admins can connect QuickBooks");
+    return NextResponse.redirect(settings);
+  }
+
   try {
     const tokens = await exchangeCode(code, origin);
     await saveConnection({ realmId, tokens, connectedBy: user.id });

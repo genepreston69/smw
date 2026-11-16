@@ -17,9 +17,22 @@ import { createServiceClient } from "@/lib/supabase/service";
  * is why the failure is logged.
  */
 export async function refreshBenefitAllocation(): Promise<void> {
+  try {
+    await rebuildBenefitAllocation();
+  } catch (e) {
+    console.error(e instanceof Error ? e.message : e);
+  }
+}
+
+/**
+ * The same rebuild, but a failure throws. The nightly sync runs it as a step
+ * of its own (migration 0037) so a failed rebuild is retried and shows on the
+ * Settings page instead of leaving the dashboards quietly a day behind.
+ */
+export async function rebuildBenefitAllocation(): Promise<void> {
   const supabase = createServiceClient();
   const { error } = await supabase.rpc("refresh_job_benefit_allocation");
   if (error) {
-    console.error(`Benefit allocation refresh failed: ${error.message}`);
+    throw new Error(`Benefit allocation refresh failed: ${error.message}`);
   }
 }

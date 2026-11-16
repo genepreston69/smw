@@ -6,13 +6,15 @@ import {
   syncGeneralLedger,
   syncJobCosts,
 } from "@/lib/quickbooks";
+import { rebuildBenefitAllocation } from "@/lib/benefitAllocation";
 import type { QbSyncStep, QbSyncStepKind } from "@/lib/types";
 
 // ---------------------------------------------------------------------------
 // Nightly QuickBooks sync — the worker half of migration 0024
 //
 // A run is a queue of ordered steps (customers/jobs, then costs/invoices, then
-// one general-ledger import per connected company). Postgres owns the queue's
+// one general-ledger import per company, then the benefit-allocation rebuild
+// those imports feed). Postgres owns the queue's
 // rules; this module decides which steps a run contains, runs one at a time,
 // and reports what happened. /api/cron/qb-sync is the only caller.
 // ---------------------------------------------------------------------------
@@ -94,7 +96,11 @@ export async function planSteps(): Promise<StepPlan[]> {
   const { data, error } = await supabase
     .from("qb_connections")
     .select("realm_id, company_name")
-    .eq("status", "connected")
+    // A company in `error` keeps its ledger step: the step either brings it
+    // back (a refresh that works reconnects it) or fails with the reason, so
+    // the run reads "completed with errors" instead of quietly leaving the
+    // company out and calling the morning a success.
+    .in("status", ["connected", "error"])
     .order("created_at");
   if (error) throw new Error(error.message);
 
@@ -109,6 +115,9 @@ export async function planSteps(): Promise<StepPlan[]> {
       realm_id: c.realm_id,
       label: `General ledger — ${c.company_name ?? `Company ${c.realm_id}`}`,
     })),
+    // Last, because job labor and the ledger are both its inputs: without it
+    // the dashboards show yesterday's allocation beside today's costs.
+    { kind: "benefit_allocation", realm_id: null, label: "Benefit allocation" },
   ];
 }
 
@@ -118,12 +127,26 @@ export async function beginScheduledRun(
   steps: StepPlan[],
 ): Promise<string | null> {
   const supabase = createServiceClient();
-  const { data, error } = await supabase.rpc("begin_qb_sync_run", {
-    p_local_date: clock.date,
-    p_timezone: SYNC_TIMEZONE,
-    p_steps: steps,
-    p_trigger: "scheduled",
-  });
+  const begin = (p_steps: StepPlan[]) =>
+    supabase.rpc("begin_qb_sync_run", {
+      p_local_date: clock.date,
+      p_timezone: SYNC_TIMEZONE,
+      p_steps,
+      p_trigger: "scheduled",
+    });
+
+  let { data, error } = await begin(steps);
+  if (error?.code === "23514") {
+    // Migration 0037 (the benefit_allocation step kind) isn't applied yet.
+    // The imports matter more than the rebuild, so run without that step
+    // rather than lose the whole morning.
+    console.error(
+      "Nightly sync is running without the benefit allocation rebuild: apply migration 0037",
+    );
+    ({ data, error } = await begin(
+      steps.filter((s) => s.kind !== "benefit_allocation"),
+    ));
+  }
   if (error) throw new Error(error.message);
   return (data as string | null) ?? null;
 }
@@ -172,6 +195,10 @@ async function executeStep(step: QbSyncStep): Promise<Record<string, number>> {
       if (!step.realm_id) throw new Error("General-ledger step has no realm");
       const r = await syncGeneralLedger(step.realm_id);
       return { glAccounts: r.accounts, glLines: r.glLines };
+    }
+    case "benefit_allocation": {
+      await rebuildBenefitAllocation();
+      return {};
     }
   }
 }
