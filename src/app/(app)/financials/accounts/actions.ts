@@ -5,6 +5,7 @@ import { z } from "zod";
 import { requireUser } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { refreshBenefitAllocation } from "@/lib/benefitAllocation";
+import { syncChartOfAccounts } from "@/lib/quickbooks";
 
 type ActionResult = { ok: true } | { ok: false; error: string };
 
@@ -57,4 +58,33 @@ export async function setAccountCategory(
   revalidatePath("/financials/accounts");
   revalidatePath("/financials/statement");
   return { ok: true };
+}
+
+/**
+ * Refresh the chart of accounts from QuickBooks (accounts only — no ledger
+ * import). Existing accounts keep their categories; the result reports how
+ * many accounts are new so the page can point the admin at them.
+ */
+export async function refreshChartOfAccounts(): Promise<
+  { ok: true; added: number; accounts: number } | { ok: false; error: string }
+> {
+  const { profile } = await requireUser();
+  if (profile.role !== "admin") {
+    return { ok: false, error: "Only admins can refresh the chart of accounts" };
+  }
+
+  try {
+    const result = await syncChartOfAccounts();
+    // The allocation matches accounts by name as well as category, so a
+    // rename in QuickBooks can move the cached per-job numbers.
+    await refreshBenefitAllocation();
+    revalidatePath("/financials/accounts");
+    revalidatePath("/financials/statement");
+    return { ok: true, added: result.added, accounts: result.accounts };
+  } catch (e) {
+    return {
+      ok: false,
+      error: e instanceof Error ? e.message : "Refresh failed",
+    };
+  }
 }

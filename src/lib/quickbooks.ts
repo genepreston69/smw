@@ -1220,6 +1220,98 @@ function quarterRanges(startDate: string): { start: string; end: string }[] {
 }
 
 /**
+ * Pull one company's chart of accounts from QuickBooks and upsert it into
+ * gl_accounts. The explicit column list never includes the user-owned
+ * `category` (migration 0019) or `created_at`, so existing rows keep both —
+ * only QuickBooks' own facts (name, number, type, active, balance) refresh.
+ */
+async function upsertChartOfAccounts(
+  supabase: ReturnType<typeof createServiceClient>,
+  orgId: string,
+  accessToken: string,
+  realmId: string,
+  now: string,
+): Promise<QboAccount[]> {
+  const accounts = await qboQuery<QboAccount>(
+    accessToken,
+    realmId,
+    "SELECT * FROM Account WHERE Active IN (true, false)",
+  );
+  if (accounts.length > 0) {
+    const { error } = await supabase.from("gl_accounts").upsert(
+      accounts.map((a) => ({
+        org_id: orgId,
+        realm_id: realmId,
+        qb_id: a.Id,
+        name: a.Name,
+        fully_qualified_name: a.FullyQualifiedName ?? null,
+        account_number: a.AcctNum ?? null,
+        classification: a.Classification ?? null,
+        account_type: a.AccountType ?? null,
+        account_sub_type: a.AccountSubType ?? null,
+        parent_qb_id: a.ParentRef?.value ?? null,
+        active: a.Active ?? true,
+        current_balance: a.CurrentBalance ?? null,
+        last_synced_at: now,
+      })),
+      { onConflict: "org_id,realm_id,qb_id" },
+    );
+    if (error) throw new Error(`GL account upsert failed: ${error.message}`);
+  }
+  return accounts;
+}
+
+/**
+ * Refresh only the chart of accounts for every connected company — no
+ * ledger lines, so it finishes in seconds (the Chart of Accounts page's
+ * Refresh button). Nothing is deleted and categories are untouched; `added`
+ * counts the accounts that did not exist here before this call.
+ */
+export async function syncChartOfAccounts(): Promise<{
+  accounts: number;
+  added: number;
+  companies: number;
+}> {
+  const connections = await getValidConnections();
+  const supabase = createServiceClient();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("id")
+    .order("created_at")
+    .limit(1)
+    .single();
+  if (!org) throw new Error("No organization found");
+
+  let accountCount = 0;
+  let added = 0;
+  for (const { accessToken, realmId } of connections) {
+    const known = new Set<string>();
+    for (let from = 0; ; from += 1000) {
+      const { data, error } = await supabase
+        .from("gl_accounts")
+        .select("qb_id")
+        .eq("org_id", org.id)
+        .eq("realm_id", realmId)
+        .order("qb_id")
+        .range(from, from + 999);
+      if (error) throw new Error(`GL account read failed: ${error.message}`);
+      for (const r of data ?? []) known.add(r.qb_id as string);
+      if ((data ?? []).length < 1000) break;
+    }
+    const accounts = await upsertChartOfAccounts(
+      supabase,
+      org.id,
+      accessToken,
+      realmId,
+      new Date().toISOString(),
+    );
+    accountCount += accounts.length;
+    added += accounts.filter((a) => !known.has(a.Id)).length;
+  }
+  return { accounts: accountCount, added, companies: connections.length };
+}
+
+/**
  * Import the chart of accounts and all posted general-ledger lines since
  * FINANCIALS_START_DATE. Ledger lines dated before that (through the
  * 2024-12-31 audit) are frozen in gl_lines as archived rows and are not
@@ -1254,33 +1346,14 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
   for (const { accessToken, realmId, companyName } of connections) {
     const now = new Date().toISOString();
 
-    const accounts = await qboQuery<QboAccount>(
+    const accounts = await upsertChartOfAccounts(
+      supabase,
+      org.id,
       accessToken,
       realmId,
-      "SELECT * FROM Account WHERE Active IN (true, false)",
+      now,
     );
-    if (accounts.length > 0) {
-      const { error } = await supabase.from("gl_accounts").upsert(
-        accounts.map((a) => ({
-          org_id: org.id,
-          realm_id: realmId,
-          qb_id: a.Id,
-          name: a.Name,
-          fully_qualified_name: a.FullyQualifiedName ?? null,
-          account_number: a.AcctNum ?? null,
-          classification: a.Classification ?? null,
-          account_type: a.AccountType ?? null,
-          account_sub_type: a.AccountSubType ?? null,
-          parent_qb_id: a.ParentRef?.value ?? null,
-          active: a.Active ?? true,
-          current_balance: a.CurrentBalance ?? null,
-          last_synced_at: now,
-        })),
-        { onConflict: "org_id,realm_id,qb_id" },
-      );
-      if (error) throw new Error(`GL account upsert failed: ${error.message}`);
-      accountCount += accounts.length;
-    }
+    accountCount += accounts.length;
 
     const glLines: GlLine[] = [];
     for (const range of quarterRanges(FINANCIALS_START_DATE)) {
