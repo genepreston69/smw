@@ -83,7 +83,59 @@ export interface BenefitCell {
   account: string;
   month: string;
   amount: number;
+  /** QuickBooks class as gl_pivot keys it ("(no class)" when none). */
+  cls: string;
 }
+
+/** One class's period totals, for the By class table and sheet. */
+export interface BenefitClassRow {
+  cls: string;
+  benefits: number;
+  /** Period total per labor account number (710 / 935 / 934). */
+  labor: Record<string, number>;
+  laborTotal: number;
+  rate: number | null;
+}
+
+/** Period totals per class, in the order given. The classes add up to the
+    All classes figures exactly: both come from the same cells. */
+export function benefitCostByClass(
+  cells: BenefitCell[],
+  classes: string[],
+): BenefitClassRow[] {
+  return classes.map((cls) => {
+    const c = buildBenefitCost(cells.filter((x) => x.cls === cls));
+    return {
+      cls,
+      benefits: c.benefits.total,
+      labor: Object.fromEntries(c.labor.map((l) => [l.key, l.total])),
+      laborTotal: c.laborTotal.total,
+      rate: c.rate.total,
+    };
+  });
+}
+
+export interface BenefitCostState {
+  company: string; // realm id or "all"
+  from: string; // YYYY-MM
+  to: string; // YYYY-MM
+  /** QuickBooks class, or null for All classes. */
+  cls: string | null;
+}
+
+function stateParams(s: BenefitCostState): URLSearchParams {
+  const params = new URLSearchParams({ company: s.company, from: s.from, to: s.to });
+  if (s.cls !== null) params.set("class", s.cls);
+  return params;
+}
+
+/** Page URL for a state; explicit params so links survive a month rollover. */
+export const benefitCostHref = (s: BenefitCostState): string =>
+  `/financials/benefits?${stateParams(s)}`;
+
+/** Excel export of the page; carries the full state so the file matches the screen. */
+export const benefitCostExportHref = (s: BenefitCostState): string =>
+  `/api/export/benefits?${stateParams(s)}`;
 
 const cents = (n: number) => Math.round(n * 100) / 100;
 

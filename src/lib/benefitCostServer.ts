@@ -2,12 +2,22 @@ import "server-only";
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
-import { lastDayOfMonth } from "@/lib/financials";
 import {
+  MONTH_PARAM,
+  clampMonth,
+  defaultFrom,
+  lastDayOfMonth,
+  latestMonth,
+} from "@/lib/financials";
+import { NO_CLASS, sortClasses } from "@/lib/budget";
+import {
+  benefitCostByClass,
   benefitLineFor,
   buildBenefitCost,
   type BenefitCell,
+  type BenefitClassRow,
   type BenefitCost,
+  type BenefitCostState,
 } from "@/lib/benefitCost";
 
 // Ledger read for /financials/benefits. Callers verify the admin role first
@@ -16,14 +26,54 @@ import {
 // index-range-scanned JSON row of account × month cells — exactly as the
 // Income Statement reads it, so every line here ties to that statement.
 
+/** Page/export params → state; anything invalid falls back to the defaults.
+    The page and the export share this, so the file matches the screen. */
+export function benefitCostState(
+  get: (key: string) => string | null | undefined,
+  validRealms: ReadonlySet<string>,
+): BenefitCostState {
+  const company = get("company");
+  const rawFrom = get("from") ?? "";
+  const rawTo = get("to") ?? "";
+  const cls = (get("class") ?? "").trim();
+  // The in-progress month is omitted app-wide: params are clamped to the
+  // last complete month.
+  let from = MONTH_PARAM.test(rawFrom) ? clampMonth(rawFrom) : defaultFrom();
+  let to = MONTH_PARAM.test(rawTo) ? clampMonth(rawTo) : latestMonth();
+  if (from > to) [from, to] = [to, from];
+  return {
+    company: company && validRealms.has(company) ? company : "all",
+    from,
+    to,
+    cls: cls && cls !== "all" && cls.length <= 200 ? cls : null,
+  };
+}
+
+export interface LoadedBenefitCost {
+  /** The class in view (or All classes). */
+  cost: BenefitCost;
+  /** Every class with benefits or labor in the selection, sorted (NO_CLASS last). */
+  classes: string[];
+  /** Period totals for each of those classes; they sum to All classes. */
+  byClass: BenefitClassRow[];
+  /** All classes' period totals — the By class table's total row. */
+  allClasses: BenefitCost;
+  /** Any one class's by-month view, from the same single ledger read. */
+  costOf: (cls: string) => BenefitCost;
+}
+
 export async function loadBenefitCost(
   db: SupabaseClient,
-  /** Realm ids in view (one company, or all of them). */
-  realms: string[],
-  from: string, // YYYY-MM
-  to: string, // YYYY-MM
-): Promise<BenefitCost> {
-  if (realms.length === 0) return buildBenefitCost([]);
+  state: BenefitCostState,
+  /** Every connected company, in display order. */
+  allRealms: string[],
+): Promise<LoadedBenefitCost> {
+  const { company, from, to, cls } = state;
+  const realms = company === "all" ? allRealms : [company];
+  if (realms.length === 0) {
+    const empty = buildBenefitCost([]);
+    return { cost: empty, classes: [], byClass: [], allClasses: empty, costOf: () => empty };
+  }
 
   const [summaryRes, accountRows] = await Promise.all([
     db.rpc("budget_ledger_summary", {
@@ -64,10 +114,23 @@ export async function loadBenefitCost(
   }
 
   const cells: BenefitCell[] = [];
-  for (const [realm, classification, , account, month, amount] of summary.accounts) {
+  for (const [realm, classification, , account, month, amount, rawCls] of summary.accounts) {
     if (classification !== "Expense") continue;
     const line = benefitLineFor(account, categoryOf.get(`${realm}\u0000${account}`));
-    if (line) cells.push({ line, account, month, amount: Number(amount) || 0 });
+    const value = Number(amount) || 0;
+    if (line && value !== 0) {
+      cells.push({ line, account, month, amount: value, cls: rawCls || NO_CLASS });
+    }
   }
-  return buildBenefitCost(cells);
+
+  const classes = sortClasses(new Set(cells.map((c) => c.cls)));
+  const allClasses = buildBenefitCost(cells);
+  const costOf = (one: string) => buildBenefitCost(cells.filter((c) => c.cls === one));
+  return {
+    cost: cls === null ? allClasses : costOf(cls),
+    classes,
+    byClass: benefitCostByClass(cells, classes),
+    allClasses,
+    costOf,
+  };
 }
