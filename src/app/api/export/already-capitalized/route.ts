@@ -5,16 +5,19 @@ import { createServiceClient } from "@/lib/supabase/service";
 import {
   CAP_LINE_KIND_LABELS,
   capLineSide,
+  capScheduleByMonth,
   capScheduleErrorMessage,
-  capScheduleYear,
 } from "@/lib/alreadyCapitalized";
 import { loadCapSchedule } from "@/lib/alreadyCapitalizedServer";
+import { capLaborMonths, capLaborPeriodFromSearch } from "@/lib/capitalizedLabor";
+import { monthLabel } from "@/lib/financials";
 import { shortDate } from "@/lib/format";
 
 // Excel workbook for the Already Capitalized schedule
-// (/capitalized-labor/already-capitalized): By Asset Account, Journal
-// Entries, and every line of those entries, for the year on screen. Same
-// loader (loadCapSchedule) and assembly as the page, so the file matches it.
+// (/capitalized-labor/already-capitalized): By Asset Account, By Month,
+// Journal Entries, and every line of those entries, for the period on screen
+// (the page's year / month / from-to params). Same loader (loadCapSchedule)
+// and assembly as the page, so the file matches it.
 export async function GET(request: Request) {
   const supabase = await createClient();
   const {
@@ -38,17 +41,16 @@ export async function GET(request: Request) {
   // Admin verified; GL reads go through the service-role client because the
   // admin RLS qual on the gl_* tables is too slow for app reads.
   const db = createServiceClient();
-  const year = capScheduleYear(new URL(request.url).searchParams.get("year") ?? undefined);
+  const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
 
-  let loaded: Awaited<ReturnType<typeof loadCapSchedule>>;
+  let schedule: Awaited<ReturnType<typeof loadCapSchedule>>;
   try {
-    loaded = await loadCapSchedule(db, year);
+    schedule = await loadCapSchedule(db, period);
   } catch (e) {
     const message = e instanceof Error ? e.message : String(e);
     console.error(`Already Capitalized export: schedule read failed: ${message}`);
     return NextResponse.json({ error: capScheduleErrorMessage(message) }, { status: 503 });
   }
-  const { period, schedule } = loaded;
   const { data: connRows } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name");
@@ -96,6 +98,21 @@ export async function GET(request: Request) {
   for (const a of schedule.byAsset)
     assetSheet.addRow([a.account, company(a.realmId), a.entries, a.labor]);
   assetSheet.addRow(["Total", "", schedule.entries.length, schedule.total]).font = { bold: true };
+
+  /* ---- By month ---------------------------------------------------- */
+  const monthSheet = titled(
+    "By Month",
+    `Labor capitalized by month — ${period.label}`,
+    `${definition} An entry falls in the month of its date.`,
+  );
+  header(monthSheet, [
+    { header: "Month", width: 14 },
+    { header: "Entries", width: 9 },
+    { header: "Labor Capitalized", width: 18, money: true },
+  ]);
+  for (const m of capScheduleByMonth(schedule.entries, capLaborMonths(period)))
+    monthSheet.addRow([monthLabel(m.month), m.entries, m.labor]);
+  monthSheet.addRow(["Total", schedule.entries.length, schedule.total]).font = { bold: true };
 
   /* ---- Journal entries -------------------------------------------- */
   const entrySheet = titled("Journal Entries", `Capitalization entries — ${period.label}`, definition);
@@ -164,7 +181,7 @@ export async function GET(request: Request) {
     headers: {
       "Content-Type":
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="already-capitalized-${year}.xlsx"`,
+      "Content-Disposition": `attachment; filename="already-capitalized-${period.fileTag}.xlsx"`,
     },
   });
 }

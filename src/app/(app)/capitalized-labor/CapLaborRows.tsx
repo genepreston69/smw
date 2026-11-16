@@ -3,10 +3,12 @@
 import { Fragment, useState, useTransition } from "react";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { money, shortDate } from "@/lib/format";
+import { monthLabel } from "@/lib/financials";
 import {
   capLaborAmounts,
   CAP_LABOR_BUCKET_LABELS,
   type CapLaborBucket,
+  type CapLaborPeriodParams,
 } from "@/lib/capitalizedLabor";
 import { getCapLaborLines, type CapLaborLine } from "./actions";
 
@@ -17,15 +19,15 @@ export interface CapLaborRowData {
   customerName: string | null;
   bucket: CapLaborBucket;
   /**
-   * Year-to-date sums of the job's journal labor lines: wages and employer
-   * taxes posted (net of reversals), labor credited off to an asset (already
-   * capitalized, stored positive), and their net.
+   * Sums of the job's journal labor lines over the period on screen: wages
+   * and employer taxes posted (net of reversals), labor credited off to an
+   * asset (already capitalized, stored positive), and their net.
    */
   postedAmount: number | null;
   capitalizedAmount: number | null;
   amount: number | null;
-  /** Direct-labor share of Employee Benefits allocated to this job in the
-      year to date (same figure as the Jobs dashboard column); null when
+  /** Direct-labor share of Employee Benefits allocated to this job over the
+      period's months (same figure as the Jobs dashboard column); null when
       nothing was allocated. */
   benefitAllocation: number | null;
   entryCount: number;
@@ -42,12 +44,20 @@ type LoadState =
   | { status: "error"; error: string }
   | { status: "loaded"; lines: CapLaborLine[] };
 
+/**
+ * The candidate jobs, each expanding to its journal lines for the period on
+ * screen. Lines load on first expand and are kept; the page re-keys this
+ * component per period so a new period never shows another period's lines.
+ */
 export function CapLaborRows({
   jobs,
   showCompany,
+  period,
 }: {
   jobs: CapLaborRowData[];
   showCompany: boolean;
+  /** The page's period params, passed back to the drill-down read. */
+  period: CapLaborPeriodParams;
 }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [lines, setLines] = useState<Record<string, LoadState>>({});
@@ -68,7 +78,7 @@ export function CapLaborRows({
     if (lines[jobId]) return; // already loaded (or loading)
     setLines((prev) => ({ ...prev, [jobId]: { status: "loading" } }));
     startTransition(async () => {
-      const res = await getCapLaborLines(jobId);
+      const res = await getCapLaborLines(jobId, period);
       setLines((prev) => ({
         ...prev,
         [jobId]: res.ok
@@ -166,7 +176,7 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
   if (state.lines.length === 0) {
     return (
       <p className="py-2 text-sm text-ink-600">
-        No journal-entry labor lines this year. Run a QuickBooks sync in
+        No journal-entry labor lines in this period. Run a QuickBooks sync in
         Settings to pull the latest transactions.
       </p>
     );
@@ -183,15 +193,15 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
   }
   const total = posted - capitalized;
 
-  // Lines arrive newest first, all from the calendar year to date, so this
-  // is a single year group whose header carries the net. Undated lines
-  // (rare) would fall into their own group at the end.
-  const groups: { year: string; lines: CapLaborLine[] }[] = [];
+  // Lines arrive newest first, so they group by month in order, each
+  // header carrying the month's net. Undated lines (rare) would fall into
+  // their own group at the end.
+  const groups: { month: string; lines: CapLaborLine[] }[] = [];
   for (const l of state.lines) {
-    const year = l.txn_date ? l.txn_date.slice(0, 4) : "Undated";
+    const month = l.txn_date ? l.txn_date.slice(0, 7) : "Undated";
     const last = groups[groups.length - 1];
-    if (last && last.year === year) last.lines.push(l);
-    else groups.push({ year, lines: [l] });
+    if (last && last.month === month) last.lines.push(l);
+    else groups.push({ month, lines: [l] });
   }
 
   return (
@@ -200,13 +210,13 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
         {groups.map((g) => {
           const groupNet = g.lines.reduce((s, l) => s + l.amount, 0);
           return (
-            <tbody key={g.year} className="divide-y divide-line/50">
+            <tbody key={g.month} className="divide-y divide-line/50">
               <tr>
                 <td
                   colSpan={4}
                   className="pt-3 pb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
                 >
-                  {g.year}
+                  {g.month === "Undated" ? g.month : monthLabel(g.month)}
                 </td>
                 <td className="pt-3 pb-1 text-right text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400 tabular-nums">
                   {money(groupNet)}

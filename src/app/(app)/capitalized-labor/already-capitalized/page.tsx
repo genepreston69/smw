@@ -3,14 +3,19 @@ import { Archive, Download, Layers, ScrollText, Wrench } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { money } from "@/lib/format";
+import { monthLabel } from "@/lib/financials";
 import {
+  capScheduleByMonth,
   capScheduleErrorMessage,
-  capScheduleWindow,
-  capScheduleYear,
-  capScheduleYears,
   type CapSchedule,
 } from "@/lib/alreadyCapitalized";
 import { loadCapSchedule } from "@/lib/alreadyCapitalizedServer";
+import {
+  capLaborHref,
+  capLaborMonths,
+  capLaborPeriod,
+  type CapLaborPeriodParams,
+} from "@/lib/capitalizedLabor";
 import {
   Card,
   CardTitle,
@@ -22,42 +27,42 @@ import {
   buttonCls,
 } from "@/components/ui";
 import { EntryRows } from "./EntryRows";
+import { PeriodPicker } from "../PeriodPicker";
+
+const PATH = "/capitalized-labor/already-capitalized";
 
 // Schedule of direct labor already moved to asset accounts: every journal
 // entry that debits a Fixed Asset / Other Asset account and credits labor
-// (capitalized_labor_entries, migration 0032), by calendar year. Built from
-// the general ledger, so it's admin-only like the Financials pages.
+// (capitalized_labor_entries, migration 0032), for a calendar year, a month,
+// or a month range — the dashboard's period picker. Built from the general
+// ledger, so it's admin-only like the Financials pages.
 
 export default async function AlreadyCapitalizedPage({
   searchParams,
 }: {
-  searchParams: Promise<{ year?: string }>;
+  searchParams: Promise<CapLaborPeriodParams>;
 }) {
-  const { year: yearParam } = await searchParams;
+  const period = capLaborPeriod(await searchParams);
   // GL data is admin-only; requireAdmin() verifies the caller, then reads go
   // through the service-role client (see migrations 0014/0015).
   await requireAdmin();
   const supabase = createServiceClient();
 
-  const years = capScheduleYears();
-  const year = capScheduleYear(yearParam);
-
   const [{ data: connRows }, loaded] = await Promise.all([
     supabase.from("qb_connection_status").select("realm_id, company_name"),
     // A failed read renders as a banner, not a 500 — and is logged, since a
     // banner leaves no trace in the platform logs otherwise.
-    loadCapSchedule(supabase, year).catch((e: unknown) => {
+    loadCapSchedule(supabase, period).catch((e: unknown) => {
       const message = e instanceof Error ? e.message : String(e);
       console.error(`Already Capitalized: schedule read failed: ${message}`);
       return { error: capScheduleErrorMessage(message) };
     }),
   ]);
   const loadError = "error" in loaded ? loaded.error : null;
-  const period = "error" in loaded ? capScheduleWindow(year) : loaded.period;
   const schedule: CapSchedule =
     "error" in loaded
       ? { entries: [], byAsset: [], total: 0, jobCount: 0 }
-      : loaded.schedule;
+      : loaded;
   const companyName: Record<string, string> = Object.fromEntries(
     ((connRows ?? []) as { realm_id: string; company_name: string | null }[]).map((c) => [
       c.realm_id,
@@ -66,34 +71,20 @@ export default async function AlreadyCapitalizedPage({
   );
   const showCompany = Object.keys(companyName).length > 1;
   const { entries, byAsset, total, jobCount } = schedule;
-
-  const pill = (active: boolean) =>
-    `rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-      active
-        ? "bg-navy-900 text-white"
-        : "text-ink-600 hover:bg-surface hover:text-ink-900"
-    }`;
+  // The period month by month; a one-month period has nothing to break down.
+  const byMonth =
+    period.fromMonth === period.toMonth
+      ? null
+      : capScheduleByMonth(entries, capLaborMonths(period));
 
   return (
     <div>
-      <div className="mb-4 flex w-fit flex-wrap items-center gap-1 rounded-lg border border-line bg-white p-1">
-        {years.map((y) => (
-          <Link
-            key={y}
-            href={y === years[0] ? "/capitalized-labor/already-capitalized" : `/capitalized-labor/already-capitalized?year=${y}`}
-            className={pill(y === year)}
-          >
-            {y}
-          </Link>
-        ))}
-      </div>
-
       <PageHeader
         title="Already Capitalized"
-        subtitle={`Direct labor moved to an asset account by journal entry — every entry that debits a Fixed Asset or Other Asset account and credits wages or employer payroll taxes — for ${period.label}. Click an entry to see all of its lines; the methodology is at the bottom of the page.`}
+        subtitle={`Direct labor moved to an asset account by journal entry — every entry that debits a Fixed Asset or Other Asset account and credits wages or employer payroll taxes — for ${period.label}. Pick a year, a month, or a range of months below. Click an entry to see all of its lines; the methodology is at the bottom of the page.`}
         action={
           <a
-            href={`/api/export/already-capitalized?year=${year}`}
+            href={capLaborHref("/api/export/already-capitalized", period.params)}
             className={buttonCls("secondary")}
           >
             <Download size={15} strokeWidth={2} />
@@ -101,6 +92,8 @@ export default async function AlreadyCapitalizedPage({
           </a>
         }
       />
+
+      <PeriodPicker path={PATH} period={period} />
 
       {loadError && (
         <p className="mb-6 rounded-lg border border-warn-700/25 bg-warn-50 px-4 py-3 text-sm text-warn-700">
@@ -140,12 +133,59 @@ export default async function AlreadyCapitalizedPage({
           <EmptyState icon={Archive} title={`No labor capitalized in ${period.label}`}>
             Journal entries that credit wages or employer payroll taxes and
             debit a Fixed Asset or Other Asset account appear here once the
-            general ledger sync imports them. Pick another year above, or run
-            a QuickBooks sync in Settings.
+            general ledger sync imports them. Pick another period above, or
+            run a QuickBooks sync in Settings.
           </EmptyState>
         </Card>
       ) : (
         <>
+          {byMonth && (
+            <Card className="mb-6" pad={false}>
+              <div className="px-6 pt-5">
+                <CardTitle>By month</CardTitle>
+              </div>
+              <Table
+                head={
+                  <tr>
+                    <Th>Month</Th>
+                    <Th right>Entries</Th>
+                    <Th right>Labor capitalized</Th>
+                    <Th right>Share</Th>
+                  </tr>
+                }
+              >
+                {byMonth.map((m) => (
+                  <tr key={m.month} className="hover:bg-surface/60">
+                    <td className="px-4 py-2.5 font-medium">
+                      {/* Each month opens that month on its own. */}
+                      <Link
+                        href={capLaborHref(PATH, { month: m.month })}
+                        className="text-ink-900 hover:text-brand-700"
+                      >
+                        {monthLabel(m.month)}
+                      </Link>
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-ink-600">
+                      {m.entries || "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-right font-medium tabular-nums text-ink-900">
+                      {m.entries ? money(m.labor) : "—"}
+                    </td>
+                    <td className="px-4 py-2.5 text-right tabular-nums text-ink-600">
+                      {m.entries && total ? `${((m.labor / total) * 100).toFixed(1)}%` : "—"}
+                    </td>
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-line font-semibold text-ink-900">
+                  <td className="px-4 py-2.5">Total</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{entries.length}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">{money(total)}</td>
+                  <td className="px-4 py-2.5 text-right tabular-nums">100.0%</td>
+                </tr>
+              </Table>
+            </Card>
+          )}
+
           <Card className="mb-6" pad={false}>
             <div className="px-6 pt-5">
               <CardTitle>By asset account</CardTitle>
@@ -256,11 +296,11 @@ export default async function AlreadyCapitalizedPage({
             <p>
               The Capitalized Labor dashboard&rsquo;s{" "}
               <em>Already capitalized</em> column counts only labor credits
-              tagged to a non-billable or intercompany job, year to date. This
-              schedule reads the whole ledger, so it also includes credits with
-              no job tag or tagged to other jobs, and any year back to{" "}
-              {years[years.length - 1]}. Each line traces to its journal number
-              in QuickBooks.
+              tagged to a non-billable or intercompany job. This schedule reads
+              the whole ledger, so it also includes credits with no job tag or
+              tagged to other jobs. Both pages take the same period — a year, a
+              month, or a range of months back to January 2023. Each line
+              traces to its journal number in QuickBooks.
             </p>
           </div>
         </div>

@@ -182,32 +182,30 @@ export function assembleCapSchedule(lines: CapEntryLine[]): CapSchedule {
 }
 
 /* ---------------------------------------------------------------------------
-   Years. The ledger reaches back to Jan 1 2023 (frozen audited history,
-   migration 0020); the current year runs through today. Dates are UTC like
-   the database.
+   Period. The schedule takes the same year / month / range selection as the
+   Capitalized Labor dashboard (capLaborPeriod in src/lib/capitalizedLabor.ts),
+   back to Jan 2023 — the start of the imported ledger (frozen audited
+   history, migration 0020).
 --------------------------------------------------------------------------- */
 
-export const ALREADY_CAPITALIZED_FIRST_YEAR = 2023;
-
-export function capScheduleYears(now: Date = new Date()): number[] {
-  const last = now.getUTCFullYear();
-  return Array.from(
-    { length: last - ALREADY_CAPITALIZED_FIRST_YEAR + 1 },
-    (_, i) => last - i,
-  );
+export interface CapMonthRow {
+  /** YYYY-MM. */
+  month: string;
+  entries: number;
+  labor: number;
 }
 
-export function capScheduleWindow(
-  year: number,
-  now: Date = new Date(),
-): { year: number; from: string; to: string; label: string } {
-  const current = year === now.getUTCFullYear();
-  return {
-    year,
-    from: `${year}-01-01`,
-    to: current ? now.toISOString().slice(0, 10) : `${year}-12-31`,
-    label: current ? `${year} year to date` : String(year),
-  };
+/** Entries and labor capitalized per month, for every month given (oldest
+    first; quiet months included). An entry falls in the month of its date. */
+export function capScheduleByMonth(entries: CapEntry[], months: string[]): CapMonthRow[] {
+  const byMonth = new Map(months.map((month) => [month, { month, entries: 0, labor: 0 }]));
+  for (const e of entries) {
+    const row = byMonth.get(e.date.slice(0, 7));
+    if (!row) continue;
+    row.entries += 1;
+    row.labor += e.labor;
+  }
+  return [...byMonth.values()];
 }
 
 /**
@@ -219,13 +217,6 @@ export function capScheduleErrorMessage(message: string): string {
   if (/capitalized_labor_entries|cap_labor_account|schema cache|does not exist/i.test(message))
     return "The Already Capitalized schedule needs its database updates: run supabase/migrations/0032_already_capitalized.sql and then 0033_already_capitalized_index_scan.sql in the Supabase SQL editor, then reload this page.";
   if (/statement timeout|canceling statement/i.test(message))
-    return "The ledger query took too long. Make sure supabase/migrations/0033_already_capitalized_index_scan.sql has been applied (it limits the read to the selected year), then reload.";
+    return "The ledger query took too long. Make sure supabase/migrations/0033_already_capitalized_index_scan.sql has been applied (it limits the read to the selected period), then reload — or pick a shorter period.";
   return `The schedule couldn't be loaded: ${message}`;
-}
-
-/** The year a request asked for, if it is one the schedule covers; else
-    the current year. */
-export function capScheduleYear(param: string | undefined, now: Date = new Date()): number {
-  const y = Number(param);
-  return capScheduleYears(now).includes(y) ? y : now.getUTCFullYear();
 }

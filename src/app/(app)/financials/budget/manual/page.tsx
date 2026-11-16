@@ -468,16 +468,30 @@ export default async function BudgetManualPage() {
                 [`Jul ${baseFromYear}`, `Jul ${year}`],
                 [`Aug ${baseFromYear}`, `Aug ${year}`],
                 ["…", "…"],
-                [`Dec ${baseFromYear}`, `Dec ${year}`],
+                [`Nov ${baseFromYear}`, `Nov ${year} and Dec ${year}`],
+                [`Dec ${baseFromYear}`, "Not used (see below)"],
                 [`Jan ${baseToYear}`, `Jan ${year}`],
                 ["…", "…"],
                 [`Jun ${baseToYear}`, `Jun ${year}`],
               ]}
             />
             <P>
-              This keeps seasonality intact: if December is historically a
+              This keeps seasonality intact: if January is historically a
               slow month and March a strong one, the budget shows the same
               pattern. Growth is then applied on top of that shape.
+            </P>
+            <H3>December uses November</H3>
+            <P>
+              The one exception is <strong>December</strong>. Year-end
+              adjusting entries are always booked in December, so its
+              actuals do not describe a normal month. The budget therefore
+              ignores December&rsquo;s baseline and gives December{" "}
+              <strong>the same baseline amounts as November</strong> —
+              account by account and class by class — before growth. An
+              account with no November activity budgets nothing for
+              December. You can still type a different December figure over
+              any account, and initiatives add on top as usual. Budget vs
+              Actual always shows December&rsquo;s actuals as booked.
             </P>
             <H3>What is included</H3>
             <Ul
@@ -491,7 +505,8 @@ export default async function BudgetManualPage() {
                   Every posted ledger line in the window, read the same way
                   the Income Statement reads it, so{" "}
                   <strong>the baseline for a month equals the Income Statement
-                  for that month</strong> with zero growth applied.
+                  for that month</strong> with zero growth applied (December
+                  equals November&rsquo;s).
                 </>,
                 <>
                   Amounts are natural-signed: positive revenue increases
@@ -1017,6 +1032,7 @@ export default async function BudgetManualPage() {
                   `sum of posted ledger lines on that account and QuickBooks class in baseline month m (${baseFrom} – ${baseTo}), natural-signed; lines with no class count as (no class)`,
                 ],
                 ["budget month", "same calendar month of the budget year (Jul→Jul, Jan→Jan)"],
+                ["December", "baseline(account, class, Dec) = baseline(account, class, Nov) — December's own actuals are not used"],
               ]}
             />
             <H3>2. Growth</H3>

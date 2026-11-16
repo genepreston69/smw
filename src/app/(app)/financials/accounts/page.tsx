@@ -12,6 +12,7 @@ import {
   buttonCls,
 } from "@/components/ui";
 import { CategoryEditor } from "./CategoryEditor";
+import { RefreshAccountsButton } from "./RefreshAccountsButton";
 
 // Chart of accounts imported from QuickBooks (gl_accounts), with an editable
 // Category per account. Categories group Revenue/Expense accounts into the
@@ -28,6 +29,7 @@ interface AccountRow {
   account_sub_type: string | null;
   active: boolean;
   category: string | null;
+  created_at: string;
 }
 
 // Statement-section display order, mirroring the Financials pivot sections.
@@ -42,10 +44,20 @@ const SECTIONS: { classification: string; label: string }[] = [
 
 const CATEGORY_LIST_ID = "account-category-options";
 
+// The New accounts view lists accounts first imported within this many days
+// — by the Refresh button or by any sync, so nightly additions show too.
+const NEW_ACCOUNT_DAYS = 30;
+
+function newAccountCutoff(): string {
+  const d = new Date();
+  d.setUTCDate(d.getUTCDate() - NEW_ACCOUNT_DAYS);
+  return d.toISOString();
+}
+
 export default async function ChartOfAccountsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ company?: string; inactive?: string }>;
+  searchParams: Promise<{ company?: string; inactive?: string; new?: string }>;
 }) {
   const sp = await searchParams;
   // GL data is admin-only; same access pattern as /financials — requireAdmin()
@@ -69,12 +81,14 @@ export default async function ChartOfAccountsPage({
   const company =
     sp.company && companyByRealm.has(sp.company) ? sp.company : "all";
   const showInactive = sp.inactive === "1";
+  const newOnly = sp.new === "1";
+  const newSince = newAccountCutoff();
 
   const allAccounts = (await fetchAllRows((from, to) =>
     supabase
       .from("gl_accounts")
       .select(
-        "id, realm_id, name, fully_qualified_name, account_number, classification, account_type, account_sub_type, active, category",
+        "id, realm_id, name, fully_qualified_name, account_number, classification, account_type, account_sub_type, active, category, created_at",
       )
       .order("fully_qualified_name")
       .order("id")
@@ -90,15 +104,19 @@ export default async function ChartOfAccountsPage({
   const accounts = allAccounts.filter(
     (a) =>
       (company === "all" || a.realm_id === company) &&
-      (showInactive || a.active),
+      (showInactive || a.active) &&
+      (!newOnly || a.created_at >= newSince),
   );
   const showCompany = companies.length > 1 && company === "all";
 
-  const href = (overrides: Partial<{ company: string; inactive: boolean }>) => {
-    const s = { company, inactive: showInactive, ...overrides };
+  const href = (
+    overrides: Partial<{ company: string; inactive: boolean; newOnly: boolean }>,
+  ) => {
+    const s = { company, inactive: showInactive, newOnly, ...overrides };
     const params = new URLSearchParams();
     if (s.company !== "all") params.set("company", s.company);
     if (s.inactive) params.set("inactive", "1");
+    if (s.newOnly) params.set("new", "1");
     const q = params.toString();
     return q ? `/financials/accounts?${q}` : "/financials/accounts";
   };
@@ -130,7 +148,8 @@ export default async function ChartOfAccountsPage({
       ),
   })).filter((s) => s.rows.length > 0);
 
-  const colSpan = 4 + (showCompany ? 1 : 0) + (showInactive ? 1 : 0);
+  const colSpan =
+    4 + (showCompany ? 1 : 0) + (showInactive ? 1 : 0) + (newOnly ? 1 : 0);
 
   return (
     <div>
@@ -138,10 +157,16 @@ export default async function ChartOfAccountsPage({
         title="Chart of Accounts"
         subtitle="Every account imported from QuickBooks. Assign a Category to income and expense accounts to group them on the expandable Income Statement."
         action={
-          <Link href="/financials/statement" className={buttonCls("secondary")}>
-            <Rows3 size={15} strokeWidth={2} />
-            Income Statement
-          </Link>
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <RefreshAccountsButton newHref={href({ newOnly: true })} />
+            <Link
+              href="/financials/statement"
+              className={buttonCls("secondary")}
+            >
+              <Rows3 size={15} strokeWidth={2} />
+              Income Statement
+            </Link>
+          </div>
         }
       />
 
@@ -176,6 +201,17 @@ export default async function ChartOfAccountsPage({
             </Link>
           </div>
         </div>
+        <div className={filterRowCls}>
+          {filterLabel("Show")}
+          <div className="flex flex-wrap items-center divide-x divide-line/70 py-0.5">
+            <Link href={href({ newOnly: false })} className={pill(!newOnly)}>
+              All accounts
+            </Link>
+            <Link href={href({ newOnly: true })} className={pill(newOnly)}>
+              New accounts
+            </Link>
+          </div>
+        </div>
       </div>
 
       <datalist id={CATEGORY_LIST_ID}>
@@ -186,9 +222,16 @@ export default async function ChartOfAccountsPage({
 
       <Card pad={false}>
         {accounts.length === 0 ? (
-          <EmptyState icon={BookOpen} title="No accounts imported">
-            Run a QuickBooks sync in Settings to import the chart of accounts.
-          </EmptyState>
+          newOnly ? (
+            <EmptyState icon={BookOpen} title="No new accounts">
+              No accounts were added in the last {NEW_ACCOUNT_DAYS} days. Use
+              Refresh from QuickBooks to check for additions.
+            </EmptyState>
+          ) : (
+            <EmptyState icon={BookOpen} title="No accounts imported">
+              Use Refresh from QuickBooks to import the chart of accounts.
+            </EmptyState>
+          )
         ) : (
           <Table
             head={
@@ -198,6 +241,7 @@ export default async function ChartOfAccountsPage({
                 <Th>Type</Th>
                 {showCompany && <Th>Company</Th>}
                 {showInactive && <Th>Status</Th>}
+                {newOnly && <Th>Added</Th>}
                 <Th>Category</Th>
               </tr>
             }
@@ -210,6 +254,7 @@ export default async function ChartOfAccountsPage({
                 rows={section.rows}
                 showCompany={showCompany}
                 showInactive={showInactive}
+                showAdded={newOnly}
                 companyByRealm={companyByRealm}
               />
             ))}
@@ -218,7 +263,10 @@ export default async function ChartOfAccountsPage({
       </Card>
       <p className="mt-3 text-xs text-ink-400">
         Accounts, numbers, and types come from QuickBooks and refresh on every
-        general-ledger sync; Category is assigned here and survives syncs. Only
+        general-ledger sync or with Refresh from QuickBooks, which pulls the
+        chart only (no ledger lines) and never removes an account; Category is
+        assigned here and survives both. New accounts lists those first
+        imported in the last {NEW_ACCOUNT_DAYS} days. Only
         income and expense account categories appear on the Income Statement —
         accounts left blank fall under Uncategorized there. Name an expense
         category &ldquo;Direct Costs&rdquo; (or Cost of Goods Sold / Cost of
@@ -235,6 +283,7 @@ function SectionRows({
   rows,
   showCompany,
   showInactive,
+  showAdded,
   companyByRealm,
 }: {
   label: string;
@@ -242,6 +291,7 @@ function SectionRows({
   rows: AccountRow[];
   showCompany: boolean;
   showInactive: boolean;
+  showAdded: boolean;
   companyByRealm: ReadonlyMap<string, string>;
 }) {
   return (
@@ -282,6 +332,11 @@ function SectionRows({
                   Inactive
                 </span>
               )}
+            </td>
+          )}
+          {showAdded && (
+            <td className="whitespace-nowrap px-4 py-2 tabular-nums text-ink-600">
+              {a.created_at.slice(0, 10)}
             </td>
           )}
           <td className="px-4 py-1.5">

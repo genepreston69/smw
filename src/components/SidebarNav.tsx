@@ -12,12 +12,14 @@ import {
   Wrench,
   HardHat,
   Archive,
+  Package,
   Landmark,
   Percent,
   BookOpen,
   Rows3,
   Columns2,
   Scale,
+  HeartPulse,
   Wallet,
   Settings,
   Ship,
@@ -67,6 +69,12 @@ const SECTIONS: NavSection[] = [
         icon: Archive,
         adminOnly: true,
       },
+      {
+        // Everything expensed on non-billable jobs, every QB company.
+        href: "/capitalized-materials",
+        label: "Capitalized Materials",
+        icon: Package,
+      },
     ],
   },
   {
@@ -89,6 +97,10 @@ const SECTIONS: NavSection[] = [
         href: "/financials/balance-sheet",
         label: "Balance Sheet",
         icon: Columns2,
+        // Employee Benefits ÷ labor (710 + 935 + 934), from the ledger.
+        href: "/financials/benefits",
+        label: "Cost of Benefits",
+        icon: HeartPulse,
         adminOnly: true,
       },
       {

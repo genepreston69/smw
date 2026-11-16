@@ -7,6 +7,7 @@ import {
   NO_CLASS,
   baselineRange,
   closedMonthsOf,
+  decemberFromNovember,
   emptyCategoryGrowth,
   sortClasses,
   type BudgetAssumption,
@@ -37,7 +38,8 @@ export interface LoadedBudget {
   realms: string[];
   /** True when YTD actuals were loaded (variance view with a closed month). */
   wantActuals: boolean;
-  /** Baseline account × month × class cells per realm (realms order). */
+  /** Baseline account × month × class cells per realm (realms order), with
+      December carrying November's amounts (decemberFromNovember). */
   baselineByRealm: BudgetCell[][];
   /** YTD actual account × class cells, all realms, or null when not loaded. */
   actuals: BudgetCell[] | null;
@@ -111,7 +113,7 @@ export async function loadBudget(
   const actualTo = `${year}-${String(closedThrough).padStart(2, "0")}`;
 
   const [
-    baselineLedger,
+    baselineAsBooked,
     actualLedger,
     accountRows,
     assumptionRows,
@@ -164,6 +166,10 @@ export async function loadBudget(
           .range(fromRow, toRow),
       ) as Promise<(Omit<BudgetOverride, "amount"> & { amount: number | string })[]>,
     ]);
+
+  // December's baseline is November's: year-end adjusting entries land in
+  // December, so its actuals don't describe a normal month.
+  const baselineLedger = baselineAsBooked.map(decemberFromNovember);
 
   type AssumptionRow = { realm_id: string; revenue_growth_pct: number | string; expense_growth_pct: number | string };
   const saved = new Map(
