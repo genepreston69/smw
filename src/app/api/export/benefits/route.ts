@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { monthLabel } from "@/lib/financials";
 import { NO_CLASS } from "@/lib/budget";
 import {
+  BASE_TOTAL_LABEL,
   BENEFITS_CATEGORY,
   LABOR_BASE_ACCOUNTS,
   type BenefitCost,
@@ -68,7 +69,7 @@ function writeMonthSheet(
   };
   writeLine(cost.benefits);
   cost.labor.forEach(writeLine);
-  sheet.addRow(["Total labor", ...values(cost.laborTotal)]).font = { bold: true };
+  sheet.addRow([BASE_TOTAL_LABEL, ...values(cost.laborTotal)]).font = { bold: true };
   const rateRow = sheet.addRow([
     "Benefit rate",
     ...cost.colKeys.map((k) => cost.rate.cells[k] ?? null),
@@ -147,14 +148,14 @@ export async function GET(request: Request) {
   byClass.addRow(["Cost of Benefits by Class"]).font = { bold: true, size: 13 };
   byClass.addRow([[companyLabel, period].join(" · ")]);
   byClass.addRow([
-    `Benefit rate = ${FORMULA}. Each class is its own benefits over its own labor, as booked.`,
+    `Benefit rate = ${FORMULA}. Each class is its own benefits over its own base, as booked.`,
   ]);
   byClass.addRow([]);
   byClass.addRow([
     "Class",
     BENEFITS_CATEGORY,
     ...LABOR_BASE_ACCOUNTS.map((a) => a.label),
-    "Total labor",
+    BASE_TOTAL_LABEL,
     "Benefit rate",
   ]).font = { bold: true };
   byClass.views = [{ state: "frozen", ySplit: 5 }];
