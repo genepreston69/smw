@@ -18,6 +18,7 @@ import {
   BookOpen,
   Rows3,
   Scale,
+  HeartPulse,
   Wallet,
   Settings,
   Ship,
@@ -89,6 +90,13 @@ const SECTIONS: NavSection[] = [
         href: "/financials/statement",
         label: "Income Statement",
         icon: Rows3,
+        adminOnly: true,
+      },
+      {
+        // Employee Benefits ÷ labor (710 + 935 + 934), from the ledger.
+        href: "/financials/benefits",
+        label: "Cost of Benefits",
+        icon: HeartPulse,
         adminOnly: true,
       },
       {
