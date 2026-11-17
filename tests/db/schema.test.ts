@@ -208,3 +208,45 @@ describeDb("business rule settings (0041)", (db) => {
     expect((await as(user, "select value from app_settings where key = 'budget_year'")).rows).toEqual([{ value: 2028 }]);
   });
 });
+
+describeDb("balance sheet (0043)", (db) => {
+  it("the queue accepts balance sheet steps and one month-end run per day", async () => {
+    await db().query("truncate qb_sync_runs cascade");
+    const begin = async (trigger: string) =>
+      (await db().query(
+        "select public.begin_qb_sync_run(current_date, 'America/New_York', $1, $2) as id",
+        [JSON.stringify([{ kind: "balance_sheet", realm_id: "r1", label: "BS" }]), trigger],
+      )).rows[0].id as string | null;
+    expect(await begin("month_end")).not.toBeNull();
+    expect(await begin("month_end")).toBeNull();
+    // The nightly run of the same date is separate, and still gets created.
+    expect(await begin("scheduled")).not.toBeNull();
+    // Month-end steps are drained by the cron worker like the nightly ones.
+    const step = (await db().query("select public.claim_qb_sync_step() as step")).rows[0].step;
+    expect(step.label).toBe("BS");
+  });
+
+  it("snapshots are admin-only to read and not writable through the API", async () => {
+    await db().query("truncate balance_sheet_snapshots");
+    await db().query(
+      `insert into balance_sheet_snapshots (realm_id, as_of, report, total_assets, total_liabilities_equity)
+       values ('r1', '2026-10-31', '{"nodes": []}', 0, 0)`,
+    );
+    const admin = (await db().query("select id from profiles where role = 'admin' limit 1")).rows[0].id;
+    const user = await createUser(db(), "bs-user@superiormarineinc.com");
+    const as = async (uid: string, sql: string) => {
+      await db().query("begin");
+      try {
+        await db().query("set local role authenticated");
+        await db().query("select set_config('request.jwt.claim.sub', $1, true)", [uid]);
+        return await db().query(sql);
+      } finally {
+        await db().query("rollback");
+      }
+    };
+    const read = "select realm_id from balance_sheet_snapshots";
+    expect((await as(user, read)).rows).toEqual([]);
+    expect((await as(admin, read)).rows).toEqual([{ realm_id: "r1" }]);
+    await expect(as(admin, "delete from balance_sheet_snapshots")).rejects.toThrow(/permission denied/);
+  });
+});

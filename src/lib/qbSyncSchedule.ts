@@ -2,10 +2,12 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import {
+  syncBalanceSheet,
   syncCustomersAndJobs,
   syncGeneralLedger,
   syncJobCosts,
 } from "@/lib/quickbooks";
+import { priorMonthEnd } from "@/lib/balanceSheet";
 import { rebuildBenefitAllocation } from "@/lib/benefitAllocation";
 import type { QbSyncStep, QbSyncStepKind } from "@/lib/types";
 
@@ -98,6 +100,51 @@ export interface StepPlan {
  * src/app/api/qb/sync-ledger/route.ts).
  */
 export async function planSteps(): Promise<StepPlan[]> {
+  const companies = await syncingCompanies();
+  if (companies.length === 0) return [];
+
+  return [
+    { kind: "customers_jobs", realm_id: null, label: "Customers & jobs" },
+    { kind: "job_costs", realm_id: null, label: "Actual costs & invoices" },
+    ...companies.map((c) => ({
+      kind: "general_ledger" as const,
+      realm_id: c.realm_id,
+      label: `General ledger — ${companyLabel(c)}`,
+    })),
+    // The prior month end again, every night: entries posted to it during
+    // the close reach the Balance Sheet page the next morning.
+    ...balanceSheetSteps(companies),
+    // Last, because job labor and the ledger are both its inputs: without it
+    // the dashboards show yesterday's allocation beside today's costs.
+    { kind: "benefit_allocation", realm_id: null, label: "Benefit allocation" },
+  ];
+}
+
+interface SyncingCompany {
+  realm_id: string;
+  company_name: string | null;
+}
+
+const companyLabel = (c: SyncingCompany) =>
+  c.company_name ?? `Company ${c.realm_id}`;
+
+const balanceSheetSteps = (companies: SyncingCompany[]): StepPlan[] =>
+  companies.map((c) => ({
+    kind: "balance_sheet" as const,
+    realm_id: c.realm_id,
+    label: `Balance sheet — ${companyLabel(c)}`,
+  }));
+
+/**
+ * The steps that pull every company's balance sheet as of the prior month
+ * end: the month-end run just after midnight on the 1st, and the Balance
+ * Sheet page's Refresh button.
+ */
+export async function planBalanceSheetSteps(): Promise<StepPlan[]> {
+  return balanceSheetSteps(await syncingCompanies());
+}
+
+async function syncingCompanies(): Promise<SyncingCompany[]> {
   const supabase = createServiceClient();
   const { data, error } = await supabase
     .from("qb_connections")
@@ -110,21 +157,7 @@ export async function planSteps(): Promise<StepPlan[]> {
     .order("created_at");
   if (error) throw new Error(error.message);
 
-  const companies = data ?? [];
-  if (companies.length === 0) return [];
-
-  return [
-    { kind: "customers_jobs", realm_id: null, label: "Customers & jobs" },
-    { kind: "job_costs", realm_id: null, label: "Actual costs & invoices" },
-    ...companies.map((c) => ({
-      kind: "general_ledger" as const,
-      realm_id: c.realm_id,
-      label: `General ledger — ${c.company_name ?? `Company ${c.realm_id}`}`,
-    })),
-    // Last, because job labor and the ledger are both its inputs: without it
-    // the dashboards show yesterday's allocation beside today's costs.
-    { kind: "benefit_allocation", realm_id: null, label: "Benefit allocation" },
-  ];
+  return (data ?? []) as SyncingCompany[];
 }
 
 /** Creates today's scheduled run, or returns null if it already exists. */
@@ -142,16 +175,49 @@ export async function beginScheduledRun(
     });
 
   let { data, error } = await begin(steps);
+  // 23514: a step kind the database doesn't know yet. The imports matter more
+  // than the newer steps, so run without them rather than lose the morning.
   if (error?.code === "23514") {
-    // Migration 0037 (the benefit_allocation step kind) isn't applied yet.
-    // The imports matter more than the rebuild, so run without that step
-    // rather than lose the whole morning.
+    console.error(
+      "Nightly sync is running without the balance sheet pull: apply migration 0043",
+    );
+    steps = steps.filter((s) => s.kind !== "balance_sheet");
+    ({ data, error } = await begin(steps));
+  }
+  if (error?.code === "23514") {
     console.error(
       "Nightly sync is running without the benefit allocation rebuild: apply migration 0037",
     );
     ({ data, error } = await begin(
       steps.filter((s) => s.kind !== "benefit_allocation"),
     ));
+  }
+  if (error) throw new Error(error.message);
+  return (data as string | null) ?? null;
+}
+
+/**
+ * Starts the month-end Balance Sheet pull for the 1st, or returns null when
+ * it already exists (or can't: nothing connected, or migration 0043 missing).
+ *
+ * A run of its own rather than part of the nightly one, because the month
+ * closes at midnight and the nightly sync starts hours later. The cron worker
+ * drains it like any other run, so its steps get the queue's retries and can
+ * never overlap another sync.
+ */
+export async function beginMonthEndRun(clock: LocalClock): Promise<string | null> {
+  const steps = await planBalanceSheetSteps();
+  if (steps.length === 0) return null;
+  const supabase = createServiceClient();
+  const { data, error } = await supabase.rpc("begin_qb_sync_run", {
+    p_local_date: clock.date,
+    p_timezone: SYNC_TIMEZONE,
+    p_steps: steps,
+    p_trigger: "month_end",
+  });
+  if (error?.code === "23514") {
+    console.error("The month-end balance sheet pull is skipped: apply migration 0043");
+    return null;
   }
   if (error) throw new Error(error.message);
   return (data as string | null) ?? null;
@@ -217,6 +283,13 @@ async function executeStep(step: QbSyncStep): Promise<Record<string, number>> {
     case "benefit_allocation": {
       await rebuildBenefitAllocation();
       return {};
+    }
+    case "balance_sheet": {
+      if (!step.realm_id) throw new Error("Balance-sheet step has no realm");
+      // Always the month before today's, on the sync's own calendar: just
+      // after midnight on the 1st that is the month that ended at midnight.
+      const r = await syncBalanceSheet(step.realm_id, priorMonthEnd(localClock().date));
+      return { bsAccounts: r.accounts };
     }
   }
 }

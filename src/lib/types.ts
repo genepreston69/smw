@@ -132,11 +132,14 @@ export type QbSyncStepKind =
   | "customers_jobs"
   | "job_costs"
   | "general_ledger"
-  | "benefit_allocation";
+  | "benefit_allocation"
+  // One per company: its balance sheet as of the prior month end (0043).
+  | "balance_sheet";
 
 export interface QbSyncRun {
   id: string;
-  trigger: "scheduled" | "manual";
+  /** month_end: the Balance Sheet pull just after midnight on the 1st. */
+  trigger: "scheduled" | "manual" | "month_end";
   local_date: string;
   timezone: string;
   status: "running" | "succeeded" | "partial" | "failed";
