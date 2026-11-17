@@ -40,7 +40,9 @@ function summarize(step: QbSyncStep): string | null {
               // QuickBooks rejected the class/customer/vendor columns.
               r.withoutClasses ? "imported without classes" : null,
             ]
-          : [];
+          : step.kind === "balance_sheet"
+            ? [count(r.bsAccounts, "account")]
+            : [];
   const kept = parts.filter(Boolean);
   return kept.length > 0 ? kept.join(" · ") : null;
 }
@@ -71,8 +73,9 @@ export function QbSyncSchedule({
           {scheduleLabel} {zoneLabel} time
         </span>
         : customers and jobs, then actual costs and invoices, then the general
-        ledger for each connected company, then the benefit allocation those
-        feed. Manual syncs stay available above; only one sync runs at a
+        ledger and the prior month&rsquo;s balance sheet for each connected
+        company, then the benefit allocation those feed. The balance sheet is
+        also pulled just after midnight on the 1st, when a month closes. Manual syncs stay available above; only one sync runs at a
         time, so a manual one started while this is running asks you to try
         again in a few minutes.
       </p>

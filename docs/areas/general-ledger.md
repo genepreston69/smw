@@ -1,6 +1,6 @@
 # General ledger and Financials
 
-The ledger import, and every report built on it: the Financials pivot, Income Ratios, Income Statement, Chart of Accounts and Reconciliation. Budget and Cost of Benefits read the same ledger and have their own pages.
+The ledger import, and every report built on it: the Financials pivot, Income Ratios, Income Statement, Chart of Accounts and Reconciliation — plus the Balance Sheet, which comes from QuickBooks directly rather than from the imported ledger. Budget and Cost of Benefits read the same ledger and have their own pages.
 
 Code: `syncGeneralLedger` in `src/lib/quickbooks.ts`, `src/lib/financials.ts`, `src/lib/pivotServer.ts`, `src/lib/statementServer.ts`, `src/lib/reconciliation.ts`, `src/app/(app)/financials/`.
 
@@ -22,3 +22,14 @@ Code: `syncGeneralLedger` in `src/lib/quickbooks.ts`, `src/lib/financials.ts`, `
 - The tie-out is per **detail account**, never by the app's categories or by parent rollups: the parser rebuilds each export row's full "Parent:Sub" path from QuickBooks' header / "Total for …" group pairs (only QB's own statement sections are sections) and matches it to `gl_accounts.fully_qualified_name`, falling back to the account's own name only when that name is unique among the unmatched rows on both sides; an export with sub-accounts collapsed is flagged with a warning.
 - Neither side is adjusted, so every account and net income should tie to the cent.
 - The page action and the Excel export (`/api/export/reconciliation`, a POST that re-uploads the same file) share the file → result pipeline in `src/lib/reconcileServer.ts`.
+
+## Balance Sheet
+
+Code: `src/lib/balanceSheet.ts` (parsing, merging companies, calendar rules), `src/lib/balanceSheetServer.ts` (loader and param parser shared by the page and its export), `syncBalanceSheet` in `src/lib/quickbooks.ts`, `src/app/(app)/financials/balance-sheet/`, `src/app/api/export/balance-sheet/`.
+
+- **The Balance Sheet is never summed from `gl_lines`.** The imported ledger starts at the import window and carries no opening balances, so balances built from it would be short by everything posted earlier. `syncBalanceSheet` pulls each company's own QuickBooks BalanceSheet report (accrual, the same basis as the ledger import) as of a month end and stores the parsed tree in `balance_sheet_snapshots` (migration `0043`), one row per company per month end.
+- `parseBalanceSheetReport` checks a report before it is stored: it must be for the date asked for, have both halves, and balance to the cent. One that fails throws, so the step fails and the previous snapshot stays.
+- **The page shows the prior month end** (`priorMonthEnd` of today's date in `QB_SYNC_TIMEZONE`), so it moves to the month just closed at midnight on the last day of each month. Earlier month ends stay available from the As of dropdown (`?asOf=`), as they were last pulled.
+- **Two things refresh it, both through the sync queue** (see [quickbooks-sync.md](quickbooks-sync.md)): a `month_end` run the cron worker starts in the first hours of the 1st (`isMonthRollover`), and a `balance_sheet` step per company in every nightly run, which re-pulls the same month end so entries posted to it during the close show up the next morning. The page's *Refresh from QuickBooks* button does the same pull as a manual run.
+- With several companies each is a column, lines matched by name within their section (`mergeBalanceSheets`), and Combined is their plain sum — no intercompany eliminations, like every other report here.
+- Admin-only, like the ledger: `requireAdmin()` then the service-role client; RLS on the table lets only admins read it and no API role write it.

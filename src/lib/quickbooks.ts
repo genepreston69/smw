@@ -3,6 +3,7 @@ import "server-only";
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { FINANCIALS_START_DATE, JOB_COSTS_START_DATE } from "@/lib/businessRules";
+import { parseBalanceSheetReport, type BsReport } from "@/lib/balanceSheet";
 
 // ---------------------------------------------------------------------------
 // QuickBooks Online OAuth2 + API client.
@@ -1692,4 +1693,96 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
     companies: connections.length,
     withoutClasses,
   };
+}
+
+// ---------------------------------------------------------------------------
+// Balance Sheet snapshots (migration 0043)
+// ---------------------------------------------------------------------------
+
+async function fetchBalanceSheetReport(
+  accessToken: string,
+  realmId: string,
+  asOf: string,
+): Promise<BsReport> {
+  const params = new URLSearchParams({
+    // A balance sheet is "as of" its end date. The start date only says which
+    // year's earnings print as Net Income rather than Retained Earnings: from
+    // January 1, the same split as QuickBooks' own year-to-date report.
+    start_date: `${asOf.slice(0, 4)}-01-01`,
+    end_date: asOf,
+    // The same basis as the ledger import.
+    accounting_method: "Accrual",
+    summarize_column_by: "Total",
+    minorversion: "75",
+  });
+  const res = await fetch(
+    `${apiBase()}/v3/company/${realmId}/reports/BalanceSheet?${params}`,
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json",
+      },
+    },
+  );
+  if (!res.ok) {
+    const tid = res.headers.get("intuit_tid");
+    const detail = `${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`;
+    console.error(`QuickBooks BalanceSheet report failed: ${detail}`);
+    throw new Error(`QuickBooks BalanceSheet report failed: ${detail}`);
+  }
+  return res.json();
+}
+
+/**
+ * Pull one company's balance sheet as of a month end and store it as that
+ * month's snapshot, replacing an earlier pull of the same month. The report
+ * is checked first (right date, both halves, in balance — see
+ * parseBalanceSheetReport); one that fails is not stored, so the previous
+ * snapshot stays.
+ */
+export async function syncBalanceSheet(
+  realmId: string,
+  asOf: string,
+): Promise<{ accounts: number }> {
+  const connection = (await getValidConnections()).find(
+    (c) => c.realmId === realmId,
+  );
+  if (!connection) {
+    throw new Error(
+      `QuickBooks company ${realmId} is not syncing — reconnect it in Settings`,
+    );
+  }
+  const supabase = createServiceClient();
+  const { data: org } = await supabase
+    .from("organizations")
+    .select("id")
+    .order("created_at")
+    .limit(1)
+    .single();
+  if (!org) throw new Error("No organization found");
+
+  const parsed = parseBalanceSheetReport(
+    await fetchBalanceSheetReport(connection.accessToken, realmId, asOf),
+    asOf,
+  );
+  const { error } = await supabase.from("balance_sheet_snapshots").upsert(
+    {
+      org_id: org.id,
+      realm_id: realmId,
+      as_of: asOf,
+      report: { nodes: parsed.nodes },
+      total_assets: parsed.totalAssets,
+      total_liabilities_equity: parsed.totalLiabilitiesAndEquity,
+      fetched_at: new Date().toISOString(),
+    },
+    { onConflict: "org_id,realm_id,as_of" },
+  );
+  if (error) {
+    throw new Error(
+      error.code === "42P01" || error.code === "PGRST205"
+        ? "The balance sheet needs database migration 0043 (balance sheet) — apply it in Supabase."
+        : `Balance sheet save failed: ${error.message}`,
+    );
+  }
+  return { accounts: parsed.accounts };
 }

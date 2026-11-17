@@ -3,12 +3,14 @@ import { NextResponse } from "next/server";
 import {
   SYNC_HOUR,
   SYNC_TIMEZONE,
+  beginMonthEndRun,
   beginScheduledRun,
   drainSteps,
   isWithinStartWindow,
   localClock,
   planSteps,
 } from "@/lib/qbSyncSchedule";
+import { isMonthRollover } from "@/lib/balanceSheet";
 import { alertSyncFailures } from "@/lib/syncAlert";
 
 // The nightly QuickBooks sync worker.
@@ -19,6 +21,11 @@ import { alertSyncFailures } from "@/lib/syncAlert";
 // enforces one per local date); that tick and the ones after it drain the
 // queued steps, one step at a time. So the schedule is "4 AM local", and the
 // extra ticks are just workers finishing what the 4 AM tick couldn't.
+//
+// A second cron covers midnight on the 1st of each month: the first tick of
+// the new month starts the month-end Balance Sheet pull (migration 0043), so
+// the Balance Sheet page moves to the month that just closed without waiting
+// for the 4 AM sync.
 export const maxDuration = 300;
 export const dynamic = "force-dynamic";
 
@@ -54,6 +61,10 @@ async function handle(request: Request) {
     let runId: string | null = null;
     let startedRun = false;
 
+    // Before the nightly run, so on a morning where both start in one tick
+    // the short month-end steps go first.
+    const monthEndRunId = isMonthRollover(clock) ? await beginMonthEndRun(clock) : null;
+
     if (isWithinStartWindow(clock.hour)) {
       const steps = await planSteps();
       if (steps.length === 0) {
@@ -85,6 +96,7 @@ async function handle(request: Request) {
       syncHour: SYNC_HOUR,
       startedRun,
       runId,
+      monthEndRunId,
       ...summary,
       elapsedMs: Date.now() - startedAt,
     });

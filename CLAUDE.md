@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this app is
 
-SMW Job Plans: job cost estimating with a multi-step approval workflow, sitting as a middle layer in front of QuickBooks Online. Customers, jobs, actual costs, invoices and the general ledger are imported from QuickBooks (read-only); plans and barge quotes are estimated, submitted, and approved here, and the financial reports (income statement, budget, capitalized labor and materials, cost of benefits) are built on the imported ledger. Stack: Next.js 16 (App Router, deployed on Vercel) + Supabase (Postgres, Auth, RLS) + Tailwind CSS 4 + TypeScript (strict).
+SMW Job Plans: job cost estimating with a multi-step approval workflow, sitting as a middle layer in front of QuickBooks Online. Customers, jobs, actual costs, invoices and the general ledger are imported from QuickBooks (read-only); plans and barge quotes are estimated, submitted, and approved here, and the financial reports (income statement, balance sheet, budget, capitalized labor and materials, cost of benefits) are built on the imported ledger. Stack: Next.js 16 (App Router, deployed on Vercel) + Supabase (Postgres, Auth, RLS) + Tailwind CSS 4 + TypeScript (strict).
 
 ## How these docs are organized
 
@@ -15,7 +15,7 @@ This file holds only what applies everywhere. **Each area of the app has its own
 | Area | Page |
 |---|---|
 | QuickBooks import, nightly sync, sync health | `docs/areas/quickbooks-sync.md` |
-| General ledger import; Financials pivot, Income Statement, Ratios, Chart of Accounts, Reconciliation | `docs/areas/general-ledger.md` |
+| General ledger import; Financials pivot, Income Statement, Balance Sheet, Ratios, Chart of Accounts, Reconciliation | `docs/areas/general-ledger.md` |
 | Budget | `docs/areas/budget.md` |
 | Cost of Benefits | `docs/areas/cost-of-benefits.md` |
 | Barge Program | `docs/areas/barge.md` |
