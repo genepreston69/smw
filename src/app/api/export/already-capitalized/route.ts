@@ -12,6 +12,7 @@ import { loadCapSchedule } from "@/lib/alreadyCapitalizedServer";
 import { capLaborMonths, capLaborPeriodFromSearch } from "@/lib/capitalizedLabor";
 import { monthLabel } from "@/lib/financials";
 import { shortDate } from "@/lib/format";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Excel workbook for the Already Capitalized schedule
 // (/capitalized-labor/already-capitalized): By Asset Account, By Month,
@@ -51,9 +52,10 @@ export async function GET(request: Request) {
     console.error(`Already Capitalized export: schedule read failed: ${message}`);
     return NextResponse.json({ error: capScheduleErrorMessage(message) }, { status: 503 });
   }
-  const { data: connRows } = await db
+  const { data: connRows, error: connRowsError } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companyName = new Map(
     ((connRows ?? []) as { realm_id: string; company_name: string | null }[]).map((c) => [
       c.realm_id,

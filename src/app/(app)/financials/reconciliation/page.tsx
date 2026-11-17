@@ -2,6 +2,7 @@ import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
 import { PageHeader } from "@/components/ui";
 import { ReconcileUploader } from "./ReconcileUploader";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Reconciliation with QB: upload the consolidated Profit and Loss export
 // straight from QuickBooks and verify the general ledger imported here
@@ -14,10 +15,14 @@ export default async function ReconciliationPage() {
   // freshness metadata (same pattern as the other Financials pages).
   await requireAdmin();
   const supabase = createServiceClient();
-  const [{ data: syncRows }, { data: connRows }] = await Promise.all([
+  const [
+    { data: syncRows, error: syncRowsError },
+    { data: connRows, error: connRowsError },
+  ] = await Promise.all([
     supabase.from("gl_sync_state").select("realm_id, updated_at"),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
   ]);
+  throwIfError("ledger sync times and companies", syncRowsError, connRowsError);
   const nameByRealm = new Map(
     (connRows ?? []).map((c: { realm_id: string; company_name: string | null }) => [
       c.realm_id,

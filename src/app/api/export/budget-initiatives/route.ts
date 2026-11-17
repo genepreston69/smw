@@ -5,6 +5,7 @@ import { createServiceClient } from "@/lib/supabase/service";
 import { BUDGET_YEAR } from "@/lib/budget";
 import { loadInitiatives } from "@/lib/budgetServer";
 import { writeInitiativesByMonth } from "@/lib/budgetInitiativeSheet";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Excel export of budget initiatives by month (/financials/budget's New
 // initiatives panel). `?id=<initiative>` exports that one initiative;
@@ -32,10 +33,11 @@ export async function GET(request: Request) {
   }
   const db = createServiceClient();
 
-  const { data: connRows } = await db
+  const { data: connRows, error: connRowsError } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [
       c.realm_id as string,

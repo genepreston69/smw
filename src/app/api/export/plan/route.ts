@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { csvResponse, toCsv } from "@/lib/csv";
 import type { MaterialBasis, PlanTotals } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Line-level export of a single plan: one row per line item with the
 // engine-computed costs from plan_line_item_costs (never recomputed here),
@@ -60,16 +61,21 @@ export async function GET(request: Request) {
     return NextResponse.json({ error: "Missing id parameter" }, { status: 400 });
   }
 
-  const { data: plan } = await supabase
+  const { data: plan, error: planError } = await supabase
     .from("project_plans")
     .select("id, title, status, version")
     .eq("id", id)
     .maybeSingle();
+  throwIfError("the plan", planError);
   if (!plan) {
     return NextResponse.json({ error: "Plan not found" }, { status: 404 });
   }
 
-  const [{ data: phases }, lines, { data: totals }] = await Promise.all([
+  const [
+    { data: phases, error: phasesError },
+    lines,
+    { data: totals, error: totalsError },
+  ] = await Promise.all([
     supabase.from("plan_phases").select("id, name").eq("plan_id", id),
     // Paged read so huge plans aren't truncated at Supabase's 1000-row cap.
     fetchAllRows((from, to) =>
@@ -83,6 +89,7 @@ export async function GET(request: Request) {
     ),
     supabase.from("plan_totals").select("*").eq("plan_id", id).maybeSingle(),
   ]);
+  throwIfError("the plan's phases and totals", phasesError, totalsError);
 
   const phaseName = new Map((phases ?? []).map((p) => [p.id, p.name]));
   const money = (n: number | null | undefined) => Number(n ?? 0).toFixed(2);

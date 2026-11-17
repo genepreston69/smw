@@ -22,6 +22,7 @@ import {
 } from "@/components/ui";
 import { BARGE_TEMPLATES, type BargeConfig, type BargeQuoteTotals } from "@/lib/barge";
 import type { PlanStatus } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 interface QuoteRow {
   id: string;
@@ -38,7 +39,10 @@ export default async function BargeProgramPage() {
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
 
-  const [{ data: quoteRows }, { data: configRows }] = await Promise.all([
+  const [
+    { data: quoteRows, error: quoteRowsError },
+    { data: configRows, error: configRowsError },
+  ] = await Promise.all([
     supabase
       .from("barge_quotes")
       .select(
@@ -50,17 +54,19 @@ export default async function BargeProgramPage() {
       .select("*")
       .order("updated_at", { ascending: false }),
   ]);
+  throwIfError("barge quotes and configurations", quoteRowsError, configRowsError);
 
   const quotes = (quoteRows ?? []) as unknown as QuoteRow[];
   const configs = (configRows ?? []) as BargeConfig[];
 
   const quoteIds = quotes.map((q) => q.id);
-  const { data: totalsRows } = quoteIds.length
+  const { data: totalsRows, error: totalsRowsError } = quoteIds.length
     ? await supabase
         .from("barge_quote_totals")
         .select("*")
         .in("quote_id", quoteIds)
-    : { data: [] };
+    : { data: [], error: null };
+  throwIfError("barge quote totals", totalsRowsError);
   const totals = new Map(
     (totalsRows ?? []).map((t) => [t.quote_id as string, t as BargeQuoteTotals]),
   );

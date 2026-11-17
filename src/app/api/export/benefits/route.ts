@@ -12,6 +12,7 @@ import {
   type BenefitTotals,
 } from "@/lib/benefitCost";
 import { benefitCostState, loadBenefitCost } from "@/lib/benefitCostServer";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Excel export of Cost of Benefits: same query params as /financials/benefits
 // and the same benefitCostState + loadBenefitCost read, so the file always
@@ -103,10 +104,11 @@ export async function GET(request: Request) {
   // Admin verified; reads go through the service-role client like every
   // Financials read.
   const db = createServiceClient();
-  const { data: connRows } = await db
+  const { data: connRows, error: connRowsError } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [
       c.realm_id as string,

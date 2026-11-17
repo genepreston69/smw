@@ -28,6 +28,7 @@ import {
 } from "@/components/ui";
 import { StatementTable } from "./StatementTable";
 import { ClassSelect } from "./ClassSelect";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Expandable income statement grouped by the Category assigned to each
 // account on the Chart of Accounts page. Same ledger slice as the Financials
@@ -55,10 +56,11 @@ export default async function IncomeStatementPage({
   await requireAdmin();
   const supabase = createServiceClient();
 
-  const { data: connRows } = await supabase
+  const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companies = (connRows ?? []) as {
     realm_id: string;
     company_name: string | null;

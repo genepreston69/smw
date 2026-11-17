@@ -181,8 +181,11 @@ export async function createBargeQuoteFromSavedConfig(formData: FormData) {
 
 export async function duplicateBargeQuote(quoteId: string) {
   const supabase = await createClient();
-  const [{ data: quote, error }, { data: lines }, { data: labor }] =
-    await Promise.all([
+  const [
+    { data: quote, error },
+    { data: lines, error: linesError },
+    { data: labor, error: laborError },
+  ] = await Promise.all([
       supabase.from("barge_quotes").select("*").eq("id", quoteId).single(),
       supabase
         .from("barge_quote_steel_lines")
@@ -196,6 +199,9 @@ export async function duplicateBargeQuote(quoteId: string) {
         .order("sort_order"),
     ]);
   if (error || !quote) throw new Error(error?.message ?? "Quote not found");
+  // A failed read must not produce a copy with an empty takeoff.
+  const contentError = linesError ?? laborError;
+  if (contentError) throw new Error(`Could not copy the quote: ${contentError.message}`);
 
   const id = await insertQuoteWithContent({
     name: `${quote.name.replace(/ \(copy.*\)$/, "")} (copy)`,

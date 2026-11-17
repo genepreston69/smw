@@ -10,6 +10,7 @@ import {
   classifyJobView,
   type JobView,
 } from "@/lib/jobViews";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // One workbook, one sheet per Jobs dashboard view.
 export async function GET() {
@@ -23,7 +24,7 @@ export async function GET() {
 
   // Paged reads so the workbook includes every job past Supabase's
   // 1000-row cap; the dashboard (src/app/(app)/jobs/page.tsx) does the same.
-  const [jobs, { data: connRows }, costRows, invRows, benefitRows] = await Promise.all([
+  const [jobs, { data: connRows, error: connRowsError }, costRows, invRows, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -61,6 +62,7 @@ export async function GET() {
         .range(from, to),
     ),
   ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),

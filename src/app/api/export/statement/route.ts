@@ -10,6 +10,7 @@ import {
 } from "@/lib/financials";
 import { NO_CLASS } from "@/lib/budget";
 import { loadStatement, statementState } from "@/lib/statementServer";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Excel export of the category income statement: same query params as
 // /financials/statement (including the Class dropdown), same loadStatement
@@ -41,10 +42,11 @@ export async function GET(request: Request) {
   // access.
   const db = createServiceClient();
 
-  const { data: connRows } = await db
+  const { data: connRows, error: connRowsError } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [
       c.realm_id as string,

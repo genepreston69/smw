@@ -37,6 +37,7 @@ import {
   sortInitiativesForExport,
   writeInitiativesByMonth,
 } from "@/lib/budgetInitiativeSheet";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // The budget workbook (/financials/budget's Excel exports). Shared by
 // /api/export/budget — one workbook for the page's selection — and
@@ -93,10 +94,11 @@ export async function budgetExportContext(
   }
   const db = createServiceClient();
 
-  const { data: connRows } = await db
+  const { data: connRows, error: connRowsError } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [
       c.realm_id as string,

@@ -102,13 +102,16 @@ export async function addPhase(
 ): Promise<ActionResult> {
   if (!name.trim()) return { ok: false, error: "Phase name is required" };
   const supabase = await createClient();
-  const { data: maxRow } = await supabase
+  const { data: maxRow, error: maxError } = await supabase
     .from("plan_phases")
     .select("sort_order")
     .eq("plan_id", planId)
     .order("sort_order", { ascending: false })
     .limit(1)
     .maybeSingle();
+  // A failed read must not look like "no phases yet": the new phase would
+  // take position 0 and collide with the first one.
+  if (maxError) return fail(new Error(maxError.message));
 
   const { error } = await supabase.from("plan_phases").insert({
     plan_id: planId,
@@ -180,13 +183,15 @@ export async function addLineItem(
   if (!parsed.success) return { ok: false, error: "Invalid line item" };
 
   const supabase = await createClient();
-  const { data: maxRow } = await supabase
+  const { data: maxRow, error: maxError } = await supabase
     .from("plan_line_items")
     .select("sort_order")
     .eq("plan_id", planId)
     .order("sort_order", { ascending: false })
     .limit(1)
     .maybeSingle();
+  // Same as phases: a failed read must not restart the ordering at 0.
+  if (maxError) return fail(new Error(maxError.message));
 
   const { error } = await supabase.from("plan_line_items").insert({
     ...parsed.data,

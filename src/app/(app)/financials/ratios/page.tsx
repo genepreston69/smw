@@ -28,6 +28,7 @@ import {
   Th,
   buttonCls,
 } from "@/components/ui";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Income statement ratio analysis over the same general ledger the Financials
 // pivot slices (gl_pivot, account rows, Revenue + Expense classifications).
@@ -52,10 +53,11 @@ export default async function IncomeRatiosPage({
   // gl_pivot past the statement timeout.
   await requireAdmin();
   const supabase = createServiceClient();
-  const { data: connRows } = await supabase
+  const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companies = (connRows ?? []) as {
     realm_id: string;
     company_name: string | null;

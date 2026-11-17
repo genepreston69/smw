@@ -1,6 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { RoughQuoteBuilder } from "@/components/barge/RoughQuoteBuilder";
 import type { BargeConfig } from "@/lib/barge";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 export default async function RoughQuotePage({
   searchParams,
@@ -10,10 +11,11 @@ export default async function RoughQuotePage({
   const { config } = await searchParams;
   const { supabase, profile } = await requireUser();
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("barge_configs")
     .select("*")
     .order("updated_at", { ascending: false });
+  throwIfError("barge configurations", error);
 
   const configs = (data ?? []) as BargeConfig[];
   const canEdit = profile.role === "estimator" || profile.role === "admin";

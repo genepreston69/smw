@@ -29,6 +29,7 @@ import {
   Th,
   buttonCls,
 } from "@/components/ui";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Cost of Benefits: Employee Benefits (by Chart of Accounts category) as a
 // percent of labor — 710 Labor Cost + 935 Salaries & Wages + 934 Labor Maint —
@@ -47,10 +48,11 @@ export default async function CostOfBenefitsPage({
   await requireAdmin();
   const supabase = createServiceClient();
 
-  const { data: connRows } = await supabase
+  const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companies = (connRows ?? []) as {
     realm_id: string;
     company_name: string | null;

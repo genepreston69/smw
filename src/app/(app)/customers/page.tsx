@@ -13,12 +13,13 @@ import {
 import { DeleteRowButton } from "@/components/DeleteRowButton";
 import { deleteCustomer } from "./actions";
 import type { Customer } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 export default async function CustomersPage() {
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
   // Paged read so the list shows every customer past Supabase's 1000-row cap.
-  const [data, { data: connRows }] = await Promise.all([
+  const [data, { data: connRows, error: connRowsError }] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("customers")
@@ -31,6 +32,7 @@ export default async function CustomersPage() {
     ),
     supabase.from("qb_connection_status").select("realm_id, company_name"),
   ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
 
   const customers = data as (Customer & { realm_id: string | null })[];
   const companyByRealm = new Map(
