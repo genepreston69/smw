@@ -11,6 +11,7 @@ import {
   type JobView,
 } from "@/lib/jobViews";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // One workbook, one sheet per Jobs dashboard view.
 export async function GET() {
@@ -24,6 +25,9 @@ export async function GET() {
 
   // Paged reads so the workbook includes every job past Supabase's
   // 1000-row cap; the dashboard (src/app/(app)/jobs/page.tsx) does the same.
+  // The sister-company list is a setting; every screen and export that
+  // buckets jobs loads the same one.
+  const { intercompany: intercompanyRules } = await loadAppSettings(supabase);
   const [jobs, { data: connRows, error: connRowsError }, costRows, invRows, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -128,7 +132,7 @@ export async function GET() {
           (j.realm_id && (companyByRealm.get(j.realm_id) as string | null)) ||
           null,
         latestTxnDate: latestTxnDate(j.id),
-      })
+      }, intercompanyRules)
     ].push(j);
   }
 
@@ -136,7 +140,7 @@ export async function GET() {
   const moneyFmt = "#,##0.00";
 
   // First sheet: per-customer rollup, same aggregation as /customers/summary.
-  const summary = await getCustomerSummary(supabase);
+  const summary = await getCustomerSummary(supabase, intercompanyRules);
   const summarySheet = workbook.addWorksheet("Customer Summary");
   summarySheet.columns = [
     { header: "Customer", key: "customer", width: 32 },

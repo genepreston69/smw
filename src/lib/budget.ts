@@ -22,7 +22,8 @@ import {
   type PivotCell,
 } from "@/lib/financials";
 
-export const BUDGET_YEAR = 2027;
+// The budget year is a setting (Settings → Business rules; budgetYear in
+// appSettings.ts) — every function here takes the year as an argument.
 
 export type BudgetColDim = "month" | "quarter" | "total";
 

@@ -1,4 +1,6 @@
 import { isEnterpriseName } from "@/lib/enterprise";
+import type { IntercompanyRules } from "@/lib/appSettings";
+import { NO_TXN_CUTOFF } from "@/lib/businessRules";
 
 /* ---------------------------------------------------------------------------
    The five Jobs dashboard views. The dashboard tabs and the workbook export
@@ -28,11 +30,10 @@ export const JOB_VIEW_LABELS: Record<JobView, string> = {
   notransactions: "No Transactions",
 };
 
-// Jobs with no cost or invoice activity on or after this date land in the
-// No Transactions view (except US Army Corps of Engineers jobs). The sync
-// import window (JOB_COSTS_START_DATE in src/lib/quickbooks.ts) must reach
-// back at least this far.
-export const NO_TXN_CUTOFF = "2025-01-01";
+// Jobs with no cost or invoice activity on or after NO_TXN_CUTOFF land in the
+// No Transactions view (except US Army Corps of Engineers jobs). Defined in
+// businessRules.ts beside the import-window date it depends on.
+export { NO_TXN_CUTOFF };
 
 // EQP-prefixed job numbers are internal equipment work — never billable.
 export function isNonBillableJobName(name: string): boolean {
@@ -66,7 +67,8 @@ export function isArmyCorpsName(name: string | null | undefined): boolean {
   return n.includes("army corps") || n.split(/[^a-z0-9]+/).includes("usace");
 }
 
-export function classifyJobView(j: {
+export function classifyJobView(
+  j: {
   name: string;
   customerDisplayName?: string | null;
   customerCompanyName?: string | null;
@@ -74,7 +76,10 @@ export function classifyJobView(j: {
   qbCompanyName?: string | null;
   /** Most recent cost line or invoice date (YYYY-MM-DD), if any. */
   latestTxnDate: string | null;
-}): JobView {
+},
+  /** The sister-company list (settings.intercompany from loadAppSettings). */
+  intercompany: IntercompanyRules,
+): JobView {
   // Transportation wins over everything: every LH/HS/FL/BC job lives on the
   // Transportation tab and nowhere else.
   if (isTransportationJobName(j.name)) return "transportation";
@@ -93,8 +98,8 @@ export function classifyJobView(j: {
     return "nonbillable";
   }
   if (
-    isEnterpriseName(j.customerDisplayName) ||
-    isEnterpriseName(j.customerCompanyName)
+    isEnterpriseName(j.customerDisplayName, intercompany) ||
+    isEnterpriseName(j.customerCompanyName, intercompany)
   ) {
     return "intercompany";
   }

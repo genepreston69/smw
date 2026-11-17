@@ -14,6 +14,7 @@ import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components
 import { JobRows, type JobRowData } from "./JobRows";
 import { JobsFilters } from "./JobsFilters";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 interface JobRow {
   id: string;
@@ -123,6 +124,9 @@ export default async function JobsPage({
   const isAdmin = profile.role === "admin";
   // Paged reads (fetchAllRows) so no list is cut off at Supabase's
   // 1000-row cap; .order("id") tie-breaks duplicate names for stable pages.
+  // The sister-company list is a setting; every screen and export that
+  // buckets jobs loads the same one.
+  const { intercompany: intercompanyRules } = await loadAppSettings(supabase);
   const [data, { data: connRows, error: connRowsError }, costRows, invRows, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -152,8 +156,9 @@ export default async function JobsPage({
         .range(from, to),
     ),
     // Direct-labor share of Employee Benefits, distributed to jobs pro-rata
-    // by monthly labor cost — same math as the Income Statement's
-    // "Employee Benefits (Allocated)" line (migration 0021).
+    // by monthly labor cost. This is the allocation's only definition (the
+    // Income Statement line it once mirrored was removed); it is read from
+    // the cache, never computed live — see docs/areas/jobs.md.
     fetchAllRows((from, to) =>
       supabase
         .from("job_benefit_allocation_totals")
@@ -258,7 +263,7 @@ export default async function JobsPage({
         customerCompanyName: j.customer?.company_name,
         qbCompanyName: (j.realm_id && companyByRealm.get(j.realm_id)) || null,
         latestTxnDate: latestTxnDate(j.id),
-      })
+      }, intercompanyRules)
     ].push(j);
   }
   const customerJobs = grouped.customer;

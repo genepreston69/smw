@@ -2,7 +2,6 @@ import Link from "next/link";
 import { ArrowLeft, ReceiptText } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { money, shortDate } from "@/lib/format";
 import {
   ROW_DIMS,
@@ -16,6 +15,7 @@ import {
 } from "@/lib/financials";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadPivotCells } from "@/lib/pivotServer";
 
 // Drill-down for one Financials pivot cell: the raw ledger lines behind the
 // amount that was clicked. gl_lines_detail applies the same dimension
@@ -124,19 +124,11 @@ export default async function FinancialLinesPage({
   // The exact total for this slice comes from the same aggregation the pivot
   // showed, with the same sign convention, so the header always matches the
   // cell that was clicked.
-  const pivotCells = (await fetchAllRows((fromRow, toRow) =>
-    supabase
-      .rpc("gl_pivot", {
-        ...filterArgs,
-        p_row_dim: rowDim,
-        p_col_dim: colDim,
-      })
-      .order("row_key")
-      .order("col_key")
-      .order("classification")
-      .order("account_type")
-      .range(fromRow, toRow),
-  )) as PivotRow[];
+  const pivotCells = (await loadPivotCells(supabase, {
+    ...filterArgs,
+    p_row_dim: rowDim,
+    p_col_dim: colDim,
+  })) as PivotRow[];
   const total = pivotCells
     .filter(
       (c) =>

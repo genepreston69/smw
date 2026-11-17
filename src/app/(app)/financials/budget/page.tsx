@@ -6,7 +6,6 @@ import { monthLabel } from "@/lib/financials";
 import {
   BUDGET_COL_DIMS,
   BUDGET_VIEWS,
-  BUDGET_YEAR,
   NO_CLASS,
   baselineRange,
   budgetLoadErrorMessage,
@@ -29,6 +28,7 @@ import {
   type InitiativeAccount,
 } from "./InitiativesPanel";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // Calendar-year budget in the Income Statement's layout. Baseline = each
 // account's actuals for the twelve months ending June 30 of the prior year,
@@ -51,7 +51,7 @@ export default async function BudgetPage({
   const sp = await searchParams;
   await requireAdmin();
   const supabase = createServiceClient();
-  const year = BUDGET_YEAR;
+  const { budgetYear: year } = await loadAppSettings(supabase);
   const baseline = baselineRange(year);
 
   const { data: connRows, error: connRowsError } = await supabase

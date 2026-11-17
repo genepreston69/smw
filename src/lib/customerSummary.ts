@@ -1,6 +1,7 @@
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { isEnterpriseName } from "@/lib/enterprise";
 import { NO_TXN_CUTOFF } from "@/lib/jobViews";
+import type { IntercompanyRules } from "@/lib/appSettings";
 
 /* ---------------------------------------------------------------------------
    Customer summary: every job's actual costs and invoiced revenue rolled up
@@ -81,6 +82,8 @@ interface SupabaseLike {
 
 export async function getCustomerSummary(
   supabase: SupabaseLike,
+  /** The sister-company list (settings.intercompany from loadAppSettings). */
+  intercompany: IntercompanyRules,
 ): Promise<CustomerSummary> {
   const [jobRows, connRows, costRows, invRows] = await Promise.all([
     fetchAllRows((from, to) =>
@@ -164,8 +167,8 @@ export async function getCustomerSummary(
         companyName:
           (j.realm_id && companyByRealm.get(j.realm_id)) || null,
         intercompany:
-          isEnterpriseName(j.customer?.display_name) ||
-          isEnterpriseName(j.customer?.company_name),
+          isEnterpriseName(j.customer?.display_name, intercompany) ||
+          isEnterpriseName(j.customer?.company_name, intercompany),
         jobs: 0,
         jobList: [],
         materials: 0,

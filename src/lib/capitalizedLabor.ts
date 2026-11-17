@@ -1,4 +1,5 @@
 import { isEnterpriseName } from "@/lib/enterprise";
+import type { IntercompanyRules } from "@/lib/appSettings";
 import { isNonBillableJobName, isTransportationJobName } from "@/lib/jobViews";
 import { lastDayOfMonth, monthLabel } from "@/lib/financials";
 
@@ -66,13 +67,17 @@ export function isPpsWorkForSuperiorMarine(
 // for a sister company. Transportation jobs are operating work and never
 // qualify — same precedence as the Jobs dashboard. Unlike the Jobs tabs,
 // recent activity doesn't matter here: old journal entries still need review.
-export function capLaborBucket(j: {
-  name: string;
-  customerDisplayName?: string | null;
-  customerCompanyName?: string | null;
-  /** Name of the QuickBooks company (realm) the job was imported from. */
-  qbCompanyName?: string | null;
-}): CapLaborBucket | null {
+export function capLaborBucket(
+  j: {
+    name: string;
+    customerDisplayName?: string | null;
+    customerCompanyName?: string | null;
+    /** Name of the QuickBooks company (realm) the job was imported from. */
+    qbCompanyName?: string | null;
+  },
+  /** The sister-company list (settings.intercompany from loadAppSettings). */
+  intercompany: IntercompanyRules,
+): CapLaborBucket | null {
   if (isTransportationJobName(j.name)) return null;
   if (
     isPpsWorkForSuperiorMarine(j.qbCompanyName, j.customerDisplayName) ||
@@ -82,8 +87,8 @@ export function capLaborBucket(j: {
   }
   if (isNonBillableJobName(j.name)) return "nonbillable";
   if (
-    isEnterpriseName(j.customerDisplayName) ||
-    isEnterpriseName(j.customerCompanyName)
+    isEnterpriseName(j.customerDisplayName, intercompany) ||
+    isEnterpriseName(j.customerCompanyName, intercompany)
   ) {
     return "intercompany";
   }

@@ -2,6 +2,7 @@ import "server-only";
 
 import { createServiceClient } from "@/lib/supabase/service";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
+import { FINANCIALS_START_DATE, JOB_COSTS_START_DATE } from "@/lib/businessRules";
 
 // ---------------------------------------------------------------------------
 // QuickBooks Online OAuth2 + API client.
@@ -455,7 +456,7 @@ const DEFAULT_LABOR_COST_RATE = 37.15;
 // transaction-history feature still pools costs from the start of 2023).
 // Must reach back at least to NO_TXN_CUTOFF (src/lib/jobViews.ts) so the
 // No Transactions view can classify against real data.
-const JOB_COSTS_START_DATE = "2025-01-01";
+// Defined in businessRules.ts with the other dates that must stay code.
 
 // General-ledger lines (gl_lines) are imported from this date forward.
 // Pre-2025 ledger lines are frozen audited history: migration 0020 marked
@@ -463,7 +464,7 @@ const JOB_COSTS_START_DATE = "2025-01-01";
 // scheme, and prune_gl_lines never touches them. Balance-sheet accounts on
 // the Financials page show activity since 2023-01-01 (frozen history plus
 // this import window), not ending balances.
-const FINANCIALS_START_DATE = "2025-01-01";
+// Defined in businessRules.ts (do not change it without reading the note there).
 
 // Direct-cost buckets for the per-job transaction history.
 type CostType = "materials" | "labor" | "other";

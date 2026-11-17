@@ -10,6 +10,7 @@ import {
   latestMonth,
 } from "@/lib/financials";
 import { NO_CLASS, sortClasses } from "@/lib/budget";
+import type { BenefitBaseAccount } from "@/lib/appSettings";
 import {
   benefitCostByClass,
   benefitLineFor,
@@ -67,11 +68,13 @@ export async function loadBenefitCost(
   state: BenefitCostState,
   /** Every connected company, in display order. */
   allRealms: string[],
+  /** The denominator's accounts (settings.benefitBaseAccounts). */
+  bases: BenefitBaseAccount[],
 ): Promise<LoadedBenefitCost> {
   const { company, from, to, cls } = state;
   const realms = company === "all" ? allRealms : [company];
   if (realms.length === 0) {
-    const empty = buildBenefitCost([]);
+    const empty = buildBenefitCost([], bases);
     return { cost: empty, classes: [], byClass: [], allClasses: empty, costOf: () => empty };
   }
 
@@ -116,7 +119,7 @@ export async function loadBenefitCost(
   const cells: BenefitCell[] = [];
   for (const [realm, classification, , account, month, amount, rawCls] of summary.accounts) {
     if (classification !== "Expense") continue;
-    const line = benefitLineFor(account, categoryOf.get(`${realm}\u0000${account}`));
+    const line = benefitLineFor(account, categoryOf.get(`${realm}\u0000${account}`), bases);
     const value = Number(amount) || 0;
     if (line && value !== 0) {
       cells.push({ line, account, month, amount: value, cls: rawCls || NO_CLASS });
@@ -124,12 +127,12 @@ export async function loadBenefitCost(
   }
 
   const classes = sortClasses(new Set(cells.map((c) => c.cls)));
-  const allClasses = buildBenefitCost(cells);
-  const costOf = (one: string) => buildBenefitCost(cells.filter((c) => c.cls === one));
+  const allClasses = buildBenefitCost(cells, bases);
+  const costOf = (one: string) => buildBenefitCost(cells.filter((c) => c.cls === one), bases);
   return {
     cost: cls === null ? allClasses : costOf(cls),
     classes,
-    byClass: benefitCostByClass(cells, classes),
+    byClass: benefitCostByClass(cells, classes, bases),
     allClasses,
     costOf,
   };

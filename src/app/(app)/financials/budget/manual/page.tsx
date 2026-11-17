@@ -4,7 +4,8 @@ import { requireAdmin } from "@/lib/auth";
 import { PrintButton } from "@/components/PrintButton";
 import { buttonCls } from "@/components/ui";
 import { monthLabel } from "@/lib/financials";
-import { BUDGET_YEAR, baselineRange } from "@/lib/budget";
+import { baselineRange } from "@/lib/budget";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 export const metadata = {
   title: "Budget — User Manual",
@@ -43,9 +44,10 @@ const TOC = [
 ] as const;
 
 export default async function BudgetManualPage() {
-  await requireAdmin();
+  const { supabase } = await requireAdmin();
 
-  const year = BUDGET_YEAR;
+  // The budget year is a setting (Settings → Business rules).
+  const { budgetYear: year } = await loadAppSettings(supabase);
   const baseline = baselineRange(year);
   const baseFrom = monthLabel(baseline.from); // e.g. "Jul 2025"
   const baseTo = monthLabel(baseline.to); // e.g. "Jun 2026"
@@ -709,7 +711,7 @@ export default async function BudgetManualPage() {
               ]}
             />
             <Shot caption="The initiative dialog. Each account gets the expected amount for the run; Per month shows the monthly spread and the footer totals update as you type.">
-              <MockInitiativeDialog />
+              <MockInitiativeDialog year={year} />
             </Shot>
             <H3>Rules enforced on save</H3>
             <Ul
@@ -1784,7 +1786,7 @@ function MockAssumptions() {
   );
 }
 
-function MockInitiativeDialog() {
+function MockInitiativeDialog({ year }: { year: number }) {
   const field =
     "block w-full rounded-md border border-line bg-white px-2.5 py-1 text-xs text-ink-900";
   const label = (t: string) => (
@@ -1825,15 +1827,15 @@ function MockInitiativeDialog() {
         </div>
         <div>
           {label("Starts")}
-          <span className={field}>Jul {BUDGET_YEAR}</span>
+          <span className={field}>Jul {year}</span>
         </div>
         <div>
           {label("Ends")}
-          <span className={field}>Dec {BUDGET_YEAR}</span>
+          <span className={field}>Dec {year}</span>
         </div>
       </div>
       <div className="border-b border-line/70 px-4 py-1.5 text-[0.65rem] text-ink-400">
-        Enter the expected amount for {BUDGET_YEAR} in each account; it is
+        Enter the expected amount for {year} in each account; it is
         spread evenly over the 6 months from Jul through Dec.
       </div>
       <div className="bg-surface/50 px-3 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.08em] text-ink-400">

@@ -12,6 +12,7 @@ import {
 } from "@/lib/capitalizedLabor";
 import { shortDate } from "@/lib/format";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // Line-level export of capitalized-labor candidates: every counted
 // journal-entry labor line (wages and employer taxes — never withholdings;
@@ -33,6 +34,9 @@ export async function GET(request: Request) {
   const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
 
   // Paged reads so the CSV includes every row past Supabase's 1000-row cap.
+  // The sister-company list is a setting; every screen and export that
+  // buckets jobs loads the same one.
+  const { intercompany: intercompanyRules } = await loadAppSettings(supabase);
   const [jobs, { data: connRows, error: connRowsError }, lines] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -83,7 +87,7 @@ export async function GET(request: Request) {
       qbCompanyName: j.realm_id
         ? ((companyByRealm.get(j.realm_id) as string | null) ?? null)
         : null,
-    });
+    }, intercompanyRules);
     if (bucket) candidateByJob.set(j.id, { job: j, bucket });
   }
 

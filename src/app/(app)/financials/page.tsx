@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Download, Landmark } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { moneyWhole, pct } from "@/lib/format";
 import {
   COL_DIMS,
@@ -24,6 +23,7 @@ import {
 } from "@/lib/financials";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadPivotCells } from "@/lib/pivotServer";
 
 // Slice-and-dice over raw general-ledger lines imported from QuickBooks
 // (gl_lines / gl_accounts, migration 0009). Aggregation happens in the
@@ -81,39 +81,23 @@ export default async function FinancialsPage({
   // needs one extra revenue slice for the denominators.
   const needsRevenueSlice = display === "pct" && scope === "expense";
   const [cells, revenueCells] = await Promise.all([
-    fetchAllRows((fromRow, toRow) =>
-      supabase
-        .rpc("gl_pivot", {
+    loadPivotCells(supabase, {
+      p_start: `${from}-01`,
+      p_end: lastDayOfMonth(to),
+      p_row_dim: rowDim,
+      p_col_dim: colDim,
+      p_realm_id: company === "all" ? null : company,
+      p_classifications: SCOPE_CLASSIFICATIONS[scope],
+    }) as Promise<PivotCell[]>,
+    needsRevenueSlice
+      ? (loadPivotCells(supabase, {
           p_start: `${from}-01`,
           p_end: lastDayOfMonth(to),
-          p_row_dim: rowDim,
+          p_row_dim: "account",
           p_col_dim: colDim,
           p_realm_id: company === "all" ? null : company,
-          p_classifications: SCOPE_CLASSIFICATIONS[scope],
-        })
-        .order("row_key")
-        .order("col_key")
-        .order("classification")
-        .order("account_type")
-        .range(fromRow, toRow),
-    ) as Promise<PivotCell[]>,
-    needsRevenueSlice
-      ? (fetchAllRows((fromRow, toRow) =>
-          supabase
-            .rpc("gl_pivot", {
-              p_start: `${from}-01`,
-              p_end: lastDayOfMonth(to),
-              p_row_dim: "account",
-              p_col_dim: colDim,
-              p_realm_id: company === "all" ? null : company,
-              p_classifications: SCOPE_CLASSIFICATIONS.income,
-            })
-            .order("row_key")
-            .order("col_key")
-            .order("classification")
-            .order("account_type")
-            .range(fromRow, toRow),
-        ) as Promise<PivotCell[]>)
+          p_classifications: SCOPE_CLASSIFICATIONS.income,
+        }) as Promise<PivotCell[]>)
       : Promise.resolve([] as PivotCell[]),
   ]);
 

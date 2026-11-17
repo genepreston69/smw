@@ -3,10 +3,12 @@ import { requireUser } from "@/lib/auth";
 import { getCustomerSummary } from "@/lib/customerSummary";
 import { Card, EmptyState, PageHeader, buttonCls } from "@/components/ui";
 import { SummaryTable } from "./SummaryRows";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 export default async function CustomerSummaryPage() {
   const { supabase } = await requireUser();
-  const { rows, showCompany, totals } = await getCustomerSummary(supabase);
+  const { intercompany } = await loadAppSettings(supabase);
+  const { rows, showCompany, totals } = await getCustomerSummary(supabase, intercompany);
 
   return (
     <div>
