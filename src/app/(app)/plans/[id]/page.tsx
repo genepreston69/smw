@@ -12,6 +12,7 @@ import type {
   ProjectPlan,
   Profile,
 } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 export default async function PlanPage({
   params,
@@ -21,22 +22,24 @@ export default async function PlanPage({
   const { id } = await params;
   const { supabase, profile } = await requireUser();
 
-  const { data: plan } = await supabase
+  const { data: plan, error: planError } = await supabase
     .from("project_plans")
     .select("*")
     .eq("id", id)
     .maybeSingle();
+  // A failed read is an error, not "no such plan".
+  throwIfError("this plan", planError);
 
   if (!plan) notFound();
 
   const [
-    { data: phases },
-    { data: items },
-    { data: approvals },
-    { data: thresholds },
+    { data: phases, error: phasesError },
+    { data: items, error: itemsError },
+    { data: approvals, error: approvalsError },
+    { data: thresholds, error: thresholdsError },
     customers,
     jobs,
-    { data: profiles },
+    { data: profiles, error: profilesError },
   ] = await Promise.all([
     supabase
       .from("plan_phases")
@@ -79,6 +82,16 @@ export default async function PlanPage({
     ),
     supabase.from("profiles").select("id, email, full_name, role"),
   ]);
+  // The editor saves what it was handed, so a plan must never open looking
+  // empty because a read failed.
+  throwIfError(
+    "this plan",
+    phasesError,
+    itemsError,
+    approvalsError,
+    thresholdsError,
+    profilesError,
+  );
 
   // Actual costs from QuickBooks for the linked job (if any).
   let actuals: {

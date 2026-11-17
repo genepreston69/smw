@@ -9,6 +9,7 @@ import {
   localClock,
   planSteps,
 } from "@/lib/qbSyncSchedule";
+import { alertSyncFailures } from "@/lib/syncAlert";
 
 // The nightly QuickBooks sync worker.
 //
@@ -73,6 +74,8 @@ async function handle(request: Request) {
     // work started at 4 AM gets finished, and how a step stranded by a
     // timeout gets retried.
     const summary = await drainSteps({ startedAt, claimUntilMs: CLAIM_UNTIL_MS });
+    // Steps that just used their last retry won't be tried again today.
+    await alertSyncFailures(summary.executed.filter((s) => s.giveUp));
 
     return NextResponse.json({
       ok: true,
@@ -86,6 +89,9 @@ async function handle(request: Request) {
       elapsedMs: Date.now() - startedAt,
     });
   } catch (e) {
+    console.error(
+      `Scheduled QuickBooks sync tick failed: ${e instanceof Error ? e.message : e}`,
+    );
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Scheduled sync failed" },
       { status: 500 },

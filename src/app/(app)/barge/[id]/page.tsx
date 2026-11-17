@@ -9,6 +9,7 @@ import type {
   BargeSteelLine,
 } from "@/lib/barge";
 import type { ApprovalThreshold, Customer, Profile } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 export default async function BargeQuotePage({
   params,
@@ -18,21 +19,23 @@ export default async function BargeQuotePage({
   const { id } = await params;
   const { supabase, profile } = await requireUser();
 
-  const { data: quote } = await supabase
+  const { data: quote, error: quoteError } = await supabase
     .from("barge_quotes")
     .select("*")
     .eq("id", id)
     .maybeSingle();
+  // A failed read is an error, not "no such quote".
+  throwIfError("this barge quote", quoteError);
 
   if (!quote) notFound();
 
   const [
-    { data: lines },
-    { data: labor },
-    { data: approvals },
-    { data: thresholds },
+    { data: lines, error: linesError },
+    { data: labor, error: laborError },
+    { data: approvals, error: approvalsError },
+    { data: thresholds, error: thresholdsError },
     customers,
-    { data: profiles },
+    { data: profiles, error: profilesError },
   ] = await Promise.all([
     supabase
       .from("barge_quote_steel_lines")
@@ -65,6 +68,16 @@ export default async function BargeQuotePage({
     ),
     supabase.from("profiles").select("id, email, full_name, role"),
   ]);
+  // The workbench saves its content wholesale, so a quote that opened with no
+  // lines because a read failed would be saved back with no lines.
+  throwIfError(
+    "this barge quote",
+    linesError,
+    laborError,
+    approvalsError,
+    thresholdsError,
+    profilesError,
+  );
 
   return (
     <BargeQuoteWorkbench

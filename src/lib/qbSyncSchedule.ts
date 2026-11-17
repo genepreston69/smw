@@ -16,7 +16,13 @@ import type { QbSyncStep, QbSyncStepKind } from "@/lib/types";
 // one general-ledger import per company, then the benefit-allocation rebuild
 // those imports feed). Postgres owns the queue's
 // rules; this module decides which steps a run contains, runs one at a time,
-// and reports what happened. /api/cron/qb-sync is the only caller.
+// and reports what happened. /api/cron/qb-sync drains scheduled runs.
+//
+// The manual sync buttons go through the same queue (runManualSync, migration
+// 0039) as trigger = 'manual' runs, so a manual sync can never overlap the
+// nightly one or another manual one: every step rotates the QuickBooks refresh
+// token, and two ledger imports of one company at once can delete each other's
+// rows.
 // ---------------------------------------------------------------------------
 
 /** Timezone the 4 AM schedule is expressed in. */
@@ -79,7 +85,7 @@ export function isWithinStartWindow(hour: number): boolean {
   return hour >= SYNC_HOUR && hour < SYNC_HOUR + SYNC_START_WINDOW_HOURS;
 }
 
-interface StepPlan {
+export interface StepPlan {
   kind: QbSyncStepKind;
   realm_id: string | null;
   label: string;
@@ -151,9 +157,13 @@ export async function beginScheduledRun(
   return (data as string | null) ?? null;
 }
 
-async function claimStep(): Promise<QbSyncStep | null> {
+/** The next step of any run (the cron worker), or of one run (a manual sync). */
+async function claimStep(runId?: string): Promise<QbSyncStep | null> {
   const supabase = createServiceClient();
-  const { data, error } = await supabase.rpc("claim_qb_sync_step", {});
+  const { data, error } = await supabase.rpc(
+    "claim_qb_sync_step",
+    runId ? { p_run_id: runId } : {},
+  );
   if (error) throw new Error(error.message);
   return (data as QbSyncStep | null) ?? null;
 }
@@ -163,6 +173,8 @@ async function finishStep(
   ok: boolean,
   result: Record<string, number> | null,
   errorMessage: string | null,
+  /** Attempts before a failed step is failed for good (default: the queue's 3). */
+  maxAttempts?: number,
 ): Promise<QbSyncStep | null> {
   const supabase = createServiceClient();
   const { data, error } = await supabase.rpc("finish_qb_sync_step", {
@@ -170,6 +182,7 @@ async function finishStep(
     p_ok: ok,
     p_result: result,
     p_error: errorMessage,
+    ...(maxAttempts !== undefined ? { p_max_attempts: maxAttempts } : {}),
   });
   if (error) throw new Error(error.message);
   return (data as QbSyncStep | null) ?? null;
@@ -194,7 +207,12 @@ async function executeStep(step: QbSyncStep): Promise<Record<string, number>> {
     case "general_ledger": {
       if (!step.realm_id) throw new Error("General-ledger step has no realm");
       const r = await syncGeneralLedger(step.realm_id);
-      return { glAccounts: r.accounts, glLines: r.glLines };
+      return {
+        glAccounts: r.accounts,
+        glLines: r.glLines,
+        // Only recorded when it happened, so the Settings page can flag it.
+        ...(r.withoutClasses > 0 ? { withoutClasses: r.withoutClasses } : {}),
+      };
     }
     case "benefit_allocation": {
       await rebuildBenefitAllocation();
@@ -270,6 +288,86 @@ export async function drainSteps(opts: {
   }
 
   return { executed, remaining: await countOpenSteps(), outOfTime };
+}
+
+/** A manual sync that could not start because another sync holds the queue. */
+export class SyncBusyError extends Error {
+  constructor() {
+    super(
+      "Another QuickBooks sync is running. Wait for it to finish (a few minutes), then try again.",
+    );
+    this.name = "SyncBusyError";
+  }
+}
+
+/**
+ * Runs a manual sync's steps, in order, inside the calling request — through
+ * the same queue as the nightly run, so only one sync works at a time.
+ *
+ * Unlike the nightly worker it never retries and never leaves work queued:
+ * the admin is watching the button, so the first failure stops the sync, the
+ * steps not yet started are cancelled, and the error is thrown to the caller.
+ * Throws SyncBusyError (nothing done) when another sync is running.
+ */
+export async function runManualSync(
+  steps: StepPlan[],
+): Promise<Record<string, number>[]> {
+  const supabase = createServiceClient();
+  const { data: runId, error } = await supabase.rpc("begin_qb_sync_run", {
+    p_local_date: localClock().date,
+    p_timezone: SYNC_TIMEZONE,
+    p_steps: steps,
+    p_trigger: "manual",
+  });
+  if (error) throw new Error(error.message);
+  if (!runId) throw new Error("The sync could not be queued");
+
+  const cancelRest = async (reason: string) => {
+    const { error: cancelError } = await supabase.rpc("cancel_qb_sync_run", {
+      p_run_id: runId,
+      p_reason: reason,
+    });
+    if (cancelError) console.error(`Could not cancel sync run ${runId}: ${cancelError.message}`);
+  };
+
+  const results: Record<string, number>[] = [];
+  for (let i = 0; i < steps.length; i++) {
+    let step: QbSyncStep | null;
+    try {
+      step = await claimStep(runId as string);
+    } catch (e) {
+      // The queue itself failed, so cancelling through it may fail too. A
+      // run that has done nothing is simply removed (its steps cascade);
+      // otherwise the steps not yet started are cancelled.
+      if (i === 0) await supabase.from("qb_sync_runs").delete().eq("id", runId);
+      else await cancelRest("Cancelled: the sync could not claim its next step");
+      const message = e instanceof Error ? e.message : String(e);
+      throw new Error(
+        /could not find the function/i.test(message)
+          ? "Manual sync needs database migration 0039 (sync and save safeguards) — apply it in Supabase, then try again."
+          : message,
+      );
+    }
+    if (!step) {
+      // Our own steps are all still pending, so no step means the queue is
+      // held by another sync's running step.
+      await cancelRest("Cancelled: another sync was running");
+      throw new SyncBusyError();
+    }
+    try {
+      const result = await executeStep(step);
+      await finishStep(step.id, true, result, null);
+      results.push(result);
+    } catch (e) {
+      const message = e instanceof Error ? e.message : "Sync step failed";
+      // One attempt: fail it for good rather than leave it queued for the
+      // next morning's worker.
+      await finishStep(step.id, false, null, message, 1);
+      await cancelRest("Skipped: an earlier step of this sync failed");
+      throw e;
+    }
+  }
+  return results;
 }
 
 async function countOpenSteps(): Promise<number> {

@@ -745,6 +745,63 @@ function extractJobCostRows(
  * Import actual costs (bill/purchase/vendor-credit lines tagged to jobs) and
  * invoiced revenue (invoices billed to jobs) for all companies.
  */
+/**
+ * Replaces one company's import window (rows dated on or after
+ * JOB_COSTS_START_DATE) with what QuickBooks just returned, without ever
+ * leaving the window empty.
+ *
+ * Every fetched row is upserted on its QuickBooks key and stamped with this
+ * sync's time; only then are the window's rows that this sync did not touch
+ * deleted — those are transactions edited away or deleted in QuickBooks. The
+ * old order (delete the window, then insert) lost a company's costs whenever
+ * the inserts failed or the function was killed in between. Now a sync that
+ * dies partway leaves every row in place (some refreshed, some not yet) and
+ * the next sync finishes the job.
+ *
+ * Upserting also absorbs a transaction re-dated in QuickBooks from before the
+ * window into it: its frozen row has the same key, so it is updated in place
+ * instead of colliding with the unique constraint and failing every sync.
+ * Rows dated before the window that QuickBooks did not return are frozen
+ * audited history and are never touched. (No row can have a null txn_date:
+ * the QBO queries filter on TxnDate.)
+ */
+async function refreshImportWindow(
+  supabase: ReturnType<typeof createServiceClient>,
+  opts: {
+    table: "job_costs" | "job_invoices";
+    conflictKey: string;
+    /** Names the rows in error messages. */
+    what: string;
+    orgId: string;
+    realmId: string;
+    /** This sync's last_synced_at stamp, already set on every row. */
+    syncedAt: string;
+    rows: Record<string, unknown>[];
+  },
+): Promise<void> {
+  // Chunked to stay under request size limits.
+  for (let i = 0; i < opts.rows.length; i += 500) {
+    const { error } = await supabase
+      .from(opts.table)
+      .upsert(opts.rows.slice(i, i + 500), { onConflict: opts.conflictKey });
+    if (error) throw new Error(`${opts.what} import failed: ${error.message}`);
+  }
+
+  const untouched = () =>
+    supabase
+      .from(opts.table)
+      .delete()
+      .eq("org_id", opts.orgId)
+      .eq("realm_id", opts.realmId)
+      .gte("txn_date", JOB_COSTS_START_DATE);
+  for (const { error } of [
+    await untouched().lt("last_synced_at", opts.syncedAt),
+    await untouched().is("last_synced_at", null),
+  ]) {
+    if (error) throw new Error(`${opts.what} cleanup failed: ${error.message}`);
+  }
+}
+
 export async function syncJobCosts(): Promise<{
   costLines: number;
   invoices: number;
@@ -944,27 +1001,17 @@ export async function syncJobCosts(): Promise<{
     ];
 
     // Refresh the import window per company so edits/deletions in QuickBooks
-    // are reflected. Only rows on or after JOB_COSTS_START_DATE are cleared —
-    // earlier rows are frozen audited history and are never deleted or
-    // reimported. (No row can have a null txn_date: the QBO query filters on
-    // TxnDate, so undated transactions were never imported.)
-    const { error: delError } = await supabase
-      .from("job_costs")
-      .delete()
-      .eq("org_id", org.id)
-      .eq("realm_id", realmId)
-      .gte("txn_date", JOB_COSTS_START_DATE);
-    if (delError) throw new Error(`Job cost refresh failed: ${delError.message}`);
-
-    if (rows.length > 0) {
-      // Insert in chunks to stay under request size limits.
-      for (let i = 0; i < rows.length; i += 500) {
-        const { error } = await supabase
-          .from("job_costs")
-          .insert(rows.slice(i, i + 500));
-        if (error) throw new Error(`Job cost insert failed: ${error.message}`);
-      }
-    }
+    // are reflected — write first, clear second (refreshImportWindow), so a
+    // sync that dies partway never leaves the company's costs missing.
+    await refreshImportWindow(supabase, {
+      table: "job_costs",
+      conflictKey: "org_id,realm_id,qb_txn_type,qb_txn_id,qb_line_id",
+      what: "Job cost",
+      orgId: org.id,
+      realmId,
+      syncedAt: now,
+      rows,
+    });
     costLines += rows.length;
 
     // Invoices billed to a job (sub-customer); ones billed to a top-level
@@ -989,23 +1036,15 @@ export async function syncJobCosts(): Promise<{
     }
 
     // Refresh the import window per company, same as job_costs.
-    const { error: invDelError } = await supabase
-      .from("job_invoices")
-      .delete()
-      .eq("org_id", org.id)
-      .eq("realm_id", realmId)
-      .gte("txn_date", JOB_COSTS_START_DATE);
-    if (invDelError)
-      throw new Error(`Invoice refresh failed: ${invDelError.message}`);
-
-    if (invoiceRows.length > 0) {
-      for (let i = 0; i < invoiceRows.length; i += 500) {
-        const { error } = await supabase
-          .from("job_invoices")
-          .insert(invoiceRows.slice(i, i + 500));
-        if (error) throw new Error(`Invoice insert failed: ${error.message}`);
-      }
-    }
+    await refreshImportWindow(supabase, {
+      table: "job_invoices",
+      conflictKey: "org_id,realm_id,qb_invoice_id",
+      what: "Invoice",
+      orgId: org.id,
+      realmId,
+      syncedAt: now,
+      rows: invoiceRows,
+    });
     invoiceCount += invoiceRows.length;
     console.log(
       `QB cost sync ${realmId} (${companyName ?? "unnamed"}): ${rows.length} cost lines + ${invoiceRows.length} invoices since ${JOB_COSTS_START_DATE}`,
@@ -1085,15 +1124,27 @@ const GL_COLUMNS =
   "tx_date,txn_type,doc_num,name,cust_name,vend_name,memo,split_acc,klass_name,dept_name,subt_nat_amount";
 
 // Fallback for companies where an optional column (class/department/…) makes
-// the report request fail.
+// the report request fail. A report fetched this way has no class, customer,
+// vendor or department on any line, so the fallback is never silent: the
+// caller counts it (GlColumnUse) and syncGeneralLedger refuses to publish a
+// ledger that mixes the two, or that would drop classes the published ledger
+// has.
 const GL_COLUMNS_MINIMAL =
   "tx_date,txn_type,doc_num,name,memo,split_acc,subt_nat_amount";
+
+/** How many report windows of one company's sync came back with the full
+    column set, and how many only with the minimal one. */
+interface GlColumnUse {
+  full: number;
+  minimal: number;
+}
 
 async function fetchGeneralLedger(
   accessToken: string,
   realmId: string,
   startDate: string,
   endDate: string,
+  columnUse: GlColumnUse,
 ): Promise<QboReport> {
   const request = (columns: string) => {
     const params = new URLSearchParams({
@@ -1115,7 +1166,18 @@ async function fetchGeneralLedger(
   };
 
   let res = await request(GL_COLUMNS);
-  if (res.status === 400) res = await request(GL_COLUMNS_MINIMAL);
+  // A 400 is either a company that rejects an optional column (every window
+  // will) or a one-off fault. Ask once more before giving up the columns.
+  if (res.status === 400) res = await request(GL_COLUMNS);
+  if (res.status === 400) {
+    console.warn(
+      `QB GL report ${realmId} ${startDate}..${endDate}: QuickBooks rejected the full column set (400); retrying without class, customer, vendor and department`,
+    );
+    res = await request(GL_COLUMNS_MINIMAL);
+    if (res.ok) columnUse.minimal += 1;
+  } else if (res.ok) {
+    columnUse.full += 1;
+  }
   if (!res.ok) {
     const tid = res.headers.get("intuit_tid");
     const detail = `${res.status} ${await res.text()}${tid ? ` (intuit_tid: ${tid})` : ""}`;
@@ -1160,6 +1222,16 @@ function parseGlReport(report: QboReport): { lines: GlLine[]; truncated: boolean
     const v = col(row, key)?.value?.trim();
     return v ? v : null;
   };
+
+  // Every amount is read from this column. If QuickBooks ever renames or
+  // drops it, each line would parse as 0 and a ledger of zeros would replace
+  // the good one — fail instead. (A report with no columns at all is an
+  // empty window, which is fine.)
+  if (colKeys.length > 0 && !colKeys.includes("subt_nat_amount")) {
+    throw new Error(
+      `QuickBooks GeneralLedger report has no amount column (subt_nat_amount); got columns: ${colKeys.join(", ")}`,
+    );
+  }
 
   const lines: GlLine[] = [];
   let cells = 0;
@@ -1237,9 +1309,10 @@ async function fetchGeneralLedgerLines(
   realmId: string,
   start: string,
   end: string,
+  columnUse: GlColumnUse,
 ): Promise<GlLine[]> {
   const { lines, truncated } = parseGlReport(
-    await fetchGeneralLedger(accessToken, realmId, start, end),
+    await fetchGeneralLedger(accessToken, realmId, start, end, columnUse),
   );
   if (!truncated) return lines;
   if (start >= end) {
@@ -1254,8 +1327,14 @@ async function fetchGeneralLedgerLines(
     `QB GL report ${realmId} ${start}..${end} hit the report cell limit; re-fetching as ${start}..${isoDay(mid)} and ${isoDay(mid + DAY_MS)}..${end}`,
   );
   return [
-    ...(await fetchGeneralLedgerLines(accessToken, realmId, start, isoDay(mid))),
-    ...(await fetchGeneralLedgerLines(accessToken, realmId, isoDay(mid + DAY_MS), end)),
+    ...(await fetchGeneralLedgerLines(accessToken, realmId, start, isoDay(mid), columnUse)),
+    ...(await fetchGeneralLedgerLines(
+      accessToken,
+      realmId,
+      isoDay(mid + DAY_MS),
+      end,
+      columnUse,
+    )),
   ];
 }
 
@@ -1379,10 +1458,103 @@ export async function syncChartOfAccounts(): Promise<{
  * full import for every company in one serverless invocation exceeds
  * Vercel's function window, so the sync button runs one request per realm.
  */
+/** Set QB_LEDGER_FORCE_PUBLISH=1 to publish a ledger the checks below refuse
+    (after confirming in QuickBooks that the change is real), then unset it. */
+const LEDGER_FORCE_PUBLISH = process.env.QB_LEDGER_FORCE_PUBLISH === "1";
+
+/** A fetched ledger smaller than this share of the published one is refused. */
+const LEDGER_MIN_SHARE = 0.5;
+
+/**
+ * Refuses to publish a fetched ledger that would quietly damage the one on
+ * screen. The import window always starts at FINANCIALS_START_DATE, so a
+ * company's ledger only grows from sync to sync; each of these means the
+ * response is wrong, not the books:
+ *
+ *   - some report windows came back with classes and some without (a one-off
+ *     QuickBooks fault on the ones without);
+ *   - no window has classes, but the published ledger does;
+ *   - far fewer lines than the published ledger, or none at all.
+ *
+ * Throwing here leaves the published ledger untouched — the sync step fails
+ * visibly and is retried.
+ */
+async function assertLedgerPublishable(
+  supabase: ReturnType<typeof createServiceClient>,
+  opts: {
+    orgId: string;
+    realmId: string;
+    company: string;
+    lineCount: number;
+    columnUse: GlColumnUse;
+  },
+): Promise<void> {
+  const { orgId, realmId, company, lineCount, columnUse } = opts;
+  const refuse = (why: string) => {
+    if (LEDGER_FORCE_PUBLISH) {
+      console.warn(`QB GL sync ${realmId}: publishing anyway (QB_LEDGER_FORCE_PUBLISH): ${why}`);
+      return;
+    }
+    throw new Error(
+      `${company}: ledger not updated — ${why}. The previous ledger is still in place.`,
+    );
+  };
+
+  if (columnUse.minimal > 0 && columnUse.full > 0) {
+    refuse(
+      `QuickBooks returned ${columnUse.minimal} of ${columnUse.minimal + columnUse.full} report periods without class, customer and vendor detail`,
+    );
+  }
+
+  const { data: state, error: stateError } = await supabase
+    .from("gl_sync_state")
+    .select("current_sync_id")
+    .eq("org_id", orgId)
+    .eq("realm_id", realmId)
+    .maybeSingle();
+  if (stateError) throw new Error(`GL sync state read failed: ${stateError.message}`);
+  const currentSyncId = (state?.current_sync_id as string | undefined) ?? null;
+  if (!currentSyncId) return; // first import: nothing to compare against
+
+  const published = () =>
+    supabase
+      .from("gl_lines")
+      .select("id", { count: "exact", head: true })
+      .eq("org_id", orgId)
+      .eq("realm_id", realmId)
+      .eq("sync_id", currentSyncId);
+
+  const { count: publishedCount, error: countError } = await published();
+  if (countError) throw new Error(`GL line count failed: ${countError.message}`);
+  const before = publishedCount ?? 0;
+  if (before > 0 && lineCount < before * LEDGER_MIN_SHARE) {
+    refuse(
+      `QuickBooks returned ${lineCount.toLocaleString("en-US")} ledger lines where ${before.toLocaleString("en-US")} are published`,
+    );
+  }
+
+  if (columnUse.minimal > 0 && columnUse.full === 0) {
+    const { count: classed, error: classError } = await published().not(
+      "class_name",
+      "is",
+      null,
+    );
+    if (classError) throw new Error(`GL class check failed: ${classError.message}`);
+    if ((classed ?? 0) > 0) {
+      refuse(
+        "QuickBooks returned every report period without class detail, but the published ledger has classes",
+      );
+    }
+  }
+}
+
 export async function syncGeneralLedger(realmId?: string): Promise<{
   accounts: number;
   glLines: number;
   companies: number;
+  /** Companies whose ledger was imported without class/customer/vendor
+      columns because QuickBooks rejected them. */
+  withoutClasses: number;
 }> {
   let connections = await getValidConnections();
   if (realmId) {
@@ -1404,6 +1576,7 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
 
   let accountCount = 0;
   let lineCount = 0;
+  let withoutClasses = 0;
 
   for (const { accessToken, realmId, companyName } of connections) {
     const now = new Date().toISOString();
@@ -1418,14 +1591,32 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
     accountCount += accounts.length;
 
     const glLines: GlLine[] = [];
+    const columnUse: GlColumnUse = { full: 0, minimal: 0 };
     for (const range of quarterRanges(FINANCIALS_START_DATE)) {
       glLines.push(
-        ...(await fetchGeneralLedgerLines(accessToken, realmId, range.start, range.end)),
+        ...(await fetchGeneralLedgerLines(
+          accessToken,
+          realmId,
+          range.start,
+          range.end,
+          columnUse,
+        )),
       );
     }
     console.log(
       `QB GL sync ${realmId} (${companyName ?? "unnamed"}): ${accounts.length} accounts, ${glLines.length} ledger lines since ${FINANCIALS_START_DATE}`,
     );
+
+    // Nothing has been written yet: if what QuickBooks returned doesn't look
+    // like this company's ledger, stop here and leave the published one alone.
+    await assertLedgerPublishable(supabase, {
+      orgId: org.id,
+      realmId,
+      company: companyName ?? `Company ${realmId}`,
+      lineCount: glLines.length,
+      columnUse,
+    });
+    if (columnUse.minimal > 0) withoutClasses += 1;
 
     // Full refresh of the import window per company so edits/deletions in
     // QuickBooks are reflected; archived pre-FINANCIALS_START_DATE rows sit
@@ -1498,5 +1689,6 @@ export async function syncGeneralLedger(realmId?: string): Promise<{
     accounts: accountCount,
     glLines: lineCount,
     companies: connections.length,
+    withoutClasses,
   };
 }

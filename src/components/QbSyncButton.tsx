@@ -67,6 +67,7 @@ export function QbSyncButtons({ companies }: { companies: SyncCompany[] }) {
     // One request per company; a failure skips to the next company instead
     // of aborting, so one slow ledger can't block the rest.
     const failed: string[] = [];
+    const noClasses: string[] = [];
     for (const [i, c] of companies.entries()) {
       setMessage(
         `Importing general ledger: ${c.label} (${i + 1} of ${companies.length})…`,
@@ -75,6 +76,7 @@ export function QbSyncButtons({ companies }: { companies: SyncCompany[] }) {
         const ledger = await post("/api/qb/sync-ledger", { realmId: c.realmId });
         glAccounts += ledger.glAccounts ?? 0;
         glLines += ledger.glLines ?? 0;
+        if (ledger.withoutClasses) noClasses.push(c.label);
       } catch (e) {
         failed.push(`${c.label} — ${e instanceof Error ? e.message : "failed"}`);
       }
@@ -83,6 +85,10 @@ export function QbSyncButtons({ companies }: { companies: SyncCompany[] }) {
       `Imported ${glLines} ledger lines across ${glAccounts} accounts from ${companies.length - failed.length} of ${companies.length} ${companies.length === 1 ? "company" : "companies"}.${
         failed.length > 0
           ? ` Failed: ${failed.join("; ")}. Run "Sync general ledger" again to retry.`
+          : ""
+      }${
+        noClasses.length > 0
+          ? ` QuickBooks would not return class, customer and vendor detail for ${noClasses.join(", ")}, so those lines have no class.`
           : ""
       }`,
     );

@@ -42,6 +42,9 @@ export default async function SettingsPage({
     ? await supabase
         .from("qb_sync_runs")
         .select("id, trigger, local_date, timezone, status, started_at, finished_at")
+        // The card is the automatic sync's; manual syncs are runs too now
+        // (migration 0039) and would otherwise push it out of view.
+        .eq("trigger", "scheduled")
         .order("started_at", { ascending: false })
         .limit(1)
         .maybeSingle()

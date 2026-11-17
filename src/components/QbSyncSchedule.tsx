@@ -34,7 +34,12 @@ function summarize(step: QbSyncStep): string | null {
       : step.kind === "job_costs"
         ? [count(r.costLines, "cost line"), count(r.invoices, "invoice")]
         : step.kind === "general_ledger"
-          ? [count(r.glLines, "ledger line"), count(r.glAccounts, "account")]
+          ? [
+              count(r.glLines, "ledger line"),
+              count(r.glAccounts, "account"),
+              // QuickBooks rejected the class/customer/vendor columns.
+              r.withoutClasses ? "imported without classes" : null,
+            ]
           : [];
   const kept = parts.filter(Boolean);
   return kept.length > 0 ? kept.join(" · ") : null;
@@ -67,8 +72,9 @@ export function QbSyncSchedule({
         </span>
         : customers and jobs, then actual costs and invoices, then the general
         ledger for each connected company, then the benefit allocation those
-        feed. Manual syncs stay available above and
-        are never blocked by the scheduled one.
+        feed. Manual syncs stay available above; only one sync runs at a
+        time, so a manual one started while this is running asks you to try
+        again in a few minutes.
       </p>
 
       {run ? (

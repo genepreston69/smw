@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { syncGeneralLedger } from "@/lib/quickbooks";
+import { SyncBusyError, runManualSync } from "@/lib/qbSyncSchedule";
 import { refreshBenefitAllocation } from "@/lib/benefitAllocation";
 
 // General-ledger import for ONE company per request. Importing every
@@ -37,16 +37,26 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = await syncGeneralLedger(realmId);
+    // Through the sync queue (migration 0039), so this can't overlap the
+    // nightly sync or another manual one — two imports of one company's
+    // ledger at once can delete each other's rows.
+    const [result] = await runManualSync([
+      { kind: "general_ledger", realm_id: realmId, label: "General ledger" },
+    ]);
     // The ledger is where the benefits/salaries/labor pools come from, so
     // the cached allocation is rebuilt from the new lines (migration 0025).
     await refreshBenefitAllocation();
     return NextResponse.json({
       ok: true,
-      glAccounts: result.accounts,
+      glAccounts: result.glAccounts,
       glLines: result.glLines,
+      // True when QuickBooks rejected the class/customer/vendor columns.
+      withoutClasses: (result.withoutClasses ?? 0) > 0,
     });
   } catch (e) {
+    if (e instanceof SyncBusyError) {
+      return NextResponse.json({ error: e.message }, { status: 409 });
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Ledger sync failed" },
       { status: 500 },

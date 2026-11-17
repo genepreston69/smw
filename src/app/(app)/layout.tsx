@@ -1,5 +1,8 @@
-import { Anchor } from "lucide-react";
+import Link from "next/link";
+import { Anchor, TriangleAlert } from "lucide-react";
 import { requireUser } from "@/lib/auth";
+import { dateTimeIn } from "@/lib/format";
+import { loadSyncHealth } from "@/lib/syncHealth";
 import { SidebarNav } from "@/components/SidebarNav";
 import { SignOutButton } from "@/components/SignOutButton";
 
@@ -9,6 +12,10 @@ export default async function AppLayout({
   children: React.ReactNode;
 }) {
   const { profile } = await requireUser();
+  const isAdmin = profile.role === "admin";
+  // Freshness stamp for everyone; what's wrong with the sync for admins only.
+  const sync = await loadSyncHealth();
+  const problems = isAdmin ? (sync?.problems ?? []) : [];
 
   return (
     <div className="flex min-h-screen">
@@ -26,9 +33,29 @@ export default async function AppLayout({
           </div>
         </div>
 
-        <SidebarNav isAdmin={profile.role === "admin"} />
+        <SidebarNav isAdmin={isAdmin} />
 
-        <div className="mt-auto border-t border-white/10 px-4 py-4">
+        {sync && (
+          <div className="mt-auto border-t border-white/10 px-4 py-3 text-[0.7rem] leading-relaxed text-white/50">
+            <p className="font-semibold uppercase tracking-[0.1em] text-white/40">
+              QuickBooks data as of
+            </p>
+            <p className={sync.costsStale ? "text-amber-300" : undefined}>
+              Jobs &amp; costs:{" "}
+              {sync.costsAsOf ? dateTimeIn(sync.costsAsOf, sync.timezone) : "not yet imported"}
+            </p>
+            {isAdmin && (
+              <p>
+                Ledger:{" "}
+                {sync.ledgerAsOf
+                  ? dateTimeIn(sync.ledgerAsOf, sync.timezone)
+                  : "not yet imported"}
+              </p>
+            )}
+          </div>
+        )}
+
+        <div className={`${sync ? "" : "mt-auto "}border-t border-white/10 px-4 py-4`}>
           <p className="truncate text-sm font-medium text-white/90">
             {profile.full_name || profile.email}
           </p>
@@ -44,6 +71,29 @@ export default async function AppLayout({
       {/* Main */}
       <div className="ml-56 flex min-h-screen min-w-0 flex-1 flex-col print:ml-0">
         <main className="mx-auto w-full max-w-[1480px] flex-1 px-6 py-8 print:max-w-none print:px-0 print:py-0">
+          {problems.length > 0 && (
+            <div
+              role="alert"
+              className="mb-6 flex gap-3 rounded-xl border border-warn-700/30 bg-warn-50 px-4 py-3 text-sm text-warn-700 print:hidden"
+            >
+              <TriangleAlert size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
+              <div className="min-w-0">
+                <p className="font-semibold">
+                  QuickBooks sync needs attention — some numbers may be out of date
+                </p>
+                <ul className="mt-1 space-y-0.5">
+                  {problems.map((p) => (
+                    <li key={p} className="break-words">
+                      {p}
+                    </li>
+                  ))}
+                </ul>
+                <Link href="/settings" className="mt-1 inline-block font-medium underline">
+                  Open Settings
+                </Link>
+              </div>
+            </div>
+          )}
           {children}
         </main>
       </div>

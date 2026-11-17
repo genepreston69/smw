@@ -14,6 +14,7 @@ import {
   buttonCls,
 } from "@/components/ui";
 import type { PlanStatus } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 interface PlanRow {
   id: string;
@@ -30,22 +31,25 @@ export default async function PlansPage() {
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
 
-  const { data } = await supabase
+  const { data, error } = await supabase
     .from("project_plans")
     .select(
       "id, title, status, version, updated_at, created_by, customer:customers(display_name), creator:profiles!project_plans_created_by_fkey(full_name, email)",
     )
     .order("updated_at", { ascending: false });
 
+  throwIfError("job plans", error);
+
   const plans = (data ?? []) as unknown as PlanRow[];
 
   const planIds = plans.map((p) => p.id);
-  const { data: totalsRows } = planIds.length
+  const { data: totalsRows, error: totalsError } = planIds.length
     ? await supabase
         .from("plan_totals")
         .select("plan_id, total_price, tbd_count")
         .in("plan_id", planIds)
-    : { data: [] };
+    : { data: [], error: null };
+  throwIfError("plan totals", totalsError);
   const totals = new Map(
     (totalsRows ?? []).map((t) => [
       t.plan_id as string,
