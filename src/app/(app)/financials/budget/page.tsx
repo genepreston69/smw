@@ -28,6 +28,7 @@ import {
   NewInitiativeButton,
   type InitiativeAccount,
 } from "./InitiativesPanel";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Calendar-year budget in the Income Statement's layout. Baseline = each
 // account's actuals for the twelve months ending June 30 of the prior year,
@@ -53,10 +54,11 @@ export default async function BudgetPage({
   const year = BUDGET_YEAR;
   const baseline = baselineRange(year);
 
-  const { data: connRows } = await supabase
+  const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companies = (connRows ?? []) as {
     realm_id: string;
     company_name: string | null;

@@ -13,6 +13,7 @@ import { classifyJobView, type JobView } from "@/lib/jobViews";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
 import { JobRows, type JobRowData } from "./JobRows";
 import { JobsFilters } from "./JobsFilters";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 interface JobRow {
   id: string;
@@ -122,7 +123,7 @@ export default async function JobsPage({
   const isAdmin = profile.role === "admin";
   // Paged reads (fetchAllRows) so no list is cut off at Supabase's
   // 1000-row cap; .order("id") tie-breaks duplicate names for stable pages.
-  const [data, { data: connRows }, costRows, invRows, benefitRows] = await Promise.all([
+  const [data, { data: connRows, error: connRowsError }, costRows, invRows, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -161,6 +162,7 @@ export default async function JobsPage({
         .range(from, to),
     ),
   ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id as string, c.company_name as string | null]),

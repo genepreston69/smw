@@ -28,6 +28,7 @@ import {
 } from "@/components/ui";
 import { EntryRows } from "./EntryRows";
 import { PeriodPicker } from "../PeriodPicker";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 const PATH = "/capitalized-labor/already-capitalized";
 
@@ -48,7 +49,7 @@ export default async function AlreadyCapitalizedPage({
   await requireAdmin();
   const supabase = createServiceClient();
 
-  const [{ data: connRows }, loaded] = await Promise.all([
+  const [{ data: connRows, error: connRowsError }, loaded] = await Promise.all([
     supabase.from("qb_connection_status").select("realm_id, company_name"),
     // A failed read renders as a banner, not a 500 — and is logged, since a
     // banner leaves no trace in the platform logs otherwise.
@@ -58,6 +59,7 @@ export default async function AlreadyCapitalizedPage({
       return { error: capScheduleErrorMessage(message) };
     }),
   ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const loadError = "error" in loaded ? loaded.error : null;
   const schedule: CapSchedule =
     "error" in loaded

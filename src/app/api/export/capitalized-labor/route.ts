@@ -11,6 +11,7 @@ import {
   type CapLaborTreatment,
 } from "@/lib/capitalizedLabor";
 import { shortDate } from "@/lib/format";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Line-level export of capitalized-labor candidates: every counted
 // journal-entry labor line (wages and employer taxes — never withholdings;
@@ -32,7 +33,7 @@ export async function GET(request: Request) {
   const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
 
   // Paged reads so the CSV includes every row past Supabase's 1000-row cap.
-  const [jobs, { data: connRows }, lines] = await Promise.all([
+  const [jobs, { data: connRows, error: connRowsError }, lines] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -57,6 +58,7 @@ export async function GET(request: Request) {
         .range(from, to),
     ),
   ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),

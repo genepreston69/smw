@@ -13,6 +13,7 @@ import {
 } from "@/components/ui";
 import { CategoryEditor } from "./CategoryEditor";
 import { RefreshAccountsButton } from "./RefreshAccountsButton";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Chart of accounts imported from QuickBooks (gl_accounts), with an editable
 // Category per account. Categories group Revenue/Expense accounts into the
@@ -66,10 +67,11 @@ export default async function ChartOfAccountsPage({
   await requireAdmin();
   const supabase = createServiceClient();
 
-  const { data: connRows } = await supabase
+  const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companies = (connRows ?? []) as {
     realm_id: string;
     company_name: string | null;

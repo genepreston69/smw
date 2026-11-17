@@ -16,6 +16,7 @@ import {
   type BudgetOverride,
   type BudgetView,
 } from "@/lib/budget";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Budget data loading shared by /financials/budget and its Excel export
 // (/api/export/budget), so both read exactly the same inputs. Callers verify
@@ -171,6 +172,10 @@ export async function loadBudget(
   // December, so its actuals don't describe a normal month.
   const baselineLedger = baselineAsBooked.map(decemberFromNovember);
 
+  // A failed read must not look like "no rates saved": the budget would be
+  // priced at the default growth and look complete.
+  throwIfError("the saved growth assumptions", assumptionRows.error);
+
   type AssumptionRow = { realm_id: string; revenue_growth_pct: number | string; expense_growth_pct: number | string };
   const saved = new Map(
     ((assumptionRows.data ?? []) as AssumptionRow[]).map((a) => [a.realm_id, a]),
@@ -264,9 +269,10 @@ export async function loadInitiatives(
   const approverIds = [
     ...new Set(rawInitiatives.map((i) => i.approved_by).filter((v): v is string => !!v)),
   ];
-  const { data: approverRows } = approverIds.length
+  const { data: approverRows, error: approverRowsError } = approverIds.length
     ? await db.from("profiles").select("id, full_name, email").in("id", approverIds)
-    : { data: [] };
+    : { data: [], error: null };
+  throwIfError("initiative approvers", approverRowsError);
   const approverName = new Map(
     ((approverRows ?? []) as { id: string; full_name: string | null; email: string }[]).map(
       (p) => [p.id, p.full_name || p.email],

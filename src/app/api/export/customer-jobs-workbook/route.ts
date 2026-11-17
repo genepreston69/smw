@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { shortDate } from "@/lib/format";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Per-customer drill-down workbook for the Customer Summary page: a summary
 // sheet plus one worksheet per job, each grouped by vendor with the vendor's
@@ -64,11 +65,12 @@ export async function GET(request: Request) {
 
   let customerName = "(No customer)";
   if (customerKey !== "none") {
-    const { data: cust } = await supabase
+    const { data: cust, error: custError } = await supabase
       .from("customers")
       .select("display_name")
       .eq("id", customerKey)
       .maybeSingle();
+    throwIfError("the customer", custError);
     if (!cust) {
       return NextResponse.json({ error: "Customer not found" }, { status: 404 });
     }

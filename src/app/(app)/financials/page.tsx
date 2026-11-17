@@ -23,6 +23,7 @@ import {
   type PivotCell,
 } from "@/lib/financials";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Slice-and-dice over raw general-ledger lines imported from QuickBooks
 // (gl_lines / gl_accounts, migration 0009). Aggregation happens in the
@@ -51,10 +52,11 @@ export default async function FinancialsPage({
   // timeout. RLS still guards those tables against direct API access.
   await requireAdmin();
   const supabase = createServiceClient();
-  const { data: connRows } = await supabase
+  const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companies = (connRows ?? []) as {
     realm_id: string;
     company_name: string | null;

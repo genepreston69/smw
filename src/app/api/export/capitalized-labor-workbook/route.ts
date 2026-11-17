@@ -14,6 +14,7 @@ import {
 } from "@/lib/capitalizedLabor";
 import { shortDate } from "@/lib/format";
 import { monthLabel } from "@/lib/financials";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Excel workbook for the Capitalized Labor dashboard: a Jobs sheet mirroring
 // the dashboard table, a By Month sheet mirroring its by-month breakdown, and
@@ -34,7 +35,7 @@ export async function GET(request: Request) {
   const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
 
   // Paged reads so the workbook includes every row past Supabase's 1000-row cap.
-  const [jobs, { data: connRows }, lines, benefitRows] = await Promise.all([
+  const [jobs, { data: connRows, error: connRowsError }, lines, benefitRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -74,6 +75,7 @@ export async function GET(request: Request) {
         .range(from, to),
     ),
   ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),

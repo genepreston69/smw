@@ -16,6 +16,7 @@ import {
   type PivotCell,
   type PivotTotals,
 } from "@/lib/financials";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Excel export of the Financials pivot: same query params as /financials,
 // same gl_pivot query, same buildPivot assembly — the file always matches
@@ -46,10 +47,11 @@ export async function GET(request: Request) {
   // access.
   const db = createServiceClient();
 
-  const { data: connRows } = await db
+  const { data: connRows, error: connRowsError } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [
       c.realm_id as string,

@@ -15,6 +15,7 @@ import {
   resolveFinancialsState,
 } from "@/lib/financials";
 import { Card, EmptyState, PageHeader, Table, Th, buttonCls } from "@/components/ui";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Drill-down for one Financials pivot cell: the raw ledger lines behind the
 // amount that was clicked. gl_lines_detail applies the same dimension
@@ -74,10 +75,11 @@ export default async function FinancialLinesPage({
   // RLS still guards those tables against direct API access.
   await requireAdmin();
   const supabase = createServiceClient();
-  const { data: connRows } = await supabase
+  const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
     .select("realm_id, company_name")
     .order("created_at");
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const companies = (connRows ?? []) as {
     realm_id: string;
     company_name: string | null;

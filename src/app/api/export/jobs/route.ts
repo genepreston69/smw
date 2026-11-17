@@ -4,6 +4,7 @@ import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { csvResponse, toCsv } from "@/lib/csv";
 import { isEnterpriseName } from "@/lib/enterprise";
 import { shortDate } from "@/lib/format";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 export async function GET() {
   const supabase = await createClient();
@@ -16,7 +17,7 @@ export async function GET() {
 
   // Paged reads so the CSV includes every job past Supabase's 1000-row cap;
   // the dashboard (src/app/(app)/jobs/page.tsx) does the same.
-  const [jobs, { data: connRows }, costRows, invRows] = await Promise.all([
+  const [jobs, { data: connRows, error: connRowsError }, costRows, invRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
         .from("jobs")
@@ -45,6 +46,7 @@ export async function GET() {
         .range(from, to),
     ),
   ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
 
   const companyByRealm = new Map(
     (connRows ?? []).map((c) => [c.realm_id, c.company_name]),

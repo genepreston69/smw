@@ -13,6 +13,7 @@ import type {
   QbSyncRun,
   QbSyncStep,
 } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 export default async function SettingsPage({
   searchParams,
@@ -23,8 +24,11 @@ export default async function SettingsPage({
   const { supabase, profile } = await requireUser();
   const isAdmin = profile.role === "admin";
 
-  const [{ data: connRows }, { data: thresholds }, { data: users }] =
-    await Promise.all([
+  const [
+    { data: connRows, error: connRowsError },
+    { data: thresholds, error: thresholdsError },
+    { data: users, error: usersError },
+  ] = await Promise.all([
       supabase.from("qb_connection_status").select("*").order("created_at"),
       supabase
         .from("approval_thresholds")
@@ -35,10 +39,11 @@ export default async function SettingsPage({
         .select("id, email, full_name, role")
         .order("email"),
     ]);
+  throwIfError("settings", connRowsError, thresholdsError, usersError);
 
   // Nightly sync status: RLS restricts qb_sync_runs/qb_sync_steps to admins,
   // so non-admins get nothing back and the card is hidden for them.
-  const { data: runRow } = isAdmin
+  const { data: runRow, error: runRowError } = isAdmin
     ? await supabase
         .from("qb_sync_runs")
         .select("id, trigger, local_date, timezone, status, started_at, finished_at")
@@ -48,15 +53,17 @@ export default async function SettingsPage({
         .order("started_at", { ascending: false })
         .limit(1)
         .maybeSingle()
-    : { data: null };
+    : { data: null, error: null };
+  throwIfError("the last nightly sync", runRowError);
   const lastRun = (runRow ?? null) as QbSyncRun | null;
-  const { data: stepRows } = lastRun
+  const { data: stepRows, error: stepRowsError } = lastRun
     ? await supabase
         .from("qb_sync_steps")
         .select("*")
         .eq("run_id", lastRun.id)
         .order("position")
-    : { data: null };
+    : { data: null, error: null };
+  throwIfError("the last nightly sync's steps", stepRowsError);
 
   const connections = (connRows ?? []) as Array<{
     realm_id: string;

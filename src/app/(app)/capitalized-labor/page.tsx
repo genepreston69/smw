@@ -35,6 +35,7 @@ import {
 } from "@/components/ui";
 import { CapLaborRows, type CapLaborRowData } from "./CapLaborRows";
 import { PeriodPicker } from "./PeriodPicker";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 interface JobRow {
   id: string;
@@ -68,7 +69,7 @@ export default async function CapitalizedLaborPage({
   const { supabase } = await requireUser();
   // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
   // cap; .order("id") tie-breaks for stable pages.
-  const [jobData, { data: connRows }, lineRows, benefit] =
+  const [jobData, { data: connRows, error: connRowsError }, lineRows, benefit] =
     await Promise.all([
       fetchAllRows((from, to) =>
         supabase
@@ -114,6 +115,7 @@ export default async function CapitalizedLaborPage({
         }),
       ),
     ]);
+  throwIfError("the connected QuickBooks companies", connRowsError);
   const benefitError = benefit.error;
 
   const companyByRealm = new Map(
