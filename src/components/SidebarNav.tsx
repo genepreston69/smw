@@ -93,7 +93,7 @@ const SECTIONS: NavSection[] = [
         adminOnly: true,
       },
       {
-        // Employee Benefits ÷ (710 + 935 + 934 + 840), from the ledger.
+        // Employee Benefits ÷ labor (710 + 935 + 934), from the ledger.
         href: "/financials/benefits",
         label: "Cost of Benefits",
         icon: HeartPulse,

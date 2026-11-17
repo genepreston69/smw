@@ -1,28 +1,22 @@
 // Cost of Benefits (/financials/benefits): what employee benefits cost per
-// dollar of the base — labor plus insurance.
+// dollar of labor.
 //
 //   Benefit rate = Employee Benefits ÷ (710 Labor Cost + 935 Salaries & Wages
-//                                        + 934 Labor Maint + 840 Insurance)
+//                                        + 934 Labor Maint)
 //
 // The numerator is every expense account whose Chart of Accounts Category is
-// "Employee Benefits"; the denominator is the four base accounts, found by
+// "Employee Benefits"; the denominator is the three labor accounts, found by
 // account number. Everything is the ledger as booked — nothing is allocated
 // or reclassified — so each line ties to the Income Statement. Pure and
 // client-safe; the server loader is benefitCostServer.ts.
 
 export const BENEFITS_CATEGORY = "Employee Benefits";
 
-/** Label for the denominator's total row/column, on screen and in the file. */
-export const BASE_TOTAL_LABEL = "Total base";
-
-/** The accounts that make up the denominator (the base), in display order.
-    Adding or removing one here changes the page, the By class table, and
-    the export together. */
+/** The labor accounts that make up the denominator, in display order. */
 export const LABOR_BASE_ACCOUNTS = [
   { number: "710", label: "710 Labor Cost" },
   { number: "935", label: "935 Salaries & Wages" },
   { number: "934", label: "934 Labor Maint" },
-  { number: "840", label: "840 Insurance" },
 ] as const;
 
 export type BenefitLineKey = "benefits" | (typeof LABOR_BASE_ACCOUNTS)[number]["number"];
@@ -38,7 +32,7 @@ export function isBenefitsCategory(category: string | null | undefined): boolean
 
 /** Which labor account a ledger account belongs to, by account number: the
     account itself or any parent in its "Parent:Sub" path must start with the
-    number, so sub-accounts of 710 / 935 / 934 / 840 count with their parent. */
+    number, so sub-accounts of 710 / 935 / 934 count with their parent. */
 export function laborBaseNumber(accountFullName: string): BenefitLineKey | null {
   for (const segment of accountFullName.split(":")) {
     const m = /^\s*(\d+)(?!\d)/.exec(segment);
@@ -97,7 +91,7 @@ export interface BenefitCell {
 export interface BenefitClassRow {
   cls: string;
   benefits: number;
-  /** Period total per labor account number (710 / 935 / 934 / 840). */
+  /** Period total per labor account number (710 / 935 / 934). */
   labor: Record<string, number>;
   laborTotal: number;
   rate: number | null;

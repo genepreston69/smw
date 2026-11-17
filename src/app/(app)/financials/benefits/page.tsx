@@ -6,7 +6,6 @@ import { moneyWhole, pct } from "@/lib/format";
 import { latestMonth, monthLabel } from "@/lib/financials";
 import { NO_CLASS } from "@/lib/budget";
 import {
-  BASE_TOTAL_LABEL,
   BENEFITS_CATEGORY,
   LABOR_BASE_ACCOUNTS,
   benefitCostExportHref,
@@ -32,8 +31,7 @@ import {
 } from "@/components/ui";
 
 // Cost of Benefits: Employee Benefits (by Chart of Accounts category) as a
-// percent of the base — 710 Labor Cost + 935 Salaries & Wages + 934 Labor Maint
-// + 840 Insurance —
+// percent of labor — 710 Labor Cost + 935 Salaries & Wages + 934 Labor Maint —
 // by month, straight from the general ledger as booked, for one QuickBooks
 // class at a time (default All classes) with a By class comparison. The math
 // lives in src/lib/benefitCost.ts; the Excel export shares the same loader.
@@ -163,7 +161,7 @@ export default async function CostOfBenefitsPage({
     <div>
       <PageHeader
         title="Cost of Benefits"
-        subtitle={`What employee benefits cost per dollar of labor and insurance: ${formula}.`}
+        subtitle={`What employee benefits cost per dollar of labor: ${formula}.`}
         action={
           <div className="flex items-center gap-2">
             <a href={benefitCostExportHref(state)} className={buttonCls("secondary")}>
@@ -249,7 +247,7 @@ export default async function CostOfBenefitsPage({
           <StatTile
             label="Benefit rate"
             value={data.rate.total === null ? "—" : pct(data.rate.total)}
-            hint="Benefits per dollar of the base"
+            hint="Benefits per dollar of labor"
           />
           <StatTile
             label="Employee benefits"
@@ -257,9 +255,9 @@ export default async function CostOfBenefitsPage({
             hint={periodHint}
           />
           <StatTile
-            label="Base"
+            label="Labor"
             value={moneyWhole(data.laborTotal.total)}
-            hint={LABOR_BASE_ACCOUNTS.map((a) => a.number).join(" + ")}
+            hint="710 + 935 + 934"
           />
         </div>
       )}
@@ -289,7 +287,7 @@ export default async function CostOfBenefitsPage({
               {data.labor.map((l) => (
                 <LineFragment key={l.key}>{lineRows(l)}</LineFragment>
               ))}
-              {totalsRow(BASE_TOTAL_LABEL, data.laborTotal, true)}
+              {totalsRow("Total labor", data.laborTotal, true)}
               <tr className="bg-brand-50/40">
                 <td className="px-4 py-2 font-semibold text-ink-900">Benefit rate</td>
                 {colKeys.map((k) => rateCell(k, data.rate.cells[k] ?? null))}
@@ -319,7 +317,7 @@ export default async function CostOfBenefitsPage({
                       {a.label}
                     </Th>
                   ))}
-                  <Th right>{BASE_TOTAL_LABEL}</Th>
+                  <Th right>Total labor</Th>
                   <Th right>Benefit rate</Th>
                 </tr>
               }
@@ -363,16 +361,15 @@ export default async function CostOfBenefitsPage({
 
       <p className="mt-3 text-xs text-ink-400">
         Benefit rate = {formula}. {BENEFITS_CATEGORY} is every expense account
-        assigned that category on the Chart of Accounts page. The base
-        accounts ({LABOR_BASE_ACCOUNTS.map((x) => x.number).join(", ")}) are
-        found by account number, so their sub-accounts count with their
-        parent; an account categorized {BENEFITS_CATEGORY} stays in benefits
-        and is never also counted in the base. Amounts are the general ledger
-        as booked, so each line ties to the Income Statement. The Total column
-        divides the period&rsquo;s benefits by the period&rsquo;s base (it is
-        not an average of the monthly rates), and months with no base show a
+        assigned that category on the Chart of Accounts page. The labor
+        accounts are found by account number, so sub-accounts of 710, 935, and
+        934 count with their parent; an account categorized {BENEFITS_CATEGORY}{" "}
+        is never also counted as labor. Amounts are the general ledger as
+        booked, so each line ties to the Income Statement. The Total column
+        divides the period&rsquo;s benefits by the period&rsquo;s labor (it is
+        not an average of the monthly rates), and months with no labor show a
         dash. Classes are QuickBooks classes as booked on each ledger line:
-        a class&rsquo;s rate is its own benefits over its own base, so a
+        a class&rsquo;s rate is its own benefits over its own labor, so a
         class whose benefits are booked without a class (or to another class)
         will read low, and the classes always add up to All classes.
       </p>
