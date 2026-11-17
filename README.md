@@ -67,6 +67,8 @@ The Supabase add-on covers the Supabase vars. Add these as well:
 | `CRON_SECRET` | any long random string — enables the nightly QuickBooks sync |
 | `QB_SYNC_TIMEZONE` | optional, default `America/New_York` |
 | `QB_SYNC_HOUR` | optional, default `4` (local hour the nightly sync starts) |
+| `QB_SYNC_ALERT_WEBHOOK_URL` | optional — a Slack or Teams incoming-webhook URL; the nightly sync posts there when a step fails for good |
+| `QB_LEDGER_FORCE_PUBLISH` | optional — set to `1` only to push through a ledger import the safety checks refused, then remove it |
 
 Vercel automatically sends `Authorization: Bearer $CRON_SECRET` on cron
 requests, and `/api/cron/qb-sync` rejects anything else — without the variable

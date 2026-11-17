@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
-import { syncCustomersAndJobs, syncJobCosts } from "@/lib/quickbooks";
+import { SyncBusyError, runManualSync } from "@/lib/qbSyncSchedule";
 import { refreshBenefitAllocation } from "@/lib/benefitAllocation";
 
 // Entity queries across several companies take a while; the general-ledger
@@ -30,18 +30,25 @@ export async function POST() {
   }
 
   try {
-    const result = await syncCustomersAndJobs();
-    const costs = await syncJobCosts();
+    // Through the sync queue (migration 0039), so this can't overlap the
+    // nightly sync or another admin's manual one.
+    const [entities, costs] = await runManualSync([
+      { kind: "customers_jobs", realm_id: null, label: "Customers & jobs" },
+      { kind: "job_costs", realm_id: null, label: "Actual costs & invoices" },
+    ]);
     // Job labor drives the allocation's pro-rata split, so the cache is
     // stale the moment costs change (migration 0025).
     await refreshBenefitAllocation();
     return NextResponse.json({
       ok: true,
-      ...result,
+      ...entities,
       costLines: costs.costLines,
       invoices: costs.invoices,
     });
   } catch (e) {
+    if (e instanceof SyncBusyError) {
+      return NextResponse.json({ error: e.message }, { status: 409 });
+    }
     return NextResponse.json(
       { error: e instanceof Error ? e.message : "Sync failed" },
       { status: 500 },

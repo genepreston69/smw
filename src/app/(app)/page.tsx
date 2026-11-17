@@ -14,6 +14,7 @@ import {
   buttonCls,
 } from "@/components/ui";
 import type { PlanStatus } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 export default async function DashboardPage() {
   const { supabase, profile } = await requireUser();
@@ -35,6 +36,14 @@ export default async function DashboardPage() {
     supabase.from("customers").select("id", { count: "exact", head: true }),
   ]);
 
+  throwIfError(
+    "the dashboard",
+    plansRes.error,
+    submittedRes.error,
+    activeRes.error,
+    customersRes.error,
+  );
+
   const plans = (plansRes.data ?? []) as unknown as Array<{
     id: string;
     title: string;
@@ -44,12 +53,13 @@ export default async function DashboardPage() {
   }>;
 
   const planIds = plans.map((p) => p.id);
-  const { data: totalsRows } = planIds.length
+  const { data: totalsRows, error: totalsError } = planIds.length
     ? await supabase
         .from("plan_totals")
         .select("plan_id, total_price")
         .in("plan_id", planIds)
-    : { data: [] };
+    : { data: [], error: null };
+  throwIfError("plan totals", totalsError);
   const totals = new Map(
     (totalsRows ?? []).map((t) => [t.plan_id as string, Number(t.total_price)]),
   );

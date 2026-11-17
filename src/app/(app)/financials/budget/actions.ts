@@ -225,11 +225,6 @@ export async function saveInitiative(
       .update(header)
       .eq("id", id);
     if (error) return fail(error);
-    const { error: delError } = await supabase
-      .from("budget_initiative_lines")
-      .delete()
-      .eq("initiative_id", id);
-    if (delError) return fail(delError);
   } else {
     const { data, error } = await supabase
       .from("budget_initiatives")
@@ -240,15 +235,22 @@ export async function saveInitiative(
     id = data.id as string;
   }
 
-  const { error: lineError } = await supabase.from("budget_initiative_lines").insert(
-    d.lines.map((l) => ({
-      initiative_id: id,
+  // The account lines are replaced in one transaction (migration 0039): a
+  // failure leaves the initiative's previous lines in place instead of none.
+  const { error: lineError } = await supabase.rpc("replace_budget_initiative_lines", {
+    p_initiative_id: id,
+    p_lines: d.lines.map((l) => ({
       account_name: l.accountName,
       classification: l.classification,
       annual_amount: l.annualAmount,
     })),
-  );
-  if (lineError) return fail(lineError);
+  });
+  if (lineError) {
+    // A brand-new initiative with no lines would be an empty shell; remove it
+    // so a retry doesn't leave a duplicate behind.
+    if (!d.id) await supabase.from("budget_initiatives").delete().eq("id", id);
+    return fail(lineError);
+  }
 
   await supabase.from("audit_log").insert({
     entity_type: "budget_initiative",

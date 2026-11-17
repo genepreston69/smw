@@ -263,29 +263,15 @@ export async function saveBargeQuote(
   if (!updated?.length)
     return { ok: false, error: "You don't have permission to edit this quote" };
 
-  const { error: delLines } = await supabase
-    .from("barge_quote_steel_lines")
-    .delete()
-    .eq("quote_id", quoteId);
-  if (delLines) return fail(new Error(delLines.message));
-  const { error: delLabor } = await supabase
-    .from("barge_quote_labor_phases")
-    .delete()
-    .eq("quote_id", quoteId);
-  if (delLabor) return fail(new Error(delLabor.message));
-
-  if (p.lines.length) {
-    const { error: insLines } = await supabase
-      .from("barge_quote_steel_lines")
-      .insert(p.lines.map((l, i) => ({ ...l, quote_id: quoteId, sort_order: i })));
-    if (insLines) return fail(new Error(insLines.message));
-  }
-  if (p.labor.length) {
-    const { error: insLabor } = await supabase
-      .from("barge_quote_labor_phases")
-      .insert(p.labor.map((l, i) => ({ ...l, quote_id: quoteId, sort_order: i })));
-    if (insLabor) return fail(new Error(insLabor.message));
-  }
+  // Lines and labor phases are replaced in one transaction (migration 0039):
+  // if anything fails the quote keeps the takeoff it had, instead of being
+  // left with the old rows deleted and the new ones not written.
+  const { error: contentError } = await supabase.rpc("replace_barge_quote_content", {
+    p_quote_id: quoteId,
+    p_lines: p.lines,
+    p_labor: p.labor,
+  });
+  if (contentError) return fail(new Error(contentError.message));
 
   revalidatePath(`/barge/${quoteId}`);
   revalidatePath("/barge");

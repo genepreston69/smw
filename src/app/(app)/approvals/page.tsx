@@ -12,6 +12,7 @@ import {
   Th,
 } from "@/components/ui";
 import type { ApprovalThreshold } from "@/lib/types";
+import { throwIfError } from "@/lib/supabase/throwIfError";
 
 interface QueueRow {
   id: string;
@@ -37,8 +38,11 @@ interface BargeQueueRow {
 export default async function ApprovalsPage() {
   const { supabase, profile } = await requireUser();
 
-  const [{ data: queue }, { data: bargeQueue }, { data: thresholds }] =
-    await Promise.all([
+  const [
+    { data: queue, error: queueError },
+    { data: bargeQueue, error: bargeQueueError },
+    { data: thresholds, error: thresholdsError },
+  ] = await Promise.all([
       supabase
         .from("project_plans")
         .select(
@@ -59,34 +63,47 @@ export default async function ApprovalsPage() {
         .order("min_amount"),
     ]);
 
+  // A failed read must not look like an empty queue — or, for thresholds,
+  // like "one approval is enough".
+  throwIfError("the approval queue", queueError, bargeQueueError, thresholdsError);
+
   const plans = (queue ?? []) as unknown as QueueRow[];
   const planIds = plans.map((p) => p.id);
   const barges = (bargeQueue ?? []) as unknown as BargeQueueRow[];
   const bargeIds = barges.map((b) => b.id);
 
-  const [{ data: totalsRows }, { data: approvalRows }, { data: bargeApprovalRows }] =
-    await Promise.all([
+  const [
+    { data: totalsRows, error: totalsError },
+    { data: approvalRows, error: approvalsError },
+    { data: bargeApprovalRows, error: bargeApprovalsError },
+  ] = await Promise.all([
       planIds.length
         ? supabase
             .from("plan_totals")
             .select("plan_id, total_price, tbd_count")
             .in("plan_id", planIds)
-        : Promise.resolve({ data: [] as never[] }),
+        : Promise.resolve({ data: [] as never[], error: null }),
       planIds.length
         ? supabase
             .from("approvals")
             .select("plan_id, plan_version, decision, approver_id")
             .in("plan_id", planIds)
             .eq("decision", "approved")
-        : Promise.resolve({ data: [] as never[] }),
+        : Promise.resolve({ data: [] as never[], error: null }),
       bargeIds.length
         ? supabase
             .from("barge_quote_approvals")
             .select("quote_id, quote_version, decision, approver_id")
             .in("quote_id", bargeIds)
             .eq("decision", "approved")
-        : Promise.resolve({ data: [] as never[] }),
+        : Promise.resolve({ data: [] as never[], error: null }),
     ]);
+  throwIfError(
+    "the approval queue's totals and approvals",
+    totalsError,
+    approvalsError,
+    bargeApprovalsError,
+  );
 
   const totals = new Map(
     (totalsRows ?? []).map((t) => [
