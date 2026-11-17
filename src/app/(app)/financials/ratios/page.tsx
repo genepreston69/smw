@@ -2,7 +2,6 @@ import Link from "next/link";
 import { Landmark, Table2 } from "lucide-react";
 import { requireAdmin } from "@/lib/auth";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { moneyWhole, pct } from "@/lib/format";
 import {
   COL_DIMS,
@@ -29,6 +28,7 @@ import {
   buttonCls,
 } from "@/components/ui";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadPivotCells } from "@/lib/pivotServer";
 
 // Income statement ratio analysis over the same general ledger the Financials
 // pivot slices (gl_pivot, account rows, Revenue + Expense classifications).
@@ -91,22 +91,14 @@ export default async function IncomeRatiosPage({
   };
 
   // Same slice as the Financials page under the Net income scope.
-  const cells = (await fetchAllRows((fromRow, toRow) =>
-    supabase
-      .rpc("gl_pivot", {
-        p_start: `${from}-01`,
-        p_end: lastDayOfMonth(to),
-        p_row_dim: "account",
-        p_col_dim: colDim,
-        p_realm_id: company === "all" ? null : company,
-        p_classifications: SCOPE_CLASSIFICATIONS.pl,
-      })
-      .order("row_key")
-      .order("col_key")
-      .order("classification")
-      .order("account_type")
-      .range(fromRow, toRow),
-  )) as PivotCell[];
+  const cells = (await loadPivotCells(supabase, {
+    p_start: `${from}-01`,
+    p_end: lastDayOfMonth(to),
+    p_row_dim: "account",
+    p_col_dim: colDim,
+    p_realm_id: company === "all" ? null : company,
+    p_classifications: SCOPE_CLASSIFICATIONS.pl,
+  })) as PivotCell[];
 
   const stmt = buildIncomeStatement(cells);
   const denom = stmt.totalRevenue;

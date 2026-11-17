@@ -5,6 +5,7 @@ import { csvResponse, toCsv } from "@/lib/csv";
 import { isEnterpriseName } from "@/lib/enterprise";
 import { shortDate } from "@/lib/format";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 export async function GET() {
   const supabase = await createClient();
@@ -17,6 +18,9 @@ export async function GET() {
 
   // Paged read so the CSV includes every customer past Supabase's
   // 1000-row cap.
+  // The sister-company list is a setting; every screen and export that
+  // buckets jobs loads the same one.
+  const { intercompany: intercompanyRules } = await loadAppSettings(supabase);
   const [customers, { data: connRows, error: connRowsError }] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -53,7 +57,7 @@ export async function GET() {
       c.company_name,
       c.email,
       c.phone,
-      isEnterpriseName(c.display_name) || isEnterpriseName(c.company_name)
+      isEnterpriseName(c.display_name, intercompanyRules) || isEnterpriseName(c.company_name, intercompanyRules)
         ? "Yes"
         : "No",
       c.active ? "Yes" : "No",

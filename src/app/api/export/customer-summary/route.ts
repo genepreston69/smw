@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { csvResponse, toCsv } from "@/lib/csv";
 import { getCustomerSummary } from "@/lib/customerSummary";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 export async function GET() {
   const supabase = await createClient();
@@ -12,7 +13,8 @@ export async function GET() {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { rows, totals } = await getCustomerSummary(supabase);
+  const { intercompany } = await loadAppSettings(supabase);
+  const { rows, totals } = await getCustomerSummary(supabase, intercompany);
 
   const csv = toCsv(
     [

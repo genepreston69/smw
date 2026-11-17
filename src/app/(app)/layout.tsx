@@ -3,6 +3,7 @@ import { Anchor, TriangleAlert } from "lucide-react";
 import { requireUser } from "@/lib/auth";
 import { dateTimeIn } from "@/lib/format";
 import { loadSyncHealth } from "@/lib/syncHealth";
+import { loadSchemaStatus } from "@/lib/schemaStatus";
 import { SidebarNav } from "@/components/SidebarNav";
 import { SignOutButton } from "@/components/SignOutButton";
 
@@ -14,8 +15,23 @@ export default async function AppLayout({
   const { profile } = await requireUser();
   const isAdmin = profile.role === "admin";
   // Freshness stamp for everyone; what's wrong with the sync for admins only.
-  const sync = await loadSyncHealth();
-  const problems = isAdmin ? (sync?.problems ?? []) : [];
+  const [sync, schema] = await Promise.all([
+    loadSyncHealth(),
+    // Admins also hear when the database is behind the code (a migration that
+    // hasn't been applied yet) — the cause of "function not found" failures.
+    isAdmin ? loadSchemaStatus() : null,
+  ]);
+  const missing = schema?.missing ?? [];
+  const problems = isAdmin
+    ? [
+        ...(missing.length > 0
+          ? [
+              `The database is missing ${missing.length === 1 ? "a migration" : `${missing.length} migrations`} this version of the app needs (${missing.join(", ")}) — apply ${missing.length === 1 ? "it" : "them in order"} in the Supabase SQL editor.`,
+            ]
+          : []),
+        ...(sync?.problems ?? []),
+      ]
+    : [];
 
   return (
     <div className="flex min-h-screen">
@@ -79,7 +95,9 @@ export default async function AppLayout({
               <TriangleAlert size={18} strokeWidth={2} className="mt-0.5 shrink-0" />
               <div className="min-w-0">
                 <p className="font-semibold">
-                  QuickBooks sync needs attention — some numbers may be out of date
+                  {(sync?.problems.length ?? 0) > 0
+                    ? "QuickBooks sync needs attention — some numbers may be out of date"
+                    : "The database needs an update"}
                 </p>
                 <ul className="mt-1 space-y-0.5">
                   {problems.map((p) => (

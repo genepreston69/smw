@@ -6,20 +6,20 @@ import { monthLabel } from "@/lib/financials";
 import { NO_CLASS } from "@/lib/budget";
 import {
   BENEFITS_CATEGORY,
-  LABOR_BASE_ACCOUNTS,
+  benefitFormula,
   type BenefitCost,
   type BenefitLine,
   type BenefitTotals,
 } from "@/lib/benefitCost";
 import { benefitCostState, loadBenefitCost } from "@/lib/benefitCostServer";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // Excel export of Cost of Benefits: same query params as /financials/benefits
 // and the same benefitCostState + loadBenefitCost read, so the file always
 // matches the screen. Sheets: the view on screen (by month), By Class, and —
 // on All classes — one by-month sheet per class.
 
-const FORMULA = `${BENEFITS_CATEGORY} ÷ (${LABOR_BASE_ACCOUNTS.map((a) => a.label).join(" + ")})`;
 const classLabel = (c: string) => (c === NO_CLASS ? "No class assigned" : c);
 
 /** Excel sheet names: 31 chars, no \ / ? * [ ] :, unique per workbook. */
@@ -38,12 +38,13 @@ function writeMonthSheet(
   sheet: ExcelJS.Worksheet,
   cost: BenefitCost,
   subtitle: string,
+  formula: string,
 ) {
   // Account rows sit under their line, so the outline buttons go above.
   sheet.properties.outlineProperties = { summaryBelow: false, summaryRight: false };
   sheet.addRow(["Cost of Benefits"]).font = { bold: true, size: 13 };
   sheet.addRow([subtitle]);
-  sheet.addRow([`Benefit rate = ${FORMULA}. Amounts are the general ledger as booked.`]);
+  sheet.addRow([`Benefit rate = ${formula}. Amounts are the general ledger as booked.`]);
   sheet.addRow([]);
   sheet.addRow(["Line", ...cost.colKeys.map(monthLabel), "Total"]).font = { bold: true };
   sheet.views = [{ state: "frozen", xSplit: 1, ySplit: 5 }];
@@ -104,6 +105,9 @@ export async function GET(request: Request) {
   // Admin verified; reads go through the service-role client like every
   // Financials read.
   const db = createServiceClient();
+  // The denominator's accounts are a setting (Settings → Business rules).
+  const { benefitBaseAccounts: bases } = await loadAppSettings(db);
+  const formula = benefitFormula(bases);
   const { data: connRows, error: connRowsError } = await db
     .from("qb_connection_status")
     .select("realm_id, company_name")
@@ -123,7 +127,7 @@ export async function GET(request: Request) {
 
   let loaded;
   try {
-    loaded = await loadBenefitCost(db, state, realms);
+    loaded = await loadBenefitCost(db, state, realms, bases);
   } catch (e) {
     return NextResponse.json(
       { error: e instanceof Error ? e.message : String(e) },
@@ -142,6 +146,7 @@ export async function GET(request: Request) {
     workbook.addWorksheet(sheetName("Cost of Benefits", used)),
     loaded.cost,
     subtitle(cls),
+    formula,
   );
 
   // By Class: every class's period totals, summing to All classes.
@@ -149,19 +154,19 @@ export async function GET(request: Request) {
   byClass.addRow(["Cost of Benefits by Class"]).font = { bold: true, size: 13 };
   byClass.addRow([[companyLabel, period].join(" · ")]);
   byClass.addRow([
-    `Benefit rate = ${FORMULA}. Each class is its own benefits over its own labor, as booked.`,
+    `Benefit rate = ${formula}. Each class is its own benefits over its own labor, as booked.`,
   ]);
   byClass.addRow([]);
   byClass.addRow([
     "Class",
     BENEFITS_CATEGORY,
-    ...LABOR_BASE_ACCOUNTS.map((a) => a.label),
+    ...bases.map((a) => a.label),
     "Total labor",
     "Benefit rate",
   ]).font = { bold: true };
   byClass.views = [{ state: "frozen", ySplit: 5 }];
   byClass.getColumn(1).width = 36;
-  const rateCol = 3 + LABOR_BASE_ACCOUNTS.length + 1;
+  const rateCol = 3 + bases.length + 1;
   for (let c = 2; c < rateCol; c++) {
     byClass.getColumn(c).width = 20;
     byClass.getColumn(c).numFmt = "#,##0.00";
@@ -172,7 +177,7 @@ export async function GET(request: Request) {
     byClass.addRow([
       classLabel(r.cls),
       r.benefits,
-      ...LABOR_BASE_ACCOUNTS.map((a) => r.labor[a.number] ?? 0),
+      ...bases.map((a) => r.labor[a.number] ?? 0),
       r.laborTotal,
       r.rate,
     ]);
@@ -194,6 +199,7 @@ export async function GET(request: Request) {
         workbook.addWorksheet(sheetName(classLabel(c), used)),
         loaded.costOf(c),
         subtitle(c),
+        formula,
       );
     }
   }

@@ -5,6 +5,7 @@ import { csvResponse, toCsv } from "@/lib/csv";
 import { isEnterpriseName } from "@/lib/enterprise";
 import { shortDate } from "@/lib/format";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 export async function GET() {
   const supabase = await createClient();
@@ -17,6 +18,9 @@ export async function GET() {
 
   // Paged reads so the CSV includes every job past Supabase's 1000-row cap;
   // the dashboard (src/app/(app)/jobs/page.tsx) does the same.
+  // The sister-company list is a setting; every screen and export that
+  // buckets jobs loads the same one.
+  const { intercompany: intercompanyRules } = await loadAppSettings(supabase);
   const [jobs, { data: connRows, error: connRowsError }, costRows, invRows] = await Promise.all([
     fetchAllRows((from, to) =>
       supabase
@@ -114,8 +118,8 @@ export async function GET() {
         j.name,
         j.realm_id ? (companyByRealm.get(j.realm_id) ?? j.realm_id) : "",
         j.customer?.display_name,
-        isEnterpriseName(j.customer?.display_name) ||
-        isEnterpriseName(j.customer?.company_name)
+        isEnterpriseName(j.customer?.display_name, intercompanyRules) ||
+        isEnterpriseName(j.customer?.company_name, intercompanyRules)
           ? "Yes"
           : "No",
         cost ? cost.materials.toFixed(2) : "",

@@ -2,10 +2,10 @@ import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { BUDGET_YEAR } from "@/lib/budget";
 import { loadInitiatives } from "@/lib/budgetServer";
 import { writeInitiativesByMonth } from "@/lib/budgetInitiativeSheet";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // Excel export of budget initiatives by month (/financials/budget's New
 // initiatives panel). `?id=<initiative>` exports that one initiative;
@@ -53,7 +53,7 @@ export async function GET(request: Request) {
       ? sp.get("company")!
       : "all";
   const realms = id || company === "all" ? [...companyByRealm.keys()] : [company];
-  const year = BUDGET_YEAR;
+  const { budgetYear: year } = await loadAppSettings(db);
   const cls = id ? null : sp.get("class");
 
   let initiatives = await loadInitiatives(db, year, realms);

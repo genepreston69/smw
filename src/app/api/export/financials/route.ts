@@ -2,7 +2,6 @@ import ExcelJS from "exceljs";
 import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import {
   ROW_DIMS,
   SCOPES,
@@ -17,6 +16,7 @@ import {
   type PivotTotals,
 } from "@/lib/financials";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadPivotCells } from "@/lib/pivotServer";
 
 // Excel export of the Financials pivot: same query params as /financials,
 // same gl_pivot query, same buildPivot assembly — the file always matches
@@ -71,39 +71,23 @@ export async function GET(request: Request) {
   // derive that from the pivot itself.
   const needsRevenueSlice = display === "pct" && scope === "expense";
   const [cells, revenueCells] = await Promise.all([
-    fetchAllRows((fromRow, toRow) =>
-      db
-        .rpc("gl_pivot", {
+    loadPivotCells(db, {
+      p_start: `${from}-01`,
+      p_end: lastDayOfMonth(to),
+      p_row_dim: rowDim,
+      p_col_dim: colDim,
+      p_realm_id: company === "all" ? null : company,
+      p_classifications: SCOPE_CLASSIFICATIONS[scope],
+    }) as Promise<PivotCell[]>,
+    needsRevenueSlice
+      ? (loadPivotCells(db, {
           p_start: `${from}-01`,
           p_end: lastDayOfMonth(to),
-          p_row_dim: rowDim,
+          p_row_dim: "account",
           p_col_dim: colDim,
           p_realm_id: company === "all" ? null : company,
-          p_classifications: SCOPE_CLASSIFICATIONS[scope],
-        })
-        .order("row_key")
-        .order("col_key")
-        .order("classification")
-        .order("account_type")
-        .range(fromRow, toRow),
-    ) as Promise<PivotCell[]>,
-    needsRevenueSlice
-      ? (fetchAllRows((fromRow, toRow) =>
-          db
-            .rpc("gl_pivot", {
-              p_start: `${from}-01`,
-              p_end: lastDayOfMonth(to),
-              p_row_dim: "account",
-              p_col_dim: colDim,
-              p_realm_id: company === "all" ? null : company,
-              p_classifications: SCOPE_CLASSIFICATIONS.income,
-            })
-            .order("row_key")
-            .order("col_key")
-            .order("classification")
-            .order("account_type")
-            .range(fromRow, toRow),
-        ) as Promise<PivotCell[]>)
+          p_classifications: SCOPE_CLASSIFICATIONS.income,
+        }) as Promise<PivotCell[]>)
       : Promise.resolve([] as PivotCell[]),
   ]);
   const pivot = buildPivot(cells, rowDim, scope);

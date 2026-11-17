@@ -36,6 +36,7 @@ import {
 import { CapLaborRows, type CapLaborRowData } from "./CapLaborRows";
 import { PeriodPicker } from "./PeriodPicker";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 interface JobRow {
   id: string;
@@ -69,6 +70,9 @@ export default async function CapitalizedLaborPage({
   const { supabase } = await requireUser();
   // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
   // cap; .order("id") tie-breaks for stable pages.
+  // The sister-company list is a setting; every screen and export that
+  // buckets jobs loads the same one.
+  const { intercompany: intercompanyRules } = await loadAppSettings(supabase);
   const [jobData, { data: connRows, error: connRowsError }, lineRows, benefit] =
     await Promise.all([
       fetchAllRows((from, to) =>
@@ -173,7 +177,7 @@ export default async function CapitalizedLaborPage({
       customerDisplayName: j.customer?.display_name,
       customerCompanyName: j.customer?.company_name,
       qbCompanyName: j.realm_id ? companyByRealm.get(j.realm_id) : null,
-    });
+    }, intercompanyRules);
     if (!bucket) continue;
     candidates.push({
       id: j.id,

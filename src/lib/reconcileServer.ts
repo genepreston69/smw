@@ -2,7 +2,6 @@ import "server-only";
 
 import ExcelJS from "exceljs";
 import { createServiceClient } from "@/lib/supabase/service";
-import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { latestMonth, type PivotCell } from "@/lib/financials";
 import {
   PlParseError,
@@ -12,6 +11,7 @@ import {
   type GridValue,
   type ReconciliationResult,
 } from "@/lib/reconciliation";
+import { loadPivotCells } from "@/lib/pivotServer";
 
 // Shared pipeline for the Reconciliation page action and the Excel export
 // route: both feed the same uploaded QuickBooks P&L workbook through the
@@ -73,22 +73,14 @@ export async function reconcileQbWorkbook(
   // The rec always compares the consolidated export against every company
   // combined, straight from the ledger — no adjustments on either side.
   const supabase = createServiceClient();
-  const glCells = (await fetchAllRows((fromRow, toRow) =>
-    supabase
-      .rpc("gl_pivot", {
-        p_start: parsed.start,
-        p_end: parsed.end,
-        p_row_dim: "account",
-        p_col_dim: "month",
-        p_realm_id: null,
-        p_classifications: ["Revenue", "Expense"],
-      })
-      .order("row_key")
-      .order("col_key")
-      .order("classification")
-      .order("account_type")
-      .range(fromRow, toRow),
-  )) as PivotCell[];
+  const glCells = (await loadPivotCells(supabase, {
+    p_start: parsed.start,
+    p_end: parsed.end,
+    p_row_dim: "account",
+    p_col_dim: "month",
+    p_realm_id: null,
+    p_classifications: ["Revenue", "Expense"],
+  })) as PivotCell[];
 
   return buildReconciliation(parsed, glCells);
 }

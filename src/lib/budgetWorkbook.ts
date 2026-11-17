@@ -13,7 +13,6 @@ import {
 import {
   BUDGET_COL_DIMS,
   BUDGET_VIEWS,
-  BUDGET_YEAR,
   INITIATIVE_STATUS_LABEL,
   MONTH_NAMES,
   assembleBudget,
@@ -38,6 +37,7 @@ import {
   writeInitiativesByMonth,
 } from "@/lib/budgetInitiativeSheet";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // The budget workbook (/financials/budget's Excel exports). Shared by
 // /api/export/budget — one workbook for the page's selection — and
@@ -118,7 +118,7 @@ export async function budgetExportContext(
     ? (sp.get("view") as BudgetView)
     : "budget";
   const realms = company === "all" ? [...companyByRealm.keys()] : [company];
-  const year = BUDGET_YEAR;
+  const { budgetYear: year } = await loadAppSettings(db);
 
   const data = await loadBudget(db, { year, company, realms, view });
   const classes = sortClasses(realms.flatMap((r) => data.classesByRealm[r] ?? []));

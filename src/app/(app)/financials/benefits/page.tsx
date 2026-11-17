@@ -7,7 +7,7 @@ import { latestMonth, monthLabel } from "@/lib/financials";
 import { NO_CLASS } from "@/lib/budget";
 import {
   BENEFITS_CATEGORY,
-  LABOR_BASE_ACCOUNTS,
+  benefitFormula,
   benefitCostExportHref,
   benefitCostHref,
   type BenefitCostState,
@@ -30,6 +30,7 @@ import {
   buttonCls,
 } from "@/components/ui";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // Cost of Benefits: Employee Benefits (by Chart of Accounts category) as a
 // percent of labor — 710 Labor Cost + 935 Salaries & Wages + 934 Labor Maint —
@@ -47,6 +48,8 @@ export default async function CostOfBenefitsPage({
   // verifies the caller, then reads go through the service-role client.
   await requireAdmin();
   const supabase = createServiceClient();
+  // The denominator's accounts are a setting (Settings → Business rules).
+  const { benefitBaseAccounts: bases } = await loadAppSettings(supabase);
 
   const { data: connRows, error: connRowsError } = await supabase
     .from("qb_connection_status")
@@ -68,7 +71,7 @@ export default async function CostOfBenefitsPage({
   let loaded: LoadedBenefitCost | null = null;
   let loadError: string | null = null;
   try {
-    loaded = await loadBenefitCost(supabase, state, realmIds);
+    loaded = await loadBenefitCost(supabase, state, realmIds, bases);
   } catch (e) {
     loadError = e instanceof Error ? e.message : String(e);
   }
@@ -91,7 +94,7 @@ export default async function CostOfBenefitsPage({
   const periodHint = `${monthLabel(from)} – ${monthLabel(to)}${
     cls !== null ? ` · ${classLabel(cls)}` : ""
   }`;
-  const formula = `${BENEFITS_CATEGORY} ÷ (${LABOR_BASE_ACCOUNTS.map((a) => a.label).join(" + ")})`;
+  const formula = benefitFormula(bases);
 
   const dash = <span className="text-ink-400">—</span>;
   const moneyCell = (key: string, v: number, strong: boolean, small = false) => (
@@ -259,7 +262,7 @@ export default async function CostOfBenefitsPage({
           <StatTile
             label="Labor"
             value={moneyWhole(data.laborTotal.total)}
-            hint="710 + 935 + 934"
+            hint={bases.map((a) => a.number).join(" + ")}
           />
         </div>
       )}
@@ -314,7 +317,7 @@ export default async function CostOfBenefitsPage({
                 <tr>
                   <Th>Class</Th>
                   <Th right>{BENEFITS_CATEGORY}</Th>
-                  {LABOR_BASE_ACCOUNTS.map((a) => (
+                  {bases.map((a) => (
                     <Th key={a.number} right>
                       {a.label}
                     </Th>
@@ -338,7 +341,7 @@ export default async function CostOfBenefitsPage({
                     </Link>
                   </td>
                   {moneyCell("b", r.benefits, false)}
-                  {LABOR_BASE_ACCOUNTS.map((a) =>
+                  {bases.map((a) =>
                     moneyCell(a.number, r.labor[a.number] ?? 0, false),
                   )}
                   {moneyCell("l", r.laborTotal, false)}
@@ -364,8 +367,10 @@ export default async function CostOfBenefitsPage({
       <p className="mt-3 text-xs text-ink-400">
         Benefit rate = {formula}. {BENEFITS_CATEGORY} is every expense account
         assigned that category on the Chart of Accounts page. The labor
-        accounts are found by account number, so sub-accounts of 710, 935, and
-        934 count with their parent; an account categorized {BENEFITS_CATEGORY}{" "}
+        accounts ({bases.map((a) => a.number).join(", ")}) are found by
+        account number, so their sub-accounts count with their parent, and an
+        admin can change the list under Settings → Business rules; an account
+        categorized {BENEFITS_CATEGORY}{" "}
         is never also counted as labor. Amounts are the general ledger as
         booked, so each line ties to the Income Statement. The Total column
         divides the period&rsquo;s benefits by the period&rsquo;s labor (it is

@@ -5,21 +5,23 @@
 //                                        + 934 Labor Maint)
 //
 // The numerator is every expense account whose Chart of Accounts Category is
-// "Employee Benefits"; the denominator is the three labor accounts, found by
-// account number. Everything is the ledger as booked — nothing is allocated
+// "Employee Benefits"; the denominator is the base accounts, found by account
+// number. Which accounts those are is a setting (Settings → Business rules,
+// benefitBaseAccounts in appSettings.ts; the three above are the default), so
+// every function here takes the list. Everything is the ledger as booked — nothing is allocated
 // or reclassified — so each line ties to the Income Statement. Pure and
 // client-safe; the server loader is benefitCostServer.ts.
 
+import type { BenefitBaseAccount } from "@/lib/appSettings";
+
 export const BENEFITS_CATEGORY = "Employee Benefits";
 
-/** The labor accounts that make up the denominator, in display order. */
-export const LABOR_BASE_ACCOUNTS = [
-  { number: "710", label: "710 Labor Cost" },
-  { number: "935", label: "935 Salaries & Wages" },
-  { number: "934", label: "934 Labor Maint" },
-] as const;
+/** "benefits", or the account number of one of the base accounts. */
+export type BenefitLineKey = string;
 
-export type BenefitLineKey = "benefits" | (typeof LABOR_BASE_ACCOUNTS)[number]["number"];
+/** The benefit-rate formula in words, for headers and footnotes. */
+export const benefitFormula = (bases: BenefitBaseAccount[]): string =>
+  `${BENEFITS_CATEGORY} ÷ (${bases.map((a) => a.label).join(" + ")})`;
 
 /** Same folding as financials.ts / gl_normalize_label: lowercase, "&" → "and",
     collapsed whitespace. */
@@ -32,12 +34,15 @@ export function isBenefitsCategory(category: string | null | undefined): boolean
 
 /** Which labor account a ledger account belongs to, by account number: the
     account itself or any parent in its "Parent:Sub" path must start with the
-    number, so sub-accounts of 710 / 935 / 934 count with their parent. */
-export function laborBaseNumber(accountFullName: string): BenefitLineKey | null {
+    number, so sub-accounts of a base account count with their parent. */
+export function laborBaseNumber(
+  accountFullName: string,
+  bases: BenefitBaseAccount[],
+): BenefitLineKey | null {
   for (const segment of accountFullName.split(":")) {
     const m = /^\s*(\d+)(?!\d)/.exec(segment);
     if (!m) continue;
-    const hit = LABOR_BASE_ACCOUNTS.find((a) => a.number === m[1]);
+    const hit = bases.find((a) => a.number === m[1]);
     if (hit) return hit.number;
   }
   return null;
@@ -49,9 +54,10 @@ export function laborBaseNumber(accountFullName: string): BenefitLineKey | null 
 export function benefitLineFor(
   accountFullName: string,
   category: string | null | undefined,
+  bases: BenefitBaseAccount[],
 ): BenefitLineKey | null {
   if (isBenefitsCategory(category)) return "benefits";
-  return laborBaseNumber(accountFullName);
+  return laborBaseNumber(accountFullName, bases);
 }
 
 export interface BenefitTotals {
@@ -71,7 +77,7 @@ export interface BenefitCost {
   /** Month keys (YYYY-MM), ascending. */
   colKeys: string[];
   benefits: BenefitLine;
-  /** One line per LABOR_BASE_ACCOUNTS entry, in that order. */
+  /** One line per base account, in the settings' order. */
   labor: BenefitLine[];
   laborTotal: BenefitTotals;
   /** benefits ÷ laborTotal; null where there is no labor to divide by. */
@@ -91,7 +97,7 @@ export interface BenefitCell {
 export interface BenefitClassRow {
   cls: string;
   benefits: number;
-  /** Period total per labor account number (710 / 935 / 934). */
+  /** Period total per base account number. */
   labor: Record<string, number>;
   laborTotal: number;
   rate: number | null;
@@ -102,9 +108,10 @@ export interface BenefitClassRow {
 export function benefitCostByClass(
   cells: BenefitCell[],
   classes: string[],
+  bases: BenefitBaseAccount[],
 ): BenefitClassRow[] {
   return classes.map((cls) => {
-    const c = buildBenefitCost(cells.filter((x) => x.cls === cls));
+    const c = buildBenefitCost(cells.filter((x) => x.cls === cls), bases);
     return {
       cls,
       benefits: c.benefits.total,
@@ -139,7 +146,10 @@ export const benefitCostExportHref = (s: BenefitCostState): string =>
 
 const cents = (n: number) => Math.round(n * 100) / 100;
 
-export function buildBenefitCost(cells: BenefitCell[]): BenefitCost {
+export function buildBenefitCost(
+  cells: BenefitCell[],
+  bases: BenefitBaseAccount[],
+): BenefitCost {
   const colSet = new Set<string>();
   const byLine = new Map<BenefitLineKey, Map<string, Record<string, number>>>();
   for (const c of cells) {
@@ -179,7 +189,7 @@ export function buildBenefitCost(cells: BenefitCell[]): BenefitCost {
   };
 
   const benefits = line("benefits", BENEFITS_CATEGORY);
-  const labor = LABOR_BASE_ACCOUNTS.map((a) => line(a.number, a.label));
+  const labor = bases.map((a) => line(a.number, a.label));
 
   const laborCells: Record<string, number> = {};
   for (const k of colKeys) {

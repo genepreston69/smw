@@ -14,6 +14,10 @@ import type {
   QbSyncStep,
 } from "@/lib/types";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
+import { loadSchemaStatus } from "@/lib/schemaStatus";
+import { EXPECTED_MIGRATIONS } from "@/lib/schemaVersion";
+import { BusinessRulesForm } from "./BusinessRulesForm";
 
 export default async function SettingsPage({
   searchParams,
@@ -64,6 +68,11 @@ export default async function SettingsPage({
         .order("position")
     : { data: null, error: null };
   throwIfError("the last nightly sync's steps", stepRowsError);
+
+  // Business rules and the database's migration record, for admins.
+  const [settings, schema] = isAdmin
+    ? await Promise.all([loadAppSettings(supabase), loadSchemaStatus()])
+    : [null, null];
 
   const connections = (connRows ?? []) as Array<{
     realm_id: string;
@@ -174,6 +183,61 @@ export default async function SettingsPage({
             timezone={SYNC_TIMEZONE}
             hour={SYNC_HOUR}
           />
+        )}
+
+        {/* Business rules */}
+        {settings && (
+          <Card>
+            <CardTitle>Business rules</CardTitle>
+            <p className="mb-4 text-sm text-ink-600">
+              Rules the reports follow that change on the business&rsquo;s
+              schedule. Changes take effect on every page as soon as they are
+              saved — no deploy needed.
+            </p>
+            <BusinessRulesForm settings={settings} />
+          </Card>
+        )}
+
+        {/* Database version */}
+        {schema && (
+          <Card>
+            <CardTitle>Database version</CardTitle>
+            {schema.missing.length === 0 ? (
+              <p className="text-sm text-ink-600">
+                <span className="font-medium text-ok-600">Up to date.</span> All{" "}
+                {EXPECTED_MIGRATIONS.length} migrations this version of the app
+                needs are recorded
+                {schema.latest && (
+                  <>
+                    ; the latest is{" "}
+                    <span className="font-medium text-ink-900">{schema.latest}</span>
+                  </>
+                )}
+                .
+              </p>
+            ) : (
+              <div className="text-sm text-ink-600">
+                <p>
+                  <span className="font-medium text-bad-600">
+                    {schema.missing.length} migration
+                    {schema.missing.length === 1 ? " is" : "s are"} missing.
+                  </span>{" "}
+                  Apply {schema.missing.length === 1 ? "it" : "them, in order,"} in
+                  the Supabase SQL editor from{" "}
+                  <span className="font-medium text-ink-900">supabase/migrations/</span>
+                  . Until then, features that depend on{" "}
+                  {schema.missing.length === 1 ? "it" : "them"} can fail.
+                </p>
+                <ul className="mt-2 list-inside list-disc">
+                  {schema.missing.map((f) => (
+                    <li key={f} className="font-medium text-ink-900">
+                      {f}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </Card>
         )}
 
         {/* Approval thresholds */}
