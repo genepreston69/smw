@@ -1,6 +1,6 @@
 # General ledger and Financials
 
-The ledger import, and every report built on it: the Financials pivot, Income Ratios, Income Statement, Chart of Accounts and Reconciliation — plus the Balance Sheet, which comes from QuickBooks directly rather than from the imported ledger. Budget and Cost of Benefits read the same ledger and have their own pages.
+The ledger import, and every report built on it: the Financials pivot, Financial Ratios, Income Statement, Chart of Accounts and Reconciliation — plus the Balance Sheet, which comes from QuickBooks directly rather than from the imported ledger. Budget and Cost of Benefits read the same ledger and have their own pages.
 
 Code: `syncGeneralLedger` in `src/lib/quickbooks.ts`, `src/lib/financials.ts`, `src/lib/pivotServer.ts`, `src/lib/statementServer.ts`, `src/lib/reconciliation.ts`, `src/app/(app)/financials/`.
 
@@ -33,3 +33,14 @@ Code: `src/lib/balanceSheet.ts` (parsing, merging companies, calendar rules), `s
 - **Two things refresh it, both through the sync queue** (see [quickbooks-sync.md](quickbooks-sync.md)): a `month_end` run the cron worker starts in the first hours of the 1st (`isMonthRollover`), and a `balance_sheet` step per company in every nightly run, which re-pulls the same month end so entries posted to it during the close show up the next morning. The page's *Refresh from QuickBooks* button does the same pull as a manual run.
 - With several companies each is a column, lines matched by name within their section (`mergeBalanceSheets`), and Combined is their plain sum — no intercompany eliminations, like every other report here.
 - Admin-only, like the ledger: `requireAdmin()` then the service-role client; RLS on the table lets only admins read it and no API role write it.
+
+## Financial Ratios
+
+Code: `src/app/(app)/financials/ratios/`, `buildIncomeStatement` in `src/lib/financials.ts`, `src/lib/balanceRatios.ts` (figures and ratio math), `src/lib/balanceRatiosServer.ts` (loader).
+
+- The page has two sources. **Profitability** (margins as a percent of revenue) reads the ledger through `loadPivotCells`, like the Financials pivot. **Liquidity, leverage and returns** read `balance_sheet_snapshots` — never the ledger, for the reason given under Balance Sheet.
+- Balance sheet figures are QuickBooks' own section totals (`balanceFigures` finds Current Assets, Bank Accounts, Accounts Receivable, Current Liabilities, Liabilities and Equity by QuickBooks' group name, falling back to the label), so each ties to the Balance Sheet page for the same month end. Nothing is re-summed from accounts.
+- The balance sheet table has one column per month end in the period that has a snapshot and follows the Company filter only (All companies = the Balance Sheet's Combined, a plain sum with no eliminations); the Columns control applies to the profitability table alone.
+- Return on assets, return on equity and days sales outstanding (`returnRatios`) set the period's income against the balance sheet at the period end, and are shown only when that month end has a snapshot. Net income is restated to an annual rate (× 12 ÷ months); balances are period-end, not averaged.
+- A ratio over a zero or negative base (no current liabilities, negative equity) is null and shows a dash rather than a misleading number.
+- Before migration `0043` is applied the balance sheet half shows a message naming it; the profitability half still works.
