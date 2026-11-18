@@ -21,7 +21,7 @@ export interface PivotArgs {
  * JSON value. Reading gl_pivot itself goes through the API's 1000-row pages,
  * and every page re-runs the entire aggregation — several scans of the ledger
  * for a single page view. Every ledger pivot the app shows comes through here
- * (Financials, Income Ratios, the line drill-down's total, Reconciliation and
+ * (Financials, Financial Ratios, the line drill-down's total, Reconciliation and
  * the Financials export), so they all read the ledger once.
  *
  * Callers verify the admin role first and pass the service-role client, like

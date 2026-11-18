@@ -88,7 +88,7 @@ const SECTIONS: NavSection[] = [
       { href: "/financials", label: "Financials", icon: Landmark, adminOnly: true },
       {
         href: "/financials/ratios",
-        label: "Income Ratios",
+        label: "Financial Ratios",
         icon: Percent,
         adminOnly: true,
       },
