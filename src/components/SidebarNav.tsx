@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import {
@@ -23,7 +23,7 @@ import {
   Wallet,
   Settings,
   Ship,
-  ChevronDown,
+  ChevronRight,
   type LucideIcon,
 } from "lucide-react";
 
@@ -36,11 +36,12 @@ interface NavItem {
 
 interface NavSection {
   label: string;
+  icon: LucideIcon;
   items: NavItem[];
 }
 
 // Dashboard and Settings stay standalone; everything else lives in a
-// collapsible section.
+// section whose pages open in a flyout panel to the right of the sidebar.
 const TOP_ITEMS: NavItem[] = [
   { href: "/", label: "Dashboard", icon: LayoutDashboard },
 ];
@@ -48,6 +49,7 @@ const TOP_ITEMS: NavItem[] = [
 const SECTIONS: NavSection[] = [
   {
     label: "Job Planning",
+    icon: ClipboardList,
     items: [
       { href: "/plans", label: "Job Plans", icon: ClipboardList },
       { href: "/barge", label: "Barge Program", icon: Ship },
@@ -56,10 +58,12 @@ const SECTIONS: NavSection[] = [
   },
   {
     label: "Job Performance",
+    icon: Wrench,
     items: [{ href: "/jobs", label: "Jobs", icon: Wrench }],
   },
   {
     label: "Capitalized Labor",
+    icon: HardHat,
     items: [
       { href: "/capitalized-labor", label: "Capitalized Labor", icon: HardHat },
       {
@@ -79,6 +83,7 @@ const SECTIONS: NavSection[] = [
   },
   {
     label: "Financials",
+    icon: Landmark,
     items: [
       { href: "/financials", label: "Financials", icon: Landmark, adminOnly: true },
       {
@@ -122,6 +127,7 @@ const SECTIONS: NavSection[] = [
   },
   {
     label: "Budget and Forecast",
+    icon: Wallet,
     items: [
       {
         href: "/financials/budget",
@@ -133,6 +139,7 @@ const SECTIONS: NavSection[] = [
   },
   {
     label: "Customers",
+    icon: Users,
     items: [
       { href: "/customers", label: "Customers", icon: Users },
       { href: "/customers/summary", label: "Customer Summary", icon: PieChart },
@@ -144,57 +151,21 @@ const BOTTOM_ITEMS: NavItem[] = [
   { href: "/settings", label: "Settings", icon: Settings },
 ];
 
-/* ---------------------------------------------------------------------------
-   Collapse state — a tiny localStorage-backed external store read through
-   useSyncExternalStore. The server (and hydration) snapshot is all-expanded;
-   the stored choices apply on the first client render after hydration, and
-   every mutation persists and notifies subscribers.
---------------------------------------------------------------------------- */
-
-const STORAGE_KEY = "smw-sidebar-collapsed";
-const ALL_EXPANDED: Record<string, boolean> = {};
-let collapsedState: Record<string, boolean> | null = null; // null = not loaded yet
-const listeners = new Set<() => void>();
-
-function getCollapsed(): Record<string, boolean> {
-  if (collapsedState === null) {
-    collapsedState = ALL_EXPANDED;
-    try {
-      const parsed: unknown = JSON.parse(
-        window.localStorage.getItem(STORAGE_KEY) ?? "",
-      );
-      if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-        collapsedState = parsed as Record<string, boolean>;
-      }
-    } catch {
-      // nothing stored (or unreadable): stay all-expanded
-    }
-  }
-  return collapsedState;
-}
-
-function setSectionCollapsed(label: string, value: boolean) {
-  collapsedState = { ...getCollapsed(), [label]: value };
-  try {
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(collapsedState));
-  } catch {
-    // storage unavailable; collapse still works for this visit
-  }
-  for (const notify of listeners) notify();
-}
-
-function subscribeCollapsed(notify: () => void) {
-  listeners.add(notify);
-  return () => listeners.delete(notify);
-}
+const ITEM_CLASS =
+  "flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-[0.95rem] font-medium transition-colors";
+const ACTIVE_CLASS = "bg-white/10 text-white";
+const IDLE_CLASS = "text-white/60 hover:bg-white/5 hover:text-white/90";
 
 export function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
   const pathname = usePathname();
-  const collapsed = useSyncExternalStore(
-    subscribeCollapsed,
-    getCollapsed,
-    () => ALL_EXPANDED,
+  const navRef = useRef<HTMLElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  // The open flyout remembers the page it was opened on, so arriving on a new
+  // page closes it without an effect.
+  const [open, setOpen] = useState<{ label: string; pathname: string } | null>(
+    null,
   );
+  const openLabel = open && open.pathname === pathname ? open.label : null;
 
   const visible = (item: NavItem) => isAdmin || !item.adminOnly;
   const sections = SECTIONS.map((s) => ({
@@ -218,69 +189,109 @@ export function SidebarNav({ isAdmin }: { isAdmin: boolean }) {
     return !best || href.length > best.length ? href : best;
   }, null);
 
-  // Navigating into a collapsed section expands it so the active item is
-  // never hidden (a section collapsed while you're on its page stays put).
   const activeSection =
     sections.find((s) => s.items.some((i) => i.href === activeHref))?.label ??
     null;
-  useEffect(() => {
-    if (activeSection && getCollapsed()[activeSection]) {
-      setSectionCollapsed(activeSection, false);
-    }
-  }, [activeSection]);
+  const openSection = sections.find((s) => s.label === openLabel) ?? null;
 
-  const navLink = ({ href, label, icon: Icon }: NavItem) => {
+  // While a flyout is open: Esc or a click anywhere outside the nav closes
+  // it, and focus starts on its first page.
+  useEffect(() => {
+    if (!openLabel) return;
+    panelRef.current?.querySelector("a")?.focus();
+    const onPointerDown = (e: PointerEvent) => {
+      if (!navRef.current?.contains(e.target as Node)) setOpen(null);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Escape") return;
+      setOpen(null);
+      navRef.current
+        ?.querySelector<HTMLButtonElement>('button[aria-expanded="true"]')
+        ?.focus();
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [openLabel]);
+
+  const navLink = (
+    { href, label, icon: Icon }: NavItem,
+    // A one-page section shows as a plain link under the section's name.
+    sectionLabel?: string,
+  ) => {
     const active = href === activeHref;
     return (
       <Link
         key={href}
         href={href}
-        className={`flex items-center gap-2.5 rounded-lg px-3 py-2 text-[0.95rem] font-medium transition-colors ${
-          active
-            ? "bg-white/10 text-white"
-            : "text-white/60 hover:bg-white/5 hover:text-white/90"
-        }`}
+        onClick={() => setOpen(null)}
+        className={`${ITEM_CLASS} ${active ? ACTIVE_CLASS : IDLE_CLASS}`}
       >
-        <Icon size={18} strokeWidth={active ? 2 : 1.75} />
-        {label}
+        <Icon size={18} strokeWidth={active ? 2 : 1.75} className="shrink-0" />
+        {sectionLabel ?? label}
       </Link>
     );
   };
 
   return (
-    <nav className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-4">
-      {TOP_ITEMS.filter(visible).map(navLink)}
+    <nav
+      ref={navRef}
+      className="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto px-2 pb-4"
+    >
+      {TOP_ITEMS.filter(visible).map((item) => navLink(item))}
       {sections.map((section) => {
-        const isCollapsed = !!collapsed[section.label];
-        const containsActive = section.label === activeSection;
+        // Nothing to choose between: go straight to the page.
+        if (section.items.length === 1) {
+          return navLink(section.items[0], section.label);
+        }
+        const isOpen = section.label === openLabel;
+        const highlighted = isOpen || section.label === activeSection;
+        const Icon = section.icon;
         return (
-          <div key={section.label}>
-            <button
-              type="button"
-              onClick={() => setSectionCollapsed(section.label, !isCollapsed)}
-              aria-expanded={!isCollapsed}
-              className={`flex w-full items-center justify-between rounded-md px-3 pb-1 pt-3.5 text-left text-[0.72rem] font-semibold uppercase tracking-[0.12em] transition-colors ${
-                isCollapsed && containsActive
-                  ? "text-white/80"
-                  : "text-white/35 hover:text-white/70"
-              }`}
-            >
-              {section.label}
-              <ChevronDown
-                size={13}
-                strokeWidth={2}
-                className={`transition-transform ${isCollapsed ? "-rotate-90" : ""}`}
-              />
-            </button>
-            {!isCollapsed && (
-              <div className="flex flex-col gap-0.5">
-                {section.items.map(navLink)}
-              </div>
-            )}
-          </div>
+          <button
+            key={section.label}
+            type="button"
+            onClick={() =>
+              setOpen(isOpen ? null : { label: section.label, pathname })
+            }
+            aria-expanded={isOpen}
+            aria-haspopup="true"
+            className={`${ITEM_CLASS} ${highlighted ? ACTIVE_CLASS : IDLE_CLASS}`}
+          >
+            <Icon
+              size={18}
+              strokeWidth={highlighted ? 2 : 1.75}
+              className="shrink-0"
+            />
+            <span className="min-w-0 flex-1">{section.label}</span>
+            <ChevronRight
+              size={14}
+              strokeWidth={2}
+              className={`shrink-0 ${isOpen ? "text-white/80" : "text-white/35"}`}
+            />
+          </button>
         );
       })}
-      <div className="pt-3.5">{BOTTOM_ITEMS.filter(visible).map(navLink)}</div>
+      {BOTTOM_ITEMS.filter(visible).map((item) => navLink(item))}
+
+      {/* Flyout: the open section's pages, floating over the page content
+          just right of the sidebar (the sidebar is w-56). */}
+      {openSection && (
+        <div
+          ref={panelRef}
+          role="group"
+          aria-label={openSection.label}
+          className="fixed inset-y-0 left-56 flex w-60 flex-col gap-0.5 overflow-y-auto border-l border-white/10 bg-navy-900 px-2 pb-4 pt-6 shadow-2xl"
+        >
+          <p className="px-3 pb-3 text-[0.72rem] font-semibold uppercase tracking-[0.12em] text-white/40">
+            {openSection.label}
+          </p>
+          {openSection.items.map((item) => navLink(item))}
+        </div>
+      )}
     </nav>
   );
 }
