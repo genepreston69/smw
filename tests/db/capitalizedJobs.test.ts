@@ -1,5 +1,5 @@
 import { beforeAll, expect, it } from "vitest";
-import { describeDb, num } from "./db";
+import { createUser, describeDb, num } from "./db";
 
 // cap_job_lines (migration 0044) is the one definition of what the
 // Capitalized Jobs page counts and which Direct Cost column each line is in.
@@ -119,5 +119,80 @@ describeDb("capitalized jobs (0044)", (db) => {
     } finally {
       await db().query("rollback");
     }
+  });
+});
+
+// set_cap_job_approval (migration 0045) owns who may approve a job for
+// capitalization and writes the audit entry.
+describeDb("capitalized job approvals (0045)", (db) => {
+  let jobId: string;
+  let approver: string;
+  let estimator: string;
+
+  /** Runs `fn` as a signed-in user; `commit` keeps what it wrote. */
+  const as = async <T>(userId: string | null, fn: () => Promise<T>, commit = true): Promise<T> => {
+    await db().query("begin");
+    try {
+      await db().query(`set local role ${userId ? "authenticated" : "anon"}`);
+      if (userId) await db().query("select set_config('request.jwt.claim.sub', $1, true)", [userId]);
+      const out = await fn();
+      await db().query(commit ? "commit" : "rollback");
+      return out;
+    } catch (e) {
+      await db().query("rollback");
+      throw e;
+    }
+  };
+  const setApproval = (approved: boolean) =>
+    db().query("select public.set_cap_job_approval($1, $2) as approved", [jobId, approved]);
+  const audit = async () =>
+    (await db().query(
+      "select action, actor_id from audit_log where entity_type = 'capitalized_job' and entity_id = $1 order by created_at",
+      [jobId],
+    )).rows;
+
+  beforeAll(async () => {
+    await db().query("delete from jobs where realm_id = 'capappr'");
+    jobId = (await db().query(
+      "insert into jobs (qb_id, name, realm_id) values ('apprjob', 'EQP-9', 'capappr') returning id",
+    )).rows[0].id;
+    approver = await createUser(db(), "cap-approver@superiormarineinc.com");
+    estimator = await createUser(db(), "cap-estimator@superiormarineinc.com");
+    await db().query("update profiles set role = 'approver' where id = $1", [approver]);
+    await db().query("update profiles set role = 'estimator' where id = $1", [estimator]);
+  });
+
+  it("an approver approves a job, once, and it is audited", async () => {
+    await as(approver, () => setApproval(true));
+    await as(approver, () => setApproval(true)); // a double click changes nothing
+    const { rows } = await db().query("select approved_by from cap_job_approvals where job_id = $1", [jobId]);
+    expect(rows).toEqual([{ approved_by: approver }]);
+    expect(await audit()).toEqual([{ action: "approved", actor_id: approver }]);
+  });
+
+  it("everyone signed in can see it; only approvers and admins can change it", async () => {
+    const seen = await as(estimator, () => db().query("select job_id from cap_job_approvals where job_id = $1", [jobId]));
+    expect(seen.rows).toHaveLength(1);
+    await expect(as(estimator, () => setApproval(false))).rejects.toThrow(/Only approvers and admins/);
+    // Not by writing the table directly, either.
+    const del = await as(approver, () => db().query("delete from cap_job_approvals where job_id = $1", [jobId]));
+    expect(del.rowCount).toBe(0);
+    await expect(
+      as(approver, () => db().query("insert into cap_job_approvals (job_id) values (gen_random_uuid())")),
+    ).rejects.toThrow(/permission denied|row-level security/);
+    await expect(as(null, () => setApproval(false))).rejects.toThrow(/permission denied/);
+    expect((await db().query("select 1 from cap_job_approvals where job_id = $1", [jobId])).rows).toHaveLength(1);
+  });
+
+  it("clearing removes the approval and is audited too", async () => {
+    await as(approver, () => setApproval(false));
+    expect((await db().query("select 1 from cap_job_approvals where job_id = $1", [jobId])).rows).toEqual([]);
+    expect((await audit()).map((a) => a.action)).toEqual(["approved", "approval_cleared"]);
+  });
+
+  it("an unknown job is refused", async () => {
+    await expect(
+      as(approver, () => db().query("select public.set_cap_job_approval(gen_random_uuid(), true)")),
+    ).rejects.toThrow(/Job not found/);
   });
 });

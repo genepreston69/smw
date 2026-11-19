@@ -9,6 +9,7 @@ import {
   parseCapJobLines,
   CAP_JOB_LINE_COLUMNS,
   type CapJob,
+  type CapJobApproval,
   type CapJobBenefit,
   type CapJobLine,
 } from "@/lib/capitalizedJobs";
@@ -17,6 +18,12 @@ import {
 // well under the gateway's limit; each read is an index range scan on
 // job_costs_job_date_idx (job_id, txn_date).
 const JOB_CHUNK = 100;
+
+interface ApprovalRow {
+  job_id: string;
+  approved_at: string;
+  approver: { full_name: string | null; email: string | null } | null;
+}
 
 export interface CapJobs {
   /** Every candidate job (non-billable or intercompany) in every QuickBooks
@@ -30,6 +37,12 @@ export interface CapJobs {
   /** Why the benefit allocation is missing, or null. The page shows it as a
       banner; a file must not present a failed read as "nothing allocated". */
   benefitError: string | null;
+  /** Jobs approved for capitalization, by job id (cap_job_approvals,
+      migration 0045). Empty when the read failed — see approvalsError. */
+  approvals: Map<string, CapJobApproval>;
+  /** Why the approvals are missing, or null. Never present a failed read as
+      "nothing approved": the page shows a banner and disables the boxes. */
+  approvalsError: string | null;
   /** More than one QuickBooks company is connected. */
   multiCompany: boolean;
 }
@@ -48,7 +61,7 @@ export async function loadCapJobs(
   const { intercompany } = await loadAppSettings(db);
   // Paged reads (fetchAllRows) so nothing is cut off at Supabase's 1000-row
   // cap; .order("id") tie-breaks for stable pages.
-  const [jobRows, { data: connRows, error: connError }, benefit] = await Promise.all([
+  const [jobRows, { data: connRows, error: connError }, benefit, approval] = await Promise.all([
     fetchAllRows((from, to) =>
       db
         .from("jobs")
@@ -76,6 +89,21 @@ export async function loadCapJobs(
       (rows) => ({ rows: rows as CapJobBenefit[], error: null as string | null }),
       (e: unknown) => ({
         rows: [] as CapJobBenefit[],
+        error: e instanceof Error ? e.message : String(e),
+      }),
+    ),
+    // Approvals, with the approver's name. Code can reach production before
+    // migration 0045, so a failed read is reported, not thrown.
+    fetchAllRows((from, to) =>
+      db
+        .from("cap_job_approvals")
+        .select("job_id, approved_at, approver:profiles(full_name, email)")
+        .order("job_id")
+        .range(from, to),
+    ).then(
+      (rows) => ({ rows: rows as unknown as ApprovalRow[], error: null as string | null }),
+      (e: unknown) => ({
+        rows: [] as ApprovalRow[],
         error: e instanceof Error ? e.message : String(e),
       }),
     ),
@@ -146,6 +174,15 @@ export async function loadCapJobs(
     lines,
     benefits: benefit.rows.filter((b) => jobs.has(b.job_id)),
     benefitError: benefit.error,
+    approvals: new Map(
+      approval.rows
+        .filter((a) => jobs.has(a.job_id))
+        .map((a) => [
+          a.job_id,
+          { at: a.approved_at, by: a.approver?.full_name || a.approver?.email || null },
+        ]),
+    ),
+    approvalsError: approval.error,
     multiCompany: companyByRealm.size > 1,
   };
 }

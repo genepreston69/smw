@@ -18,7 +18,45 @@ import {
    whether it is cost posted or already capitalized, is decided in SQL by the
    cap_job_lines view (migration 0044). Which jobs qualify is capLaborBucket,
    and the period is capLaborPeriod (both in src/lib/capitalizedLabor.ts).
+
+   A job can be marked approved for capitalization (cap_job_approvals,
+   migration 0045). The approval belongs to the job, not to a period, and is
+   written only by the set_cap_job_approval SQL function, which owns the rule
+   (approvers and admins) and the audit entry.
 --------------------------------------------------------------------------- */
+
+/** Who signed a job off for capitalization, and when. */
+export interface CapJobApproval {
+  /** ISO timestamp. */
+  at: string;
+  /** The approver's name (or email); null when the account is gone. */
+  by: string | null;
+}
+
+/** Roles that may tick the Approved box — the same rule the database
+    enforces in set_cap_job_approval; this only decides whether the box is
+    enabled. */
+export function canApproveCapJobs(role: string | null | undefined): boolean {
+  return role === "admin" || role === "approver";
+}
+
+/** The page's tabs (?tab=). Approved cuts across both job types. */
+export type CapJobTab = "all" | CapLaborBucket | "approved";
+
+/** The tab a request asked for; anything else is All. */
+export function capJobTab(tab: unknown): CapJobTab {
+  return tab === "nonbillable" || tab === "intercompany" || tab === "approved" ? tab : "all";
+}
+
+/** The rows a tab shows. */
+export function capJobTabRows<R extends { bucket: CapLaborBucket; approval: CapJobApproval | null }>(
+  rows: R[],
+  tab: CapJobTab,
+): R[] {
+  if (tab === "all") return rows;
+  if (tab === "approved") return rows.filter((r) => r.approval);
+  return rows.filter((r) => r.bucket === tab);
+}
 
 /** The Direct Cost columns, in the order the page shows them
     (cap_job_lines.kind). */
@@ -194,6 +232,8 @@ export interface CapJobRow extends CapJob, CapJobSums {
   /** Direct-labor share of Employee Benefits allocated to the job over the
       period's months; null when nothing was allocated. */
   benefitAllocation: number | null;
+  /** Set when the job has been approved for capitalization. */
+  approval: CapJobApproval | null;
 }
 
 /**
@@ -204,6 +244,7 @@ export function capJobRows(
   jobs: Map<string, CapJob>,
   lines: CapJobLine[],
   benefits: CapJobBenefit[],
+  approvals: ReadonlyMap<string, CapJobApproval> = new Map(),
 ): CapJobRow[] {
   const benefitByJob = new Map<string, number>();
   for (const b of benefits) {
@@ -234,6 +275,7 @@ export function capJobRows(
       txnCount: acc.txns.size,
       latestDate: acc.latestDate,
       benefitAllocation: benefitByJob.get(jobId) ?? null,
+      approval: approvals.get(jobId) ?? null,
     });
   }
   return rows.sort((a, b) => b.net - a.net || a.name.localeCompare(b.name));
@@ -314,4 +356,12 @@ export function capJobsErrorMessage(message: string): string {
   if (/cap_job_|schema cache|does not exist/i.test(message))
     return "Capitalized Jobs needs its database update: run supabase/migrations/0044_capitalized_jobs.sql in the Supabase SQL editor, then reload this page.";
   return `Capitalized jobs couldn't be loaded: ${message}`;
+}
+
+/** A failed approvals read as a banner message: a missing migration says
+    which one. */
+export function capJobApprovalsErrorMessage(message: string): string {
+  if (/cap_job_approval|schema cache|does not exist/i.test(message))
+    return "Approvals need a database update: run supabase/migrations/0045_capitalized_job_approvals.sql in the Supabase SQL editor, then reload this page.";
+  return `Approvals couldn't be loaded: ${message}`;
 }

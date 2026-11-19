@@ -7,6 +7,7 @@ import {
   yearOf,
 } from "@/lib/capitalizedLabor";
 import {
+  capJobApprovalsErrorMessage,
   capJobDocRef,
   capJobSourceLabel,
   CAP_JOB_KIND_ACCOUNTS,
@@ -31,7 +32,14 @@ export async function GET(request: Request) {
   }
 
   const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
-  const { jobs, lines } = await loadCapJobs(supabase, period);
+  const { jobs, lines, approvals, approvalsError } = await loadCapJobs(supabase, period);
+  // A file would show the failed read as "not approved", so it fails instead.
+  if (approvalsError) {
+    return NextResponse.json(
+      { error: capJobApprovalsErrorMessage(approvalsError) },
+      { status: 503 },
+    );
+  }
 
   const csv = toCsv(
     [
@@ -39,6 +47,7 @@ export async function GET(request: Request) {
       "QB Company",
       "Customer",
       "Type",
+      "Approved",
       "Year",
       "Month",
       "Date",
@@ -59,6 +68,7 @@ export async function GET(request: Request) {
         job.companyName ?? job.realmId ?? "",
         job.customerName,
         CAP_LABOR_BUCKET_LABELS[job.bucket],
+        approvals.has(job.id) ? "Yes" : "",
         // Calendar year and month, so the export pivots the same way the
         // page's by-month breakdown splits the totals.
         l.txn_date ? String(yearOf(l.txn_date) ?? "") : "",
