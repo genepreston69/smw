@@ -54,6 +54,7 @@ export const EXPECTED_MIGRATIONS: readonly string[] = [
   "0041_app_settings.sql",
   "0042_ledger_pivot_scope.sql",
   "0043_balance_sheet.sql",
+  "0044_capitalized_jobs.sql",
 ];
 
 /** The first migration that records itself; earlier ones are back-filled. */

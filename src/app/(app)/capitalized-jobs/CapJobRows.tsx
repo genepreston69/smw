@@ -5,34 +5,21 @@ import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { money, shortDate } from "@/lib/format";
 import { monthLabel } from "@/lib/financials";
 import {
-  capLaborAmounts,
   CAP_LABOR_BUCKET_LABELS,
   type CapLaborBucket,
   type CapLaborPeriodParams,
 } from "@/lib/capitalizedLabor";
-import { getCapLaborLines, type CapLaborLine } from "./actions";
-
-export interface CapLaborRowData {
-  id: string;
-  name: string;
-  companyName: string | null;
-  customerName: string | null;
-  bucket: CapLaborBucket;
-  /**
-   * Sums of the job's journal labor lines over the period on screen: wages
-   * and employer taxes posted (net of reversals), labor credited off to an
-   * asset (already capitalized, stored positive), and their net.
-   */
-  postedAmount: number | null;
-  capitalizedAmount: number | null;
-  amount: number | null;
-  /** Direct-labor share of Employee Benefits allocated to this job over the
-      period's months (same figure as the Jobs dashboard column); null when
-      nothing was allocated. */
-  benefitAllocation: number | null;
-  entryCount: number;
-  latestDate: string | null;
-}
+import {
+  addCapJobLine,
+  blankCapJobSums,
+  capJobDocRef,
+  capJobSourceLabel,
+  CAP_JOB_KINDS,
+  CAP_JOB_KIND_LABELS,
+  type CapJobLine,
+  type CapJobRow,
+} from "@/lib/capitalizedJobs";
+import { getCapJobLines } from "./actions";
 
 const BUCKET_STYLES: Record<CapLaborBucket, string> = {
   nonbillable: "bg-amber-50 text-amber-700 border-amber-200",
@@ -42,19 +29,19 @@ const BUCKET_STYLES: Record<CapLaborBucket, string> = {
 type LoadState =
   | { status: "loading" }
   | { status: "error"; error: string }
-  | { status: "loaded"; lines: CapLaborLine[] };
+  | { status: "loaded"; lines: CapJobLine[] };
 
 /**
- * The candidate jobs, each expanding to its journal lines for the period on
+ * The candidate jobs, each expanding to its counted lines for the period on
  * screen. Lines load on first expand and are kept; the page re-keys this
  * component per period so a new period never shows another period's lines.
  */
-export function CapLaborRows({
+export function CapJobRows({
   jobs,
   showCompany,
   period,
 }: {
-  jobs: CapLaborRowData[];
+  jobs: CapJobRow[];
   showCompany: boolean;
   /** The page's period params, passed back to the drill-down read. */
   period: CapLaborPeriodParams;
@@ -63,10 +50,10 @@ export function CapLaborRows({
   const [lines, setLines] = useState<Record<string, LoadState>>({});
   const [, startTransition] = useTransition();
 
-  // Job + Customer + Type + Entries + Latest entry + Labor posted +
-  // Already capitalized + Awaiting review + Benefit allocation, plus the
-  // optional company column.
-  const colSpan = 9 + (showCompany ? 1 : 0);
+  // Job + Customer + Type + Transactions + Latest + one per Direct Cost
+  // column + Total cost + Already capitalized + Awaiting review + Benefit
+  // allocation, plus the optional company column.
+  const colSpan = 9 + CAP_JOB_KINDS.length + (showCompany ? 1 : 0);
 
   const toggle = (jobId: string) => {
     setOpen((prev) => {
@@ -78,7 +65,7 @@ export function CapLaborRows({
     if (lines[jobId]) return; // already loaded (or loading)
     setLines((prev) => ({ ...prev, [jobId]: { status: "loading" } }));
     startTransition(async () => {
-      const res = await getCapLaborLines(jobId, period);
+      const res = await getCapJobLines(jobId, period);
       setLines((prev) => ({
         ...prev,
         [jobId]: res.ok
@@ -99,9 +86,7 @@ export function CapLaborRows({
                 <button
                   onClick={() => toggle(j.id)}
                   className="flex items-center gap-1.5 text-left font-medium text-ink-900 hover:text-brand-700"
-                  title={
-                    expanded ? "Hide journal entries" : "View journal entries"
-                  }
+                  title={expanded ? "Hide transactions" : "View transactions"}
                 >
                   {expanded ? (
                     <ChevronDown size={14} strokeWidth={2} className="shrink-0 text-ink-400" />
@@ -123,21 +108,24 @@ export function CapLaborRows({
                 </span>
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-ink-600">
-                {j.entryCount}
+                {j.txnCount}
               </td>
               <td className="px-4 py-3 text-right text-ink-400">
                 {shortDate(j.latestDate)}
               </td>
-              <td className="px-4 py-3 text-right tabular-nums text-ink-600">
-                {j.postedAmount != null ? money(j.postedAmount) : "—"}
+              {CAP_JOB_KINDS.map((k) => (
+                <td key={k} className="px-4 py-3 text-right tabular-nums text-ink-600">
+                  {j[k] !== 0 ? money(j[k]) : "—"}
+                </td>
+              ))}
+              <td className="px-4 py-3 text-right tabular-nums text-ink-900">
+                {money(j.posted)}
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-ink-600">
-                {j.capitalizedAmount != null && j.capitalizedAmount !== 0
-                  ? money(j.capitalizedAmount)
-                  : "—"}
+                {j.capitalized !== 0 ? money(j.capitalized) : "—"}
               </td>
               <td className="px-4 py-3 text-right font-medium tabular-nums text-ink-900">
-                {j.amount != null ? money(j.amount) : "—"}
+                {money(j.net)}
               </td>
               <td className="px-4 py-3 text-right tabular-nums text-ink-600">
                 {j.benefitAllocation != null ? money(j.benefitAllocation) : "—"}
@@ -146,7 +134,7 @@ export function CapLaborRows({
             {expanded && (
               <tr>
                 <td colSpan={colSpan} className="bg-surface/40 px-6 py-4">
-                  <JournalLines state={lines[j.id]} />
+                  <JobLines state={lines[j.id]} />
                 </td>
               </tr>
             )}
@@ -157,46 +145,41 @@ export function CapLaborRows({
   );
 }
 
-function JournalLines({ state }: { state: LoadState | undefined }) {
+function JobLines({ state }: { state: LoadState | undefined }) {
   if (!state || state.status === "loading") {
     return (
       <p className="flex items-center gap-2 py-2 text-sm text-ink-400">
         <Loader2 size={14} className="animate-spin" />
-        Loading journal entries…
+        Loading transactions…
       </p>
     );
   }
   if (state.status === "error") {
     return (
       <p className="py-2 text-sm text-bad-600">
-        Couldn&apos;t load journal entries: {state.error}
+        Couldn&apos;t load transactions: {state.error}
       </p>
     );
   }
   if (state.lines.length === 0) {
     return (
       <p className="py-2 text-sm text-ink-600">
-        No journal-entry labor lines in this period. Run a QuickBooks sync in
-        Settings to pull the latest transactions.
+        No direct-cost lines in this period. Run a QuickBooks sync in Settings
+        to pull the latest transactions.
       </p>
     );
   }
 
-  // Same split as the dashboard: capitalized lines are labor credited off by
-  // an entry that debits a capital asset; everything else is labor posted.
-  let posted = 0;
-  let capitalized = 0;
-  for (const l of state.lines) {
-    const split = capLaborAmounts(l.treatment, l.amount);
-    posted += split.posted;
-    capitalized += split.capitalized;
-  }
-  const total = posted - capitalized;
+  // Same split as the page: capitalized lines are cost credited off by an
+  // entry that debits a capital asset; everything else is cost posted, in
+  // its Direct Cost column.
+  const sums = blankCapJobSums();
+  for (const l of state.lines) addCapJobLine(sums, l);
 
-  // Lines arrive newest first, so they group by month in order, each
-  // header carrying the month's net. Undated lines (rare) would fall into
-  // their own group at the end.
-  const groups: { month: string; lines: CapLaborLine[] }[] = [];
+  // Lines arrive newest first, so they group by month in order, each header
+  // carrying the month's net. Undated lines (rare) fall into their own group
+  // at the end.
+  const groups: { month: string; lines: CapJobLine[] }[] = [];
   for (const l of state.lines) {
     const month = l.txn_date ? l.txn_date.slice(0, 7) : "Undated";
     const last = groups[groups.length - 1];
@@ -207,65 +190,70 @@ function JournalLines({ state }: { state: LoadState | undefined }) {
   return (
     <div>
       <table className="w-full text-[0.8rem]">
-        {groups.map((g) => {
-          const groupNet = g.lines.reduce((s, l) => s + l.amount, 0);
-          return (
-            <tbody key={g.month} className="divide-y divide-line/50">
-              <tr>
-                <td
-                  colSpan={4}
-                  className="pt-3 pb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
-                >
-                  {g.month === "Undated" ? g.month : monthLabel(g.month)}
+        {groups.map((g) => (
+          <tbody key={g.month} className="divide-y divide-line/50">
+            <tr>
+              <td
+                colSpan={6}
+                className="pt-3 pb-1 text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400"
+              >
+                {g.month === "Undated" ? g.month : monthLabel(g.month)}
+              </td>
+              <td className="pt-3 pb-1 text-right text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400 tabular-nums">
+                {money(g.lines.reduce((s, l) => s + l.amount, 0))}
+              </td>
+            </tr>
+            {g.lines.map((l) => (
+              <tr key={l.id}>
+                <td className="w-24 py-1.5 pr-3 whitespace-nowrap text-ink-400">
+                  {shortDate(l.txn_date)}
                 </td>
-                <td className="pt-3 pb-1 text-right text-[0.7rem] font-semibold uppercase tracking-[0.08em] text-ink-400 tabular-nums">
-                  {money(groupNet)}
+                <td className="w-36 py-1.5 pr-3 whitespace-nowrap text-ink-400">
+                  {capJobSourceLabel(l.qb_txn_type)} {capJobDocRef(l)}
+                </td>
+                <td className="w-32 py-1.5 pr-3 whitespace-nowrap text-ink-600">
+                  {CAP_JOB_KIND_LABELS[l.kind]}
+                </td>
+                <td className="py-1.5 pr-3 text-ink-900">{l.vendor_name ?? "—"}</td>
+                <td className="py-1.5 pr-3 text-ink-900">
+                  {l.category ?? "—"}
+                  {l.treatment === "capitalized" && (
+                    <span className="ml-2 inline-block rounded-full border border-ok-600/25 bg-ok-50 px-1.5 py-px text-[0.65rem] font-medium text-ok-600">
+                      Capitalized
+                    </span>
+                  )}
+                </td>
+                <td className="py-1.5 pr-3 text-ink-600">{l.description ?? "—"}</td>
+                <td
+                  className={`w-24 py-1.5 text-right tabular-nums ${
+                    l.amount < 0 ? "text-ok-600" : "text-ink-900"
+                  }`}
+                >
+                  {money(l.amount)}
                 </td>
               </tr>
-              {g.lines.map((l) => (
-                <tr key={l.id}>
-                  <td className="w-24 py-1.5 pr-3 whitespace-nowrap text-ink-400">
-                    {shortDate(l.txn_date)}
-                  </td>
-                  <td className="w-28 py-1.5 pr-3 whitespace-nowrap text-ink-400">
-                    JE {l.qb_doc_number ?? `#${l.qb_txn_id}`}
-                  </td>
-                  <td className="py-1.5 pr-3 text-ink-900">
-                    {l.category ?? "—"}
-                    {l.treatment === "capitalized" && (
-                      <span className="ml-2 inline-block rounded-full border border-ok-600/25 bg-ok-50 px-1.5 py-px text-[0.65rem] font-medium text-ok-600">
-                        Capitalized
-                      </span>
-                    )}
-                  </td>
-                  <td className="py-1.5 pr-3 text-ink-600">
-                    {l.description ?? "—"}
-                  </td>
-                  <td
-                    className={`w-24 py-1.5 text-right tabular-nums ${
-                      l.amount < 0 ? "text-ok-600" : "text-ink-900"
-                    }`}
-                  >
-                    {money(l.amount)}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          );
-        })}
+            ))}
+          </tbody>
+        ))}
       </table>
       <div className="mt-2 space-y-1 border-t border-line pt-2 text-sm">
+        {CAP_JOB_KINDS.filter((k) => sums[k] !== 0).map((k) => (
+          <p key={k} className="flex justify-between text-ink-400">
+            <span className="pl-3">{CAP_JOB_KIND_LABELS[k]}</span>
+            <span className="tabular-nums">{money(sums[k])}</span>
+          </p>
+        ))}
         <p className="flex justify-between text-ink-600">
-          <span>Labor posted (wages + employer taxes, net of reversals)</span>
-          <span className="tabular-nums">{money(posted)}</span>
+          <span>Total cost posted (net of refunds, credits and reversals)</span>
+          <span className="tabular-nums">{money(sums.posted)}</span>
         </p>
         <p className="flex justify-between text-ink-600">
           <span>Already capitalized (credited off to an asset)</span>
-          <span className="tabular-nums">{money(-capitalized)}</span>
+          <span className="tabular-nums">{money(-sums.capitalized)}</span>
         </p>
         <p className="flex justify-between font-semibold text-ink-900">
           <span>Awaiting review (net)</span>
-          <span className="tabular-nums">{money(total)}</span>
+          <span className="tabular-nums">{money(sums.net)}</span>
         </p>
       </div>
     </div>

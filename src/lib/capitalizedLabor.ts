@@ -4,44 +4,18 @@ import { isNonBillableJobName, isTransportationJobName } from "@/lib/jobViews";
 import { lastDayOfMonth, monthLabel } from "@/lib/financials";
 
 /* ---------------------------------------------------------------------------
-   Capitalized-labor candidates. Labor posted by journal entry (payroll
-   allocations: wages plus the employer's share of payroll taxes) to a job
-   that isn't outside-customer work may belong in a capital account rather
-   than job cost. The dashboard (src/app/(app)/capitalized-labor/), the CSV
-   export (src/app/api/export/capitalized-labor/), and the Excel export
-   (src/app/api/export/capitalized-labor-workbook/) must bucket identically,
-   so the job rule lives here.
+   Capitalized Jobs: which jobs are candidates, and the period every
+   Capitalized page shares. Cost posted to a job that isn't outside-customer
+   work may belong in a capital account rather than job cost. The page
+   (src/app/(app)/capitalized-jobs/) and both exports bucket jobs through
+   loadCapJobs (src/lib/capitalizedJobsServer.ts), which uses the rule here.
 
-   Which journal lines count, and whether each is labor posted or already
-   capitalized, is decided in SQL by the cap_labor_lines view (migration
-   0030): expense-side wage and employer-tax accounts only — withholdings and
-   other payroll liabilities never count — and a line is capitalized only
-   when its entry debits a capital asset. Every reader goes through it.
+   Which job-cost lines count, and how, is decided in SQL by the
+   cap_job_lines view (migration 0044); the rollups are in
+   src/lib/capitalizedJobs.ts.
 --------------------------------------------------------------------------- */
 
 export type CapLaborBucket = "nonbillable" | "intercompany";
-
-/** A counted journal line's role (cap_labor_lines.treatment). */
-export type CapLaborTreatment = "posted" | "capitalized";
-
-export const CAP_LABOR_TREATMENT_LABELS: Record<CapLaborTreatment, string> = {
-  posted: "Labor posted",
-  capitalized: "Capitalized",
-};
-
-/**
- * A line's contribution to the dashboard's two sums: labor posted (net — a
- * reversal nets against it) and already capitalized (stored positive; the
- * capitalizing credit is negative in the ledger).
- */
-export function capLaborAmounts(
-  treatment: string,
-  amount: number,
-): { posted: number; capitalized: number } {
-  return treatment === "capitalized"
-    ? { posted: 0, capitalized: -amount }
-    : { posted: amount, capitalized: 0 };
-}
 
 export const CAP_LABOR_BUCKET_LABELS: Record<CapLaborBucket, string> = {
   nonbillable: "Non-Billable",
@@ -66,7 +40,7 @@ export function isPpsWorkForSuperiorMarine(
 // A job qualifies when it's internal equipment work (EQP…) or work performed
 // for a sister company. Transportation jobs are operating work and never
 // qualify — same precedence as the Jobs dashboard. Unlike the Jobs tabs,
-// recent activity doesn't matter here: old journal entries still need review.
+// recent activity doesn't matter here: old transactions still need review.
 export function capLaborBucket(
   j: {
     name: string;
@@ -96,10 +70,9 @@ export function capLaborBucket(
 }
 
 /* ---------------------------------------------------------------------------
-   Period. Capitalized labor is viewed for one calendar year, one month, or a
+   Period. Capitalized Jobs is viewed for one calendar year, one month, or a
    range of months — the current year to date unless the URL picks another —
-   on both Capitalized Labor pages and Capitalized Materials, their job
-   drill-downs, and every export, so the window lives here and each of them
+   and so is Already Capitalized, the job drill-down, and every export, so the window lives here and each of them
    parses the same URL params with capLaborPeriod. Imported history starts
    Jan 2023 (frozen pre-audit job costs and ledger lines persist back to
    then); nothing runs past today.
@@ -286,85 +259,6 @@ export function capLaborHref(
   for (const [k, v] of Object.entries(params)) if (v) q.set(k, v);
   const s = q.toString();
   return s ? `${path}?${s}` : path;
-}
-
-/* ---------------------------------------------------------------------------
-   By month. The dashboard and its Excel workbook both break the period's
-   candidate labor into calendar months, so the rollup lives here.
---------------------------------------------------------------------------- */
-
-export interface CapLaborMonthRow {
-  /** YYYY-MM, or "total" for the period's total row. */
-  month: string;
-  /** Jobs with counted labor that month (distinct across the period on the
-      total row). */
-  jobs: number;
-  /** Journal entries per job, summed — the Entries column's definition. */
-  entries: number;
-  posted: number;
-  /** Stored positive, like the dashboard. */
-  capitalized: number;
-  /** Awaiting review: posted − capitalized. */
-  net: number;
-  /** Benefit allocation booked to those jobs that month. */
-  benefits: number;
-}
-
-/**
- * Rolls the period's counted lines and benefit allocation up by month, for
- * the jobs `include` keeps (candidates, filtered by the dashboard's tab).
- * Every month of the period gets a row, quiet months included.
- */
-export function capLaborByMonth(
-  w: Pick<CapLaborWindow, "fromMonth" | "toMonth">,
-  lines: {
-    job_id: string;
-    qb_txn_id: string;
-    txn_date: string | null;
-    amount: number | string | null;
-    treatment: string;
-  }[],
-  benefits: { job_id: string; month: string; amount: number | string | null }[],
-  include: (jobId: string) => boolean,
-): { rows: CapLaborMonthRow[]; total: CapLaborMonthRow } {
-  const blank = (month: string) => ({
-    row: { month, jobs: 0, entries: 0, posted: 0, capitalized: 0, net: 0, benefits: 0 },
-    jobs: new Set<string>(),
-    entries: new Set<string>(),
-  });
-  const byMonth = new Map(capLaborMonths(w).map((m) => [m, blank(m)]));
-  const total = blank("total");
-  for (const l of lines) {
-    if (!include(l.job_id) || !l.txn_date) continue;
-    const acc = byMonth.get(l.txn_date.slice(0, 7));
-    if (!acc) continue;
-    const split = capLaborAmounts(l.treatment, Number(l.amount ?? 0));
-    // A journal entry is counted once per job it touches (qb_txn_id is only
-    // unique within a QuickBooks company, and a job lives in one).
-    const entry = `${l.job_id}:${l.qb_txn_id}`;
-    for (const a of [acc, total]) {
-      a.row.posted += split.posted;
-      a.row.capitalized += split.capitalized;
-      a.jobs.add(l.job_id);
-      a.entries.add(entry);
-    }
-  }
-  for (const b of benefits) {
-    if (!include(b.job_id)) continue;
-    const acc = byMonth.get(b.month.slice(0, 7));
-    if (!acc) continue;
-    const amount = Number(b.amount ?? 0);
-    acc.row.benefits += amount;
-    total.row.benefits += amount;
-  }
-  const finish = (a: ReturnType<typeof blank>) => ({
-    ...a.row,
-    jobs: a.jobs.size,
-    // An entry has one date, so per-month counts sum to the period's.
-    entries: a.entries.size,
-    net: a.row.posted - a.row.capitalized,
-  });
-  return { rows: [...byMonth.values()].map(finish), total: finish(total) };
 }
 
 /** Calendar year of a YYYY-MM-DD (or YYYY-MM) string; null when undated. */
