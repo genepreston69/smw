@@ -16,12 +16,16 @@ import {
   capLaborHref,
   capLaborPeriod,
   CAP_LABOR_BUCKET_LABELS,
-  type CapLaborBucket,
   type CapLaborPeriodParams,
 } from "@/lib/capitalizedLabor";
 import {
+  canApproveCapJobs,
   capJobRows,
+  capJobTab,
+  capJobTabRows,
   capJobTotal,
+  type CapJobTab,
+  capJobApprovalsErrorMessage,
   capJobsByMonth,
   capJobsErrorMessage,
   CAP_JOB_KINDS,
@@ -49,6 +53,8 @@ const EMPTY: CapJobs = {
   lines: [],
   benefits: [],
   benefitError: null,
+  approvals: new Map(),
+  approvalsError: null,
   multiCompany: false,
 };
 
@@ -62,8 +68,7 @@ export default async function CapitalizedJobsPage({
   searchParams: Promise<{ tab?: string } & CapLaborPeriodParams>;
 }) {
   const { tab, ...periodParams } = await searchParams;
-  const activeTab: CapLaborBucket | "all" =
-    tab === "nonbillable" || tab === "intercompany" ? tab : "all";
+  const activeTab = capJobTab(tab);
 
   // One calendar year, one month, or a month range — the current year to
   // date by default. Lines outside it are never read, so they can't move any
@@ -72,11 +77,11 @@ export default async function CapitalizedJobsPage({
 
   // Tab links keep the period; period links keep the tab.
   const tabParam = activeTab === "all" ? null : activeTab;
-  const href = (t: CapLaborBucket | "all") =>
+  const href = (t: CapJobTab) =>
     capLaborHref(PATH, period.params, { tab: t === "all" ? null : t });
   const exportQuery = capLaborHref("", period.params);
 
-  const { supabase } = await requireUser();
+  const { supabase, profile } = await requireUser();
   // A failed read renders as a banner, not a 500 — and is logged, since a
   // banner leaves no trace in the platform logs otherwise. Code can reach
   // production before migration 0044 is applied; the banner names it.
@@ -88,17 +93,25 @@ export default async function CapitalizedJobsPage({
       return { loaded: EMPTY, loadError: capJobsErrorMessage(message) };
     },
   );
-  const { jobs, lines, benefits, benefitError, multiCompany: showCompany } = loaded;
+  const { jobs, lines, benefits, benefitError, approvals, multiCompany: showCompany } = loaded;
+  // Code can reach production before migration 0045: name it, and disable
+  // the boxes rather than show every job as unapproved.
+  const approvalsError = loaded.approvalsError
+    ? capJobApprovalsErrorMessage(loaded.approvalsError)
+    : null;
+  if (loaded.approvalsError) {
+    console.error(`Capitalized Jobs: approvals read failed: ${loaded.approvalsError}`);
+  }
   if (benefitError) {
     console.error(`Capitalized Jobs: benefit allocation read failed: ${benefitError}`);
   }
 
   // Candidate jobs with direct cost in the period, biggest dollars first.
-  const candidates = capJobRows(jobs, lines, benefits);
+  const candidates = capJobRows(jobs, lines, benefits, approvals);
   const nonBillable = candidates.filter((c) => c.bucket === "nonbillable");
   const intercompany = candidates.filter((c) => c.bucket === "intercompany");
-  const rows =
-    activeTab === "all" ? candidates : activeTab === "nonbillable" ? nonBillable : intercompany;
+  const approvedRows = capJobTabRows(candidates, "approved");
+  const rows = capJobTabRows(candidates, activeTab);
 
   const all = capJobTotal(candidates);
   const shown = capJobTotal(rows);
@@ -151,6 +164,12 @@ export default async function CapitalizedJobsPage({
       {loadError && (
         <p className="mb-6 rounded-lg border border-warn-700/25 bg-warn-50 px-4 py-3 text-sm text-warn-700">
           {loadError}
+        </p>
+      )}
+
+      {approvalsError && (
+        <p className="mb-6 rounded-lg border border-warn-700/25 bg-warn-50 px-4 py-3 text-sm text-warn-700">
+          {approvalsError}
         </p>
       )}
 
@@ -216,6 +235,9 @@ export default async function CapitalizedJobsPage({
         </Link>
         <Link href={href("intercompany")} className={tabCls(activeTab === "intercompany")}>
           {CAP_LABOR_BUCKET_LABELS.intercompany} ({intercompany.length})
+        </Link>
+        <Link href={href("approved")} className={tabCls(activeTab === "approved")}>
+          Approved ({approvedRows.length})
         </Link>
       </div>
 
@@ -295,17 +317,25 @@ export default async function CapitalizedJobsPage({
       {/* clip off so the sticky header can escape the card while scrolling */}
       <Card pad={false} clip={false}>
         {rows.length === 0 ? (
-          <EmptyState icon={HardHat} title={`No capitalized job costs in ${period.label}`}>
-            Labor, contract service, fuel &amp; oil, material and freight
-            posted to non-billable (EQP) or intercompany jobs will appear
-            here. Pick another period above, or connect QuickBooks in Settings
-            and run a sync.
-          </EmptyState>
+          activeTab === "approved" ? (
+            <EmptyState icon={CheckCircle2} title={`No approved jobs with cost in ${period.label}`}>
+              Tick the Approved box on a job to list it here. Approved jobs
+              appear when they have direct cost in the selected period.
+            </EmptyState>
+          ) : (
+            <EmptyState icon={HardHat} title={`No capitalized job costs in ${period.label}`}>
+              Labor, contract service, fuel &amp; oil, material and freight
+              posted to non-billable (EQP) or intercompany jobs will appear
+              here. Pick another period above, or connect QuickBooks in
+              Settings and run a sync.
+            </EmptyState>
+          )
         ) : (
           <Table
             stickyHeader
             head={
               <tr>
+                <Th>Approved</Th>
                 <Th>Job</Th>
                 {showCompany && <Th>QB Company</Th>}
                 <Th>Customer</Th>
@@ -330,9 +360,11 @@ export default async function CapitalizedJobsPage({
               jobs={rows}
               showCompany={showCompany}
               period={period.params}
+              canApprove={canApproveCapJobs(profile.role)}
+              approvalsUnavailable={approvalsError != null}
             />
             <tr className="border-t-2 border-line font-semibold text-ink-900">
-              <td className="px-4 py-3" colSpan={showCompany ? 4 : 3}>
+              <td className="px-4 py-3" colSpan={showCompany ? 5 : 4}>
                 Total
               </td>
               <td className="px-4 py-3 text-right tabular-nums">{shown.txns}</td>
@@ -448,6 +480,19 @@ export default async function CapitalizedJobsPage({
               read-only: record the capitalization entry in QuickBooks
               (tagging the job on the credit line), run a sync, and the
               amounts here update automatically.
+            </p>
+          </div>
+          <div>
+            <h3 className="mb-1 font-semibold text-ink-900">7. Approved</h3>
+            <p>
+              Approvers and admins tick <strong>Approved</strong> to record
+              that a job has been signed off for capitalization; the box shows
+              who approved it and when, and the Approved tab lists those jobs.
+              The approval belongs to the job, not to a period: it stays on
+              whichever year, month or range is selected until someone clears
+              it. It changes no amounts — approved jobs stay in the other tabs
+              and totals — and every approval and clearing is written to the
+              audit log.
             </p>
           </div>
         </div>

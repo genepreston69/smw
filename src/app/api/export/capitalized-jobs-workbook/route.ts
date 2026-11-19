@@ -7,6 +7,7 @@ import {
   yearOf,
 } from "@/lib/capitalizedLabor";
 import {
+  capJobApprovalsErrorMessage,
   capJobDocRef,
   capJobRows,
   capJobSourceLabel,
@@ -38,12 +39,22 @@ export async function GET(request: Request) {
   }
 
   const period = capLaborPeriodFromSearch(new URL(request.url).searchParams);
-  const { jobs, lines, benefits, benefitError } = await loadCapJobs(supabase, period);
+  const { jobs, lines, benefits, benefitError, approvals, approvalsError } = await loadCapJobs(
+    supabase,
+    period,
+  );
+  // A file would show the failed read as "not approved", so it fails instead.
+  if (approvalsError) {
+    return NextResponse.json(
+      { error: capJobApprovalsErrorMessage(approvalsError) },
+      { status: 503 },
+    );
+  }
   // The page shows a banner; a file would show the failed read as blank
   // Benefit Allocation cells, so it fails instead.
   if (benefitError) throw new Error(`Benefit allocation: ${benefitError}`);
 
-  const rows = capJobRows(jobs, lines, benefits);
+  const rows = capJobRows(jobs, lines, benefits, approvals);
   const total = capJobTotal(rows);
 
   const workbook = new ExcelJS.Workbook();
@@ -72,6 +83,9 @@ export async function GET(request: Request) {
     { header: "Transactions", key: "txns", width: 13 },
     { header: "Latest", key: "latest", width: 13 },
     ...costColumns,
+    { header: "Approved", key: "approved", width: 10 },
+    { header: "Approved By", key: "approvedBy", width: 24 },
+    { header: "Approved On", key: "approvedOn", width: 13 },
   ];
   jobsSheet.getRow(1).font = { bold: true };
   jobsSheet.views = [{ state: "frozen", ySplit: 1 }];
@@ -86,6 +100,9 @@ export async function GET(request: Request) {
       txns: r.txnCount,
       latest: r.latestDate ? shortDate(r.latestDate) : "",
       benefits: r.benefitAllocation,
+      approved: r.approval ? "Yes" : "",
+      approvedBy: r.approval?.by ?? "",
+      approvedOn: r.approval ? shortDate(r.approval.at.slice(0, 10)) : "",
     });
   }
   jobsSheet.addRow({ ...total, job: `Total — ${period.label}` }).font = { bold: true };
@@ -116,6 +133,7 @@ export async function GET(request: Request) {
     { header: "QB Company", key: "company", width: 22 },
     { header: "Customer", key: "customer", width: 28 },
     { header: "Type", key: "type", width: 14 },
+    { header: "Approved", key: "approved", width: 10 },
     { header: "Year", key: "year", width: 8 },
     { header: "Month", key: "month", width: 9 },
     { header: "Date", key: "date", width: 12 },
@@ -138,6 +156,7 @@ export async function GET(request: Request) {
       company: job.companyName ?? job.realmId ?? "",
       customer: job.customerName ?? "",
       type: CAP_LABOR_BUCKET_LABELS[job.bucket],
+      approved: approvals.has(job.id) ? "Yes" : "",
       year: yearOf(l.txn_date),
       month: l.txn_date ? l.txn_date.slice(0, 7) : "",
       date: l.txn_date ? shortDate(l.txn_date) : "",

@@ -1,6 +1,7 @@
 "use client";
 
 import { Fragment, useState, useTransition } from "react";
+import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
 import { money, shortDate } from "@/lib/format";
 import { monthLabel } from "@/lib/financials";
@@ -19,7 +20,7 @@ import {
   type CapJobLine,
   type CapJobRow,
 } from "@/lib/capitalizedJobs";
-import { getCapJobLines } from "./actions";
+import { getCapJobLines, setCapJobApproval } from "./actions";
 
 const BUCKET_STYLES: Record<CapLaborBucket, string> = {
   nonbillable: "bg-amber-50 text-amber-700 border-amber-200",
@@ -40,20 +41,52 @@ export function CapJobRows({
   jobs,
   showCompany,
   period,
+  canApprove,
+  approvalsUnavailable,
 }: {
   jobs: CapJobRow[];
   showCompany: boolean;
   /** The page's period params, passed back to the drill-down read. */
   period: CapLaborPeriodParams;
+  /** The signed-in user may approve (approvers and admins). The database
+      enforces it; this only enables the box. */
+  canApprove: boolean;
+  /** Approvals couldn't be read, so the boxes are disabled rather than
+      shown unticked. */
+  approvalsUnavailable: boolean;
 }) {
+  const router = useRouter();
   const [open, setOpen] = useState<Set<string>>(new Set());
   const [lines, setLines] = useState<Record<string, LoadState>>({});
   const [, startTransition] = useTransition();
+  // A box the user changed: what they chose, while it saves and after — or,
+  // when the save failed, why (the row then shows the stored state again).
+  const [pending, setPending] = useState<
+    Record<string, { approved: boolean; saving: boolean; error?: string }>
+  >({});
 
-  // Job + Customer + Type + Transactions + Latest + one per Direct Cost
+  const approve = (jobId: string, approved: boolean) => {
+    setPending((prev) => ({ ...prev, [jobId]: { approved, saving: true } }));
+    startTransition(async () => {
+      const res = await setCapJobApproval(jobId, approved);
+      if (res.ok) {
+        // Keep showing the saved state while the page's data — tab counts
+        // and the approver's name — reloads behind it.
+        setPending((prev) => ({ ...prev, [jobId]: { approved, saving: false } }));
+        router.refresh();
+      } else {
+        setPending((prev) => ({
+          ...prev,
+          [jobId]: { approved: !approved, saving: false, error: res.error },
+        }));
+      }
+    });
+  };
+
+  // Approved + Job + Customer + Type + Transactions + Latest + one per Direct Cost
   // column + Total cost + Already capitalized + Awaiting review + Benefit
   // allocation, plus the optional company column.
-  const colSpan = 9 + CAP_JOB_KINDS.length + (showCompany ? 1 : 0);
+  const colSpan = 10 + CAP_JOB_KINDS.length + (showCompany ? 1 : 0);
 
   const toggle = (jobId: string) => {
     setOpen((prev) => {
@@ -79,9 +112,34 @@ export function CapJobRows({
     <>
       {jobs.map((j) => {
         const expanded = open.has(j.id);
+        const override = pending[j.id];
+        // A failed save keeps the stored state and shows why.
+        const approved = override && !override.error ? override.approved : j.approval != null;
         return (
           <Fragment key={j.id}>
             <tr className="transition-colors hover:bg-surface/60">
+              <td className="px-4 py-3">
+                <input
+                  type="checkbox"
+                  aria-label={`${j.name} approved for capitalization`}
+                  className="h-4 w-4 cursor-pointer rounded border-line accent-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+                  checked={approved}
+                  disabled={!canApprove || approvalsUnavailable || override?.saving}
+                  onChange={(e) => approve(j.id, e.target.checked)}
+                  title={
+                    approvalsUnavailable
+                      ? "Approvals couldn't be loaded"
+                      : j.approval
+                        ? `Approved ${shortDate(j.approval.at.slice(0, 10))}${j.approval.by ? ` by ${j.approval.by}` : ""}`
+                        : canApprove
+                          ? "Mark approved for capitalization"
+                          : "Only approvers and admins can approve"
+                  }
+                />
+                {override?.error && (
+                  <p className="mt-1 max-w-[14rem] text-[0.7rem] text-bad-600">{override.error}</p>
+                )}
+              </td>
               <td className="px-4 py-3 font-medium text-ink-900">
                 <button
                   onClick={() => toggle(j.id)}

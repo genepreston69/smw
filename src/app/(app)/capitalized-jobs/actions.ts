@@ -1,9 +1,12 @@
 "use server";
 
+import { revalidatePath } from "next/cache";
+import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { fetchAllRows } from "@/lib/supabase/fetchAll";
 import { capLaborPeriod, type CapLaborPeriodParams } from "@/lib/capitalizedLabor";
 import {
+  capJobApprovalsErrorMessage,
   capJobsErrorMessage,
   parseCapJobLines,
   CAP_JOB_LINE_COLUMNS,
@@ -52,4 +55,37 @@ export async function getCapJobLines(
       error: capJobsErrorMessage(e instanceof Error ? e.message : "Failed to load transactions"),
     };
   }
+}
+
+const approvalSchema = z.object({ jobId: z.string().uuid(), approved: z.boolean() });
+
+/**
+ * Marks a job approved for capitalization, or clears it. The rule (approvers
+ * and admins only) and the audit entry live in set_cap_job_approval
+ * (migration 0045); this just calls it as the signed-in user.
+ */
+export async function setCapJobApproval(
+  jobId: string,
+  approved: boolean,
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  const parsed = approvalSchema.safeParse({ jobId, approved });
+  if (!parsed.success) return { ok: false, error: "Unknown job" };
+  const supabase = await createClient();
+  const { error } = await supabase.rpc("set_cap_job_approval", {
+    p_job_id: parsed.data.jobId,
+    p_approved: parsed.data.approved,
+  });
+  if (error) {
+    // Strip Postgres prefixes so the function's own message reads cleanly;
+    // a missing function means the migration hasn't been applied.
+    const message = error.message.replace(/^.*?ERROR:\s*/, "");
+    return {
+      ok: false,
+      error: /set_cap_job_approval|schema cache/i.test(message)
+        ? capJobApprovalsErrorMessage(message)
+        : message,
+    };
+  }
+  revalidatePath("/capitalized-jobs");
+  return { ok: true };
 }

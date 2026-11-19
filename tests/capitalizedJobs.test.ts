@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  canApproveCapJobs,
+  capJobApprovalsErrorMessage,
   capJobRows,
+  capJobTab,
+  capJobTabRows,
   capJobTotal,
   capJobsByMonth,
   capJobsErrorMessage,
@@ -121,5 +125,42 @@ describe("Capitalized Jobs rollups", () => {
   it("a missing migration is named", () => {
     expect(capJobsErrorMessage('relation "public.cap_job_lines" does not exist')).toMatch(/0044_capitalized_jobs\.sql/);
     expect(capJobsErrorMessage("timeout")).toBe("Capitalized jobs couldn't be loaded: timeout");
+  });
+
+  it("a missing approvals migration is named", () => {
+    expect(capJobApprovalsErrorMessage('relation "public.cap_job_approvals" does not exist')).toMatch(
+      /0045_capitalized_job_approvals\.sql/,
+    );
+  });
+});
+
+describe("Capitalized Jobs approvals", () => {
+  const approvals = new Map([["b", { at: "2026-04-05T12:00:00Z", by: "Pat Approver" }]]);
+  const rows = capJobRows(jobs, lines, benefits, approvals);
+
+  it("carries the approval on the job's row without changing any amount", () => {
+    expect(rows.find((r) => r.id === "b")!.approval).toEqual(approvals.get("b"));
+    expect(rows.find((r) => r.id === "a")!.approval).toBeNull();
+    expect(capJobTotal(rows)).toEqual(capJobTotal(capJobRows(jobs, lines, benefits)));
+  });
+
+  it("the Approved tab lists approved jobs of either type; the others are unchanged", () => {
+    expect(capJobTabRows(rows, "approved").map((r) => r.id)).toEqual(["b"]);
+    expect(capJobTabRows(rows, "all").map((r) => r.id)).toEqual(["a", "b"]);
+    expect(capJobTabRows(rows, "nonbillable").map((r) => r.id)).toEqual(["a"]);
+    expect(capJobTabRows(rows, "intercompany").map((r) => r.id)).toEqual(["b"]);
+  });
+
+  it("parses the tab param, falling back to All", () => {
+    expect(capJobTab("approved")).toBe("approved");
+    expect(capJobTab("intercompany")).toBe("intercompany");
+    expect(capJobTab("equipment")).toBe("all");
+    expect(capJobTab(["approved"])).toBe("all");
+  });
+
+  it("only approvers and admins may approve", () => {
+    expect(["admin", "approver", "estimator", "viewer", null].map(canApproveCapJobs)).toEqual([
+      true, true, false, false, false,
+    ]);
   });
 });
