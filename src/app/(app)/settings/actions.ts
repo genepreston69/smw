@@ -11,6 +11,7 @@ const rulesSchema = z.object({
   budgetYear: SETTING_SCHEMAS.budget_year,
   benefitBaseAccounts: SETTING_SCHEMAS.benefit_base_accounts,
   intercompany: SETTING_SCHEMAS.intercompany_names,
+  ebitdaAddBacks: SETTING_SCHEMAS.ebitda_add_backs,
 });
 
 /**
@@ -40,6 +41,7 @@ export async function saveBusinessRules(
       { key: "budget_year", value: d.budgetYear },
       { key: "benefit_base_accounts", value: d.benefitBaseAccounts },
       { key: "intercompany_names", value: d.intercompany },
+      { key: "ebitda_add_backs", value: d.ebitdaAddBacks },
     ].map((row) => ({
       ...row,
       updated_at: new Date().toISOString(),
@@ -57,7 +59,8 @@ export async function saveBusinessRules(
     };
   }
 
-  // The rules reach nearly every page (job bucketing, budget, benefits).
+  // The rules reach nearly every page (job bucketing, budget, benefits,
+  // the Income Statement's EBITDA).
   revalidatePath("/", "layout");
   return { ok: true };
 }

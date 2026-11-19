@@ -8,7 +8,7 @@ import {
   buildCategoryStatement,
   clampMonth,
   defaultFrom,
-  ebitdaAddBackKind,
+  ebitdaAddBackMatcher,
   lastDayOfMonth,
   latestMonth,
   type CategoryStatement,
@@ -17,6 +17,7 @@ import {
   type StatementColDim,
 } from "@/lib/financials";
 import { NO_CLASS, sortClasses } from "@/lib/budget";
+import type { EbitdaAddBackRules } from "@/lib/appSettings";
 
 // Income Statement data loading shared by /financials/statement and its Excel
 // export (/api/export/statement), so the file always matches the screen.
@@ -92,6 +93,8 @@ export async function loadStatement(
   state: StatementState,
   /** Every connected company, in display order. */
   allRealms: string[],
+  /** Which accounts EBITDA adds back (settings.ebitdaAddBacks). */
+  ebitdaRules: EbitdaAddBackRules,
 ): Promise<LoadedStatement> {
   const { company, from, to, cols, cls } = state;
   const realms = company === "all" ? allRealms : [company];
@@ -155,7 +158,8 @@ export async function loadStatement(
   // companies under "All companies" — map name → category the same way,
   // first assigned category winning if realms ever disagree.
   // EBITDA add-backs are keyed the same way: an expense account counts when
-  // any company's copy of it is an add-back (ebitdaAddBackKind).
+  // any company's copy of it is an add-back under the admin's rule.
+  const addBackKind = ebitdaAddBackMatcher(ebitdaRules);
   const categoryByAccount = new Map<string, string>();
   const addBackByAccount = new Map<string, EbitdaKind>();
   for (const a of accountRows) {
@@ -163,7 +167,7 @@ export async function loadStatement(
     const key = a.fully_qualified_name ?? a.name;
     if (a.category && !categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
     if (a.classification === "Expense" && !addBackByAccount.has(key)) {
-      const kind = ebitdaAddBackKind({ name: key, subType: a.account_sub_type });
+      const kind = addBackKind({ name: key, subType: a.account_sub_type });
       if (kind) addBackByAccount.set(key, kind);
     }
   }

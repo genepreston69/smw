@@ -69,7 +69,7 @@ Postgres is the source of truth for everything that matters; the UI is a thin la
 
 ### Business rules: settings vs. code
 
-- **Settings** (`public.app_settings`, migration `0041`; edited by admins under Settings → Business rules): the budget year, the Cost of Benefits base accounts, and the sister-company list. `src/lib/appSettings.ts` owns the keys, shapes, validation and defaults (a setting with no row uses its default); `loadAppSettings` in `src/lib/appSettingsServer.ts` reads them. Code that depends on one takes it as an argument — never import a constant for these.
+- **Settings** (`public.app_settings`, migration `0041`; edited by admins under Settings → Business rules): the budget year, the Cost of Benefits base accounts, the sister-company list, and the Income Statement's EBITDA add-back accounts. `src/lib/appSettings.ts` owns the keys, shapes, validation and defaults (a setting with no row uses its default); `loadAppSettings` in `src/lib/appSettingsServer.ts` reads them. Code that depends on one takes it as an argument — never import a constant for these.
 - **Code on purpose** (`src/lib/businessRules.ts`): the import-window and freeze dates. Moving one hides or deletes imported history, so it stays a reviewed code change; the file explains each constraint and the tests check them.
 - A new rule the business will want to change on its own schedule belongs in settings: add a key and schema to `appSettings.ts`, a field to `BusinessRulesForm`, and thread it through as an argument.
 

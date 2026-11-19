@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
+import { DEFAULT_SETTINGS, type EbitdaAddBackRules } from "@/lib/appSettings";
 import {
   buildCategoryStatement,
   ebitdaAddBackKind,
+  ebitdaAddBackMatcher,
   type EbitdaKind,
   type PivotCell,
 } from "@/lib/financials";
@@ -32,6 +34,48 @@ describe("EBITDA add-back accounts (ebitdaAddBackKind)", () => {
     expect(ebitdaAddBackKind({ name: "Interesting Supplies", subType: null })).toBeNull();
     // A detail type that only looks like an object key is just unknown.
     expect(ebitdaAddBackKind({ name: "800 Rent", subType: "constructor" })).toBeNull();
+  });
+});
+
+describe("the admin's EBITDA rule (ebitdaAddBackMatcher)", () => {
+  const acct = (number: string) => [{ number, label: `${number} account` }];
+  const rules = (over: Partial<EbitdaAddBackRules>): EbitdaAddBackRules => ({
+    ...DEFAULT_SETTINGS.ebitdaAddBacks,
+    ...over,
+  });
+
+  it("by default is the automatic search alone", () => {
+    const match = ebitdaAddBackMatcher(DEFAULT_SETTINGS.ebitdaAddBacks);
+    expect(match({ name: "960 Interest Expense", subType: null })).toBe("interest");
+    expect(match({ name: "800 Rent", subType: null })).toBeNull();
+  });
+
+  it("adds back a listed account, and its sub-accounts, whatever it is called", () => {
+    const match = ebitdaAddBackMatcher(rules({ depreciation: acct("975") }));
+    expect(match({ name: "975 Equipment Writedown", subType: null })).toBe("depreciation");
+    expect(match({ name: "975 Equipment Writedown:976 Barges", subType: null })).toBe("depreciation");
+    // A listed number beats the detail type and the name.
+    const relabel = ebitdaAddBackMatcher(rules({ amortization: acct("980") }));
+    expect(relabel({ name: "980 Depreciation", subType: "Depreciation" })).toBe("amortization");
+  });
+
+  it("never adds back an excluded account, unless a sub-account is listed itself", () => {
+    const match = ebitdaAddBackMatcher(rules({ exclude: acct("965"), interest: acct("967") }));
+    expect(match({ name: "965 Interest & Bank Charges", subType: "InterestPaid" })).toBeNull();
+    expect(match({ name: "965 Interest & Bank Charges:966 Loan Interest", subType: null })).toBeNull();
+    expect(match({ name: "965 Interest & Bank Charges:967 Line of Credit", subType: null })).toBe("interest");
+  });
+
+  it("with the automatic search off, adds back only listed accounts", () => {
+    const match = ebitdaAddBackMatcher(rules({ automatic: false, interest: acct("960") }));
+    expect(match({ name: "960 Bank Loan", subType: null })).toBe("interest");
+    expect(match({ name: "980 Depreciation", subType: "Depreciation" })).toBeNull();
+  });
+
+  it("matches whole account numbers only", () => {
+    const match = ebitdaAddBackMatcher(rules({ automatic: false, interest: acct("96") }));
+    expect(match({ name: "960 Bank Loan", subType: null })).toBeNull();
+    expect(match({ name: "96 Bank Loan", subType: null })).toBe("interest");
   });
 });
 
