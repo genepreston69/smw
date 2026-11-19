@@ -1,5 +1,5 @@
 /* ---------------------------------------------------------------------------
-   Already Capitalized (/capitalized-labor/already-capitalized): the schedule
+   Already Capitalized (/capitalized-jobs/already-capitalized): the schedule
    of journal entries that moved direct labor to an asset account. Which
    entries and lines count is decided in SQL by capitalized_labor_entries
    (migration 0032): an entry that debits a Fixed Asset / Other Asset account
@@ -183,7 +183,7 @@ export function assembleCapSchedule(lines: CapEntryLine[]): CapSchedule {
 
 /* ---------------------------------------------------------------------------
    Period. The schedule takes the same year / month / range selection as the
-   Capitalized Labor dashboard (capLaborPeriod in src/lib/capitalizedLabor.ts),
+   Capitalized Jobs page (capLaborPeriod in src/lib/capitalizedLabor.ts),
    back to Jan 2023 — the start of the imported ledger (frozen audited
    history, migration 0020).
 --------------------------------------------------------------------------- */

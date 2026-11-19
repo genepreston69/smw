@@ -15,7 +15,7 @@ import { shortDate } from "@/lib/format";
 import { throwIfError } from "@/lib/supabase/throwIfError";
 
 // Excel workbook for the Already Capitalized schedule
-// (/capitalized-labor/already-capitalized): By Asset Account, By Month,
+// (/capitalized-jobs/already-capitalized): By Asset Account, By Month,
 // Journal Entries, and every line of those entries, for the period on screen
 // (the page's year / month / from-to params). Same loader (loadCapSchedule)
 // and assembly as the page, so the file matches it.

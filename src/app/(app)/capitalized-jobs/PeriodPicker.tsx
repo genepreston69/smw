@@ -12,7 +12,7 @@ import {
 } from "@/lib/capitalizedLabor";
 
 /**
- * Period filter shared by both Capitalized Labor pages: a pill per calendar
+ * Period filter shared by Capitalized Jobs and Already Capitalized: a pill per calendar
  * year, one month (stepping back and forth), or a from/to month range. Plain
  * links and GET forms — the URL is the state and capLaborPeriod parses it,
  * so the page, its drill-down, and its exports all see the same window.

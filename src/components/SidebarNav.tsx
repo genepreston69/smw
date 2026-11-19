@@ -12,7 +12,6 @@ import {
   Wrench,
   HardHat,
   Archive,
-  Package,
   Landmark,
   Percent,
   BookOpen,
@@ -62,22 +61,16 @@ const SECTIONS: NavSection[] = [
     items: [{ href: "/jobs", label: "Jobs", icon: Wrench }],
   },
   {
-    label: "Capitalized Labor",
+    label: "Capitalized Jobs",
     icon: HardHat,
     items: [
-      { href: "/capitalized-labor", label: "Capitalized Labor", icon: HardHat },
+      { href: "/capitalized-jobs", label: "Capitalized Jobs", icon: HardHat },
       {
         // Built from the general ledger, so admin-only like Financials.
-        href: "/capitalized-labor/already-capitalized",
+        href: "/capitalized-jobs/already-capitalized",
         label: "Already Capitalized",
         icon: Archive,
         adminOnly: true,
-      },
-      {
-        // Everything expensed on non-billable jobs, every QB company.
-        href: "/capitalized-materials",
-        label: "Capitalized Materials",
-        icon: Package,
       },
     ],
   },

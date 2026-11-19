@@ -4,7 +4,7 @@ import { localClock } from "@/lib/qbSyncSchedule";
 
 const now = new Date("2026-11-17T15:00:00Z");
 
-describe("Capitalized Labor period (capLaborPeriod)", () => {
+describe("Capitalized Jobs period (capLaborPeriod)", () => {
   it("defaults to the current year to date", () => {
     const w = capLaborPeriod({}, now);
     expect([w.from, w.to]).toEqual(["2026-01-01", "2026-11-17"]);

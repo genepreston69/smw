@@ -55,7 +55,7 @@ describe("Jobs dashboard views (jobViews.ts)", () => {
   });
 });
 
-describe("Capitalized Labor candidates (capLaborBucket)", () => {
+describe("Capitalized Jobs candidates (capLaborBucket)", () => {
   it("buckets like the Jobs dashboard, minus the recency test", () => {
     expect(capLaborBucket({ name: "EQP-12" }, rules)).toBe("nonbillable");
     expect(capLaborBucket({ name: "24-1", customerDisplayName: "SMW" }, rules)).toBe("intercompany");

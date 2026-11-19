@@ -488,8 +488,9 @@ function isCapitalAssetAccount(account: QboAccount | undefined): boolean {
 // The account a bill / purchase line posts to: an account-based line names
 // it; an item-based line posts to its item's purchase account — the inventory
 // asset for a stock item, the expense account otherwise. Capitalized
-// Materials (cap_material_lines, migration 0036) counts only lines that
-// reached an expense account.
+// Jobs (cap_job_lines, migration 0044) puts a line in its Direct Cost
+// column by this account, and counts only lines that reached an expense
+// account.
 function expenseLineAccountId(
   line: QboExpenseLine,
   itemById: Map<string, QboItem>,
@@ -885,8 +886,8 @@ export async function syncJobCosts(): Promise<{
         `SELECT * FROM JournalEntry ${since}`,
       ),
       // The chart of accounts, so journal and bill / purchase lines carry
-      // their account's classification (Capitalized Labor and Capitalized
-      // Materials count only expense-side lines) and capitalization entries
+      // their account's classification (Capitalized Jobs counts only
+      // expense-side lines) and capitalization entries
       // can be told apart.
       await qboQuery<QboAccount>(
         accessToken,
@@ -934,8 +935,8 @@ export async function syncJobCosts(): Promise<{
     // customer-type entities can be jobs — vendor/employee refs share the
     // same id space and must not match. Each line also records its account's
     // classification and whether its entry capitalizes — debits a capital
-    // asset on any line, tagged or not — for the Capitalized Labor rule
-    // (cap_labor_lines, migration 0030).
+    // asset on any line, tagged or not — for the Capitalized Jobs rule
+    // (cap_job_lines, migration 0044).
     const journalRows = [];
     for (const je of journalEntries) {
       const debitsAsset = (je.Line ?? []).some(

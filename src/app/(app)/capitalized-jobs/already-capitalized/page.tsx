@@ -30,7 +30,7 @@ import { EntryRows } from "./EntryRows";
 import { PeriodPicker } from "../PeriodPicker";
 import { throwIfError } from "@/lib/supabase/throwIfError";
 
-const PATH = "/capitalized-labor/already-capitalized";
+const PATH = "/capitalized-jobs/already-capitalized";
 
 // Schedule of direct labor already moved to asset accounts: every journal
 // entry that debits a Fixed Asset / Other Asset account and credits labor
@@ -271,8 +271,8 @@ export default async function AlreadyCapitalizedPage({
           <div>
             <h3 className="mb-1 font-semibold text-ink-900">2. What counts as labor</h3>
             <p>
-              The same accounts as the Capitalized Labor dashboard: expense
-              accounts for wages (labor, payroll, wages, salaries) and the
+              The payroll accounts the Capitalized Jobs page counts as labor:
+              expense accounts for wages (labor, payroll, wages, salaries) and the
               employer&rsquo;s share of payroll taxes (FICA, Medicare, FUTA,
               SUTA, unemployment). Withholdings and other payroll liabilities
               never count; payroll service fees are excluded.{" "}
@@ -296,11 +296,12 @@ export default async function AlreadyCapitalizedPage({
               4. How this relates to the dashboard
             </h3>
             <p>
-              The Capitalized Labor dashboard&rsquo;s{" "}
-              <em>Already capitalized</em> column counts only labor credits
-              tagged to a non-billable or intercompany job. This schedule reads
-              the whole ledger, so it also includes credits with no job tag or
-              tagged to other jobs. Both pages take the same period — a year, a
+              The Capitalized Jobs page&rsquo;s{" "}
+              <em>Already capitalized</em> column counts the credits tagged to
+              a non-billable or intercompany job, on any Direct Cost account.
+              This schedule totals labor only but reads the whole ledger, so
+              it also includes labor credits with no job tag or tagged to
+              other jobs. Both pages take the same period — a year, a
               month, or a range of months back to January 2023. Each line
               traces to its journal number in QuickBooks.
             </p>
