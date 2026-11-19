@@ -156,6 +156,7 @@ export function StatementTable({
     statement.income,
     statement.directCosts,
     statement.expenses,
+    ...(statement.ebitda ? [statement.ebitda.addBacks] : []),
   ].filter((s) => s.groups.length > 0);
   const allKeys = sections.flatMap((s) =>
     s.groups.map((g) => `${s.label}|${g.label}`),
@@ -246,7 +247,15 @@ export function StatementTable({
     );
   };
 
-  const sectionRows = (section: StatementSection) => {
+  // The closing row is "Total <section>" unless the caller names another
+  // figure (the add-back section closes on EBITDA, not on its own sum).
+  const sectionRows = (
+    section: StatementSection,
+    closing: { label: string; totals: StatementTotals } = {
+      label: `Total ${section.label.toLowerCase()}`,
+      totals: section,
+    },
+  ) => {
     const colSpan = 1 + 2 * statement.colKeys.length + (showRowTotal ? 2 : 0);
     return (
       <Fragment key={section.label}>
@@ -261,18 +270,22 @@ export function StatementTable({
         {section.groups.map((group) => {
           const key = `${section.label}|${group.label}`;
           const isOpen = expanded.has(key);
+          // An EBITDA add-back can have no accounts; nothing to expand.
+          const expandable = group.rows.length > 0;
           return (
             <Fragment key={key}>
               <tr
-                onClick={() => toggle(key)}
-                className="cursor-pointer select-none hover:bg-surface/50"
+                onClick={expandable ? () => toggle(key) : undefined}
+                className={
+                  expandable ? "cursor-pointer select-none hover:bg-surface/50" : ""
+                }
               >
                 <td className="px-4 py-2 font-medium text-ink-900">
                   <span className="flex items-center gap-1.5">
                     <ChevronRight
                       size={14}
                       strokeWidth={2}
-                      className={`shrink-0 text-ink-400 transition-transform ${isOpen ? "rotate-90" : ""}`}
+                      className={`shrink-0 text-ink-400 transition-transform ${isOpen ? "rotate-90" : ""} ${expandable ? "" : "invisible"}`}
                     />
                     {group.label}
                     <span className="text-xs font-normal text-ink-400">
@@ -296,9 +309,9 @@ export function StatementTable({
         })}
         <tr className="bg-surface">
           <td className="px-4 py-2 font-semibold text-ink-900">
-            Total {section.label.toLowerCase()}
+            {closing.label}
           </td>
-          {totalCells(section, true)}
+          {totalCells(closing.totals, true)}
         </tr>
       </Fragment>
     );
@@ -357,6 +370,11 @@ export function StatementTable({
           <td className="px-4 py-2 font-semibold text-ink-900">Net income</td>
           {totalCells(statement.netIncome, true)}
         </tr>
+        {statement.ebitda &&
+          sectionRows(statement.ebitda.addBacks, {
+            label: "EBITDA",
+            totals: statement.ebitda.total,
+          })}
       </Table>
     </div>
   );

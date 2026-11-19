@@ -8,9 +8,11 @@ import {
   buildCategoryStatement,
   clampMonth,
   defaultFrom,
+  ebitdaAddBackKind,
   lastDayOfMonth,
   latestMonth,
   type CategoryStatement,
+  type EbitdaKind,
   type PivotCell,
   type StatementColDim,
 } from "@/lib/financials";
@@ -94,7 +96,11 @@ export async function loadStatement(
   const { company, from, to, cols, cls } = state;
   const realms = company === "all" ? allRealms : [company];
   if (realms.length === 0) {
-    return { statement: buildCategoryStatement([], new Map()), classes: [], cellCount: 0 };
+    return {
+      statement: buildCategoryStatement([], new Map(), new Map()),
+      classes: [],
+      cellCount: 0,
+    };
   }
 
   const [summaryRes, accountRows] = await Promise.all([
@@ -107,7 +113,7 @@ export async function loadStatement(
     fetchAllRows((fromRow, toRow) =>
       db
         .from("gl_accounts")
-        .select("realm_id, name, fully_qualified_name, category")
+        .select("realm_id, name, fully_qualified_name, classification, account_sub_type, category")
         .in("classification", ["Revenue", "Expense"])
         .order("id")
         .range(fromRow, toRow),
@@ -116,6 +122,8 @@ export async function loadStatement(
         realm_id: string;
         name: string;
         fully_qualified_name: string | null;
+        classification: string;
+        account_sub_type: string | null;
         category: string | null;
       }[]
     >,
@@ -146,16 +154,22 @@ export async function loadStatement(
   // The ledger's account key is the account's full name, merged across
   // companies under "All companies" — map name → category the same way,
   // first assigned category winning if realms ever disagree.
+  // EBITDA add-backs are keyed the same way: an expense account counts when
+  // any company's copy of it is an add-back (ebitdaAddBackKind).
   const categoryByAccount = new Map<string, string>();
+  const addBackByAccount = new Map<string, EbitdaKind>();
   for (const a of accountRows) {
-    if (!a.category) continue;
     if (company !== "all" && a.realm_id !== company) continue;
     const key = a.fully_qualified_name ?? a.name;
-    if (!categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
+    if (a.category && !categoryByAccount.has(key)) categoryByAccount.set(key, a.category);
+    if (a.classification === "Expense" && !addBackByAccount.has(key)) {
+      const kind = ebitdaAddBackKind({ name: key, subType: a.account_sub_type });
+      if (kind) addBackByAccount.set(key, kind);
+    }
   }
 
   return {
-    statement: buildCategoryStatement(cells, categoryByAccount),
+    statement: buildCategoryStatement(cells, categoryByAccount, addBackByAccount),
     classes: sortClasses(classSet),
     cellCount: cells.length,
   };

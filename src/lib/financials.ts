@@ -485,6 +485,66 @@ export function isDirectCostCategory(label: string): boolean {
   return DIRECT_COST_CATEGORIES.has(normalizeLabel(label));
 }
 
+/* ---------------------------------------------------------------------------
+   EBITDA: Net income with interest, income taxes, depreciation and
+   amortization added back. An expense account is an add-back when its
+   QuickBooks detail type (AccountSubType, synced into
+   gl_accounts.account_sub_type) says so, or — for accounts set up with a
+   generic detail type — when its name does. Only Expense-classified accounts
+   qualify, so interest income and accumulated depreciation never count.
+   QuickBooks' "Taxes Paid" detail type is deliberately absent: payroll,
+   property and sales taxes are operating costs, and only income taxes are
+   added back.
+--------------------------------------------------------------------------- */
+
+export type EbitdaKind = "interest" | "taxes" | "depreciation" | "amortization";
+
+/** The add-back lines below Net income, in EBITDA order. */
+export const EBITDA_ADD_BACKS: { kind: EbitdaKind; label: string }[] = [
+  { kind: "interest", label: "Interest" },
+  { kind: "taxes", label: "Income taxes" },
+  { kind: "depreciation", label: "Depreciation" },
+  { kind: "amortization", label: "Amortization" },
+];
+
+const EBITDA_SUB_TYPES = new Map<string, EbitdaKind>([
+  ["InterestPaid", "interest"],
+  ["FinanceCosts", "interest"],
+  ["BorrowingCost", "interest"],
+  ["MortgageInterest", "interest"],
+  ["VehicleLoanInterest", "interest"],
+  ["IncomeTaxExpense", "taxes"],
+  ["IncomeTaxOtherExpense", "taxes"],
+  ["DeferredTaxExpense", "taxes"],
+  ["Depreciation", "depreciation"],
+  ["Amortization", "amortization"],
+  ["AmortizationExpense", "amortization"],
+]);
+
+// Checked in order, so "Depreciation & Amortization" counts as depreciation.
+const EBITDA_NAME_PATTERNS: [RegExp, EbitdaKind][] = [
+  [/\bdepreciation\b/i, "depreciation"],
+  [/\bamorti[sz]ation\b/i, "amortization"],
+  [/\binterest\b/i, "interest"],
+  [/\bincome tax(es)?\b/i, "taxes"],
+];
+
+/** Which EBITDA add-back an Expense account is, or null when it is none.
+    The detail type wins; the name decides only when the detail type doesn't. */
+export function ebitdaAddBackKind(account: {
+  /** Account full name. */
+  name: string;
+  /** QuickBooks AccountSubType (gl_accounts.account_sub_type). */
+  subType: string | null;
+}): EbitdaKind | null {
+  const bySubType = account.subType ? EBITDA_SUB_TYPES.get(account.subType) : undefined;
+  if (bySubType) return bySubType;
+  for (const [pattern, kind] of EBITDA_NAME_PATTERNS) {
+    if (pattern.test(account.name)) return kind;
+  }
+  return null;
+}
+
 export interface StatementTotals {
   cells: Record<string, number>;
   total: number;
@@ -518,11 +578,25 @@ export interface CategoryStatement {
   expenses: StatementSection;
   /** income − directCosts − expenses, per column and overall. */
   netIncome: StatementTotals;
+  /** The EBITDA bridge below Net income; null when the caller passed no
+      add-back accounts (the Budget page). */
+  ebitda: EbitdaBridge | null;
+}
+
+export interface EbitdaBridge {
+  /** One group per EBITDA_ADD_BACKS kind, always all four and in that order;
+      each lists its expense accounts (none = nothing added back). */
+  addBacks: StatementSection;
+  /** netIncome + addBacks. */
+  total: StatementTotals;
 }
 
 export function buildCategoryStatement(
   cells: PivotCell[],
   categoryByAccount: ReadonlyMap<string, string>,
+  /** Expense account → its EBITDA add-back (see ebitdaAddBackKind). Omit to
+      leave EBITDA off the statement. */
+  addBackByAccount?: ReadonlyMap<string, EbitdaKind>,
 ): CategoryStatement {
   const colKeys = [...new Set(cells.map((c) => c.col_key))].sort();
 
@@ -578,12 +652,17 @@ export function buildCategoryStatement(
   const section = (label: string, groups: StatementGroup[]): StatementSection =>
     ({ label, groups, ...sum(groups) });
 
-  const subtract = (a: StatementTotals, b: StatementTotals): StatementTotals => ({
+  const combine = (
+    a: StatementTotals,
+    b: StatementTotals,
+    sign: 1 | -1,
+  ): StatementTotals => ({
     cells: Object.fromEntries(
-      colKeys.map((k) => [k, (a.cells[k] ?? 0) - (b.cells[k] ?? 0)]),
+      colKeys.map((k) => [k, (a.cells[k] ?? 0) + sign * (b.cells[k] ?? 0)]),
     ),
-    total: a.total - b.total,
+    total: a.total + sign * b.total,
   });
+  const subtract = (a: StatementTotals, b: StatementTotals) => combine(a, b, -1);
 
   const expenseGroups = buildGroups("Expense");
   const directGroups = expenseGroups.filter((g) => isDirectCostCategory(g.label));
@@ -598,7 +677,25 @@ export function buildCategoryStatement(
   const grossProfit =
     directCosts.groups.length > 0 ? subtract(income, directCosts) : null;
   const netIncome = subtract(subtract(income, directCosts), expenses);
-  return { colKeys, income, directCosts, grossProfit, expenses, netIncome };
+
+  // EBITDA adds the add-back accounts' own natural-signed expense back to
+  // net income: the same line objects as in their categories, so every
+  // add-back ties to the account's row above.
+  let ebitda: EbitdaBridge | null = null;
+  if (addBackByAccount) {
+    const expenseLines = expenseGroups.flatMap((g) => g.rows);
+    const addBacks = section(
+      "Add back",
+      EBITDA_ADD_BACKS.map(({ kind, label }): StatementGroup => {
+        const rows = expenseLines
+          .filter((r) => addBackByAccount.get(r.key) === kind)
+          .sort((a, b) => b.total - a.total);
+        return { label, rows, ...sum(rows) };
+      }),
+    );
+    ebitda = { addBacks, total: combine(netIncome, addBacks, 1) };
+  }
+  return { colKeys, income, directCosts, grossProfit, expenses, netIncome, ebitda };
 }
 
 /** Validate raw search params into a FinancialsState (bad values → defaults). */
