@@ -120,7 +120,15 @@ export async function GET(request: Request) {
     ...(showRowTotal ? withPct(t.total, null) : []),
   ];
 
-  const writeSection = (section: StatementSection) => {
+  // Closes on "Total <section>" unless told otherwise — the add-back section
+  // closes on EBITDA, as on screen.
+  const writeSection = (
+    section: StatementSection,
+    closing: { label: string; totals: StatementTotals } = {
+      label: `Total ${section.label.toLowerCase()}`,
+      totals: section,
+    },
+  ) => {
     sheet.addRow([section.label]).font = { bold: true };
     for (const group of section.groups) {
       sheet.addRow([group.label, ...totalsCells(group)]);
@@ -132,10 +140,7 @@ export async function GET(request: Request) {
         row.getCell(1).alignment = { indent: 2 };
       }
     }
-    const totalRow = sheet.addRow([
-      `Total ${section.label.toLowerCase()}`,
-      ...totalsCells(section),
-    ]);
+    const totalRow = sheet.addRow([closing.label, ...totalsCells(closing.totals)]);
     totalRow.font = { bold: true };
   };
 
@@ -150,6 +155,12 @@ export async function GET(request: Request) {
   sheet.addRow(["Net income", ...totalsCells(statement.netIncome)]).font = {
     bold: true,
   };
+  if (statement.ebitda) {
+    writeSection(statement.ebitda.addBacks, {
+      label: "EBITDA",
+      totals: statement.ebitda.total,
+    });
+  }
 
   const buffer = await workbook.xlsx.writeBuffer();
   const classSlug =

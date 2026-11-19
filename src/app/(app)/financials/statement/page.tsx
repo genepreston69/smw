@@ -245,7 +245,13 @@ export default async function IncomeStatementPage({
 
       {statement && hasData && (
         <div
-          className={`mb-4 grid gap-4 sm:grid-cols-2 ${statement.grossProfit ? "xl:grid-cols-4" : "xl:grid-cols-3"}`}
+          className={`mb-4 grid gap-4 sm:grid-cols-2 ${
+            [
+              "xl:grid-cols-3",
+              "xl:grid-cols-4",
+              "xl:grid-cols-5",
+            ][(statement.grossProfit ? 1 : 0) + (statement.ebitda ? 1 : 0)]
+          }`}
         >
           <StatTile
             label="Income"
@@ -269,6 +275,13 @@ export default async function IncomeStatementPage({
             value={moneyWhole(statement.netIncome.total)}
             hint="Income less all expenses"
           />
+          {statement.ebitda && (
+            <StatTile
+              label="EBITDA"
+              value={moneyWhole(statement.ebitda.total.total)}
+              hint="Net income plus interest, taxes, D&A"
+            />
+          )}
         </div>
       )}
 
@@ -304,7 +317,12 @@ export default async function IncomeStatementPage({
         allocations between categories and no intercompany eliminations, so
         amounts are the same natural-signed ledger activity as the Financials
         pivot and QuickBooks, and Net income matches both for the same
-        filters. The Class dropdown shows one QuickBooks class at a time;
+        filters. EBITDA, below Net income, adds back every expense account
+        that is interest, income tax, depreciation or amortization: by its
+        QuickBooks detail type (shown on the Chart of Accounts), or by its
+        name when the detail type is a generic one. Expand an add-back to see
+        its accounts. Payroll, property and sales taxes are operating costs
+        and are not added back. The Class dropdown shows one QuickBooks class at a time;
         lines with no class are under &ldquo;No class assigned&rdquo;, and All
         classes is simply every class added together, so the class statements
         always sum to it. The % column after each amount is the common-size view: the
