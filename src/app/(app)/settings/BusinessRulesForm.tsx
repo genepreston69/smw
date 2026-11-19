@@ -3,7 +3,7 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { buttonCls } from "@/components/ui";
-import type { AppSettings } from "@/lib/appSettings";
+import type { AppSettings, NumberedAccount } from "@/lib/appSettings";
 import { saveBusinessRules } from "./actions";
 
 // Admin editor for the business rules that used to be constants in the code
@@ -14,6 +14,31 @@ const lines = (text: string) =>
     .split("\n")
     .map((l) => l.trim())
     .filter(Boolean);
+
+/** "710 Labor Cost" lines → numbered accounts, or the first line that
+    doesn't start with an account number. */
+const parseNumbered = (
+  text: string,
+): { accounts: NumberedAccount[] } | { bad: string } => {
+  const accounts: NumberedAccount[] = [];
+  for (const label of lines(text)) {
+    const number = /^\d+/.exec(label)?.[0];
+    if (!number) return { bad: label };
+    accounts.push({ number, label });
+  }
+  return { accounts };
+};
+
+// The EBITDA lists, in the order they appear on the Income Statement, then
+// the exclusions.
+const EBITDA_FIELDS = [
+  { key: "interest", label: "Interest" },
+  { key: "taxes", label: "Income taxes" },
+  { key: "depreciation", label: "Depreciation" },
+  { key: "amortization", label: "Amortization" },
+  { key: "exclude", label: "Never add back" },
+] as const;
+type EbitdaListKey = (typeof EBITDA_FIELDS)[number]["key"];
 
 const fieldCls =
   "w-full rounded-md border border-line bg-white px-3 py-1.5 text-sm text-ink-900";
@@ -29,28 +54,59 @@ export function BusinessRulesForm({ settings }: { settings: AppSettings }) {
   );
   const [phrases, setPhrases] = useState(settings.intercompany.phrases.join("\n"));
   const [acronyms, setAcronyms] = useState(settings.intercompany.acronyms.join("\n"));
+  const [ebitdaAuto, setEbitdaAuto] = useState(settings.ebitdaAddBacks.automatic);
+  const [ebitdaLists, setEbitdaLists] = useState(
+    () =>
+      Object.fromEntries(
+        EBITDA_FIELDS.map((f) => [
+          f.key,
+          settings.ebitdaAddBacks[f.key].map((a) => a.label).join("\n"),
+        ]),
+      ) as Record<EbitdaListKey, string>,
+  );
   const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
 
   function save() {
     setMessage(null);
     // Each account line starts with its number: "710 Labor Cost".
-    const parsedAccounts: { number: string; label: string }[] = [];
-    for (const label of lines(accounts)) {
-      const number = /^\d+/.exec(label)?.[0];
-      if (!number) {
+    const benefit = parseNumbered(accounts);
+    if ("bad" in benefit) {
+      setMessage({
+        ok: false,
+        text: `"${benefit.bad}" must start with the account number, like "710 Labor Cost".`,
+      });
+      return;
+    }
+    const ebitda = {} as Record<EbitdaListKey, NumberedAccount[]>;
+    const listOf = new Map<string, string>();
+    for (const f of EBITDA_FIELDS) {
+      const parsed = parseNumbered(ebitdaLists[f.key]);
+      if ("bad" in parsed) {
         setMessage({
           ok: false,
-          text: `"${label}" must start with the account number, like "710 Labor Cost".`,
+          text: `EBITDA ${f.label}: "${parsed.bad}" must start with the account number, like "960 Interest Expense".`,
         });
         return;
       }
-      parsedAccounts.push({ number, label });
+      for (const a of parsed.accounts) {
+        const other = listOf.get(a.number);
+        if (other) {
+          setMessage({
+            ok: false,
+            text: `Account ${a.number} is under both ${other} and ${f.label}. An account can be in only one EBITDA list.`,
+          });
+          return;
+        }
+        listOf.set(a.number, f.label);
+      }
+      ebitda[f.key] = parsed.accounts;
     }
     startTransition(async () => {
       const result = await saveBusinessRules({
         budgetYear: Number(budgetYear),
-        benefitBaseAccounts: parsedAccounts,
+        benefitBaseAccounts: benefit.accounts,
         intercompany: { phrases: lines(phrases), acronyms: lines(acronyms) },
+        ebitdaAddBacks: { automatic: ebitdaAuto, ...ebitda },
       });
       if (result.ok) {
         setMessage({ ok: true, text: "Saved. Every page now uses these rules." });
@@ -134,6 +190,58 @@ export function BusinessRulesForm({ settings }: { settings: AppSettings }) {
           </p>
         </div>
       </div>
+
+      <fieldset>
+        <legend className={labelCls}>Income Statement: EBITDA add-backs</legend>
+        <label className="flex items-start gap-2 text-sm text-ink-900">
+          <input
+            type="checkbox"
+            checked={ebitdaAuto}
+            onChange={(e) => setEbitdaAuto(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            Find add-backs automatically
+            <span className="block text-xs text-ink-600">
+              An expense account counts when its QuickBooks detail type is
+              Interest Paid, Income Tax Expense, Depreciation or Amortization,
+              or, when the detail type is a generic one, when its name says
+              interest, income tax, depreciation or amortization. Payroll,
+              property and sales taxes (detail type Taxes Paid) are never
+              picked.
+            </span>
+          </span>
+        </label>
+        <div className="mt-3 grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
+          {EBITDA_FIELDS.map((f) => (
+            <div key={f.key}>
+              <label
+                htmlFor={`rule-ebitda-${f.key}`}
+                className="mb-1 block text-xs font-medium text-ink-900"
+              >
+                {f.label}
+              </label>
+              <textarea
+                id={`rule-ebitda-${f.key}`}
+                rows={3}
+                value={ebitdaLists[f.key]}
+                onChange={(e) =>
+                  setEbitdaLists((prev) => ({ ...prev, [f.key]: e.target.value }))
+                }
+                className={fieldCls}
+              />
+            </div>
+          ))}
+        </div>
+        <p className={hintCls}>
+          One per line, starting with the account number (for example
+          &ldquo;960 Interest Expense&rdquo;); sub-accounts count with their
+          parent. A listed account is always added back under its line, with
+          or without the automatic search, and &ldquo;Never add back&rdquo;
+          keeps an account the automatic search picked inside EBITDA. Expand
+          each add-back on the Income Statement to check its accounts.
+        </p>
+      </fieldset>
 
       <div className="flex flex-wrap items-center gap-3">
         <button onClick={save} disabled={pending} className={buttonCls("primary")}>

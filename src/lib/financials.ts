@@ -4,6 +4,8 @@
 // (migrations 0009 / 0010) — the database does the grouping and filtering,
 // these are just the vocabulary.
 
+import type { EbitdaAddBackRules } from "@/lib/appSettings";
+
 export type RowDim =
   | "account"
   | "class"
@@ -543,6 +545,32 @@ export function ebitdaAddBackKind(account: {
     if (pattern.test(account.name)) return kind;
   }
   return null;
+}
+
+/** The admin's EBITDA rule (Settings → Business rules) as a classifier for
+    Expense accounts. An account number listed there decides first —
+    checking the account's own number, then each parent's up its
+    "Parent:Sub" path, so a sub-account's own listing beats its parent's and
+    an unlisted sub-account follows its parent. Only when nothing in the path
+    is listed does the automatic search (ebitdaAddBackKind) apply, and only
+    when it is switched on. */
+export function ebitdaAddBackMatcher(
+  rules: EbitdaAddBackRules,
+): (account: { name: string; subType: string | null }) => EbitdaKind | null {
+  const listed = new Map<string, EbitdaKind | "exclude">();
+  for (const { kind } of EBITDA_ADD_BACKS) {
+    for (const a of rules[kind]) listed.set(a.number, kind);
+  }
+  for (const a of rules.exclude) listed.set(a.number, "exclude");
+
+  return (account) => {
+    for (const segment of account.name.split(":").reverse()) {
+      const number = /^\s*(\d+)(?!\d)/.exec(segment)?.[1];
+      const hit = number === undefined ? undefined : listed.get(number);
+      if (hit) return hit === "exclude" ? null : hit;
+    }
+    return rules.automatic ? ebitdaAddBackKind(account) : null;
+  };
 }
 
 export interface StatementTotals {

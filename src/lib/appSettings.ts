@@ -25,12 +25,35 @@ export interface IntercompanyRules {
   acronyms: string[];
 }
 
+/** An account matched by its leading number, as typed ("960 Interest Expense"). */
+export interface NumberedAccount {
+  /** Leading account number, e.g. "960". Sub-accounts count with it. */
+  number: string;
+  /** The line as the admin typed it. */
+  label: string;
+}
+
+/** Which expense accounts the Income Statement adds back to Net income for
+    EBITDA. A listed account wins over the automatic search; see
+    ebitdaAddBackMatcher in financials.ts. */
+export interface EbitdaAddBackRules {
+  /** Also pick add-backs by QuickBooks detail type and account name. */
+  automatic: boolean;
+  interest: NumberedAccount[];
+  taxes: NumberedAccount[];
+  depreciation: NumberedAccount[];
+  amortization: NumberedAccount[];
+  /** Never added back, even when the automatic search would pick them. */
+  exclude: NumberedAccount[];
+}
+
 export interface AppSettings {
   /** The calendar year the Budget page builds. */
   budgetYear: number;
   /** Cost of Benefits: benefit rate = Employee Benefits ÷ the sum of these. */
   benefitBaseAccounts: BenefitBaseAccount[];
   intercompany: IntercompanyRules;
+  ebitdaAddBacks: EbitdaAddBackRules;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -44,11 +67,21 @@ export const DEFAULT_SETTINGS: AppSettings = {
     phrases: ["precision paint", "superior marine", "inland river dredging"],
     acronyms: ["smw", "irdc"],
   },
+  ebitdaAddBacks: {
+    automatic: true,
+    interest: [],
+    taxes: [],
+    depreciation: [],
+    amortization: [],
+    exclude: [],
+  },
 };
 
 const name = z.string().trim().min(1).max(80);
 const lower = name.transform((s) => s.toLowerCase());
 const distinct = (keys: string[]) => new Set(keys).size === keys.length;
+const numbered = z.object({ number: z.string().regex(/^\d{1,8}$/), label: name });
+const ebitdaList = z.array(numbered).max(50);
 
 /** Validation per setting; also what the Settings form's action enforces. */
 export const SETTING_SCHEMAS = {
@@ -66,6 +99,24 @@ export const SETTING_SCHEMAS = {
       .max(50)
       .refine(distinct, "Duplicate acronym"),
   }),
+  ebitda_add_backs: z
+    .object({
+      automatic: z.boolean(),
+      interest: ebitdaList,
+      taxes: ebitdaList,
+      depreciation: ebitdaList,
+      amortization: ebitdaList,
+      exclude: ebitdaList,
+    })
+    .refine(
+      (r) =>
+        distinct(
+          [r.interest, r.taxes, r.depreciation, r.amortization, r.exclude]
+            .flat()
+            .map((a) => a.number),
+        ),
+      "An account number can be in only one EBITDA list",
+    ),
 } as const;
 
 export type SettingKey = keyof typeof SETTING_SCHEMAS;
@@ -87,5 +138,6 @@ export function settingsFromRows(
       DEFAULT_SETTINGS.benefitBaseAccounts,
     ),
     intercompany: read("intercompany_names", DEFAULT_SETTINGS.intercompany),
+    ebitdaAddBacks: read("ebitda_add_backs", DEFAULT_SETTINGS.ebitdaAddBacks),
   };
 }

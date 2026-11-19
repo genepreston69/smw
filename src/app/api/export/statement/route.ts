@@ -11,6 +11,7 @@ import {
 import { NO_CLASS } from "@/lib/budget";
 import { loadStatement, statementState } from "@/lib/statementServer";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // Excel export of the category income statement: same query params as
 // /financials/statement (including the Class dropdown), same loadStatement
@@ -57,7 +58,13 @@ export async function GET(request: Request) {
   const sp = new URL(request.url).searchParams;
   const state = statementState((k) => sp.get(k), new Set(companyByRealm.keys()));
   const { company, from, to, cols: colDim, cls } = state;
-  const { statement } = await loadStatement(db, state, [...companyByRealm.keys()]);
+  const { ebitdaAddBacks } = await loadAppSettings(db);
+  const { statement } = await loadStatement(
+    db,
+    state,
+    [...companyByRealm.keys()],
+    ebitdaAddBacks,
+  );
   const classLabel =
     cls === null ? "All classes" : cls === NO_CLASS ? "No class assigned" : `Class: ${cls}`;
 

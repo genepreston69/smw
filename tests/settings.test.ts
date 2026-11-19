@@ -10,6 +10,18 @@ describe("business rule settings (appSettings.ts)", () => {
     expect(SETTING_SCHEMAS.budget_year.safeParse(DEFAULT_SETTINGS.budgetYear).success).toBe(true);
     expect(SETTING_SCHEMAS.benefit_base_accounts.safeParse(DEFAULT_SETTINGS.benefitBaseAccounts).success).toBe(true);
     expect(SETTING_SCHEMAS.intercompany_names.safeParse(DEFAULT_SETTINGS.intercompany).success).toBe(true);
+    expect(SETTING_SCHEMAS.ebitda_add_backs.safeParse(DEFAULT_SETTINGS.ebitdaAddBacks).success).toBe(true);
+  });
+
+  it("keeps an account number in only one EBITDA list", () => {
+    const interest = [{ number: "960", label: "960 Interest Expense" }];
+    const ok = { ...DEFAULT_SETTINGS.ebitdaAddBacks, interest };
+    expect(SETTING_SCHEMAS.ebitda_add_backs.safeParse(ok).success).toBe(true);
+    expect(SETTING_SCHEMAS.ebitda_add_backs.safeParse({ ...ok, exclude: interest }).success).toBe(false);
+    expect(
+      SETTING_SCHEMAS.ebitda_add_backs.safeParse({ ...ok, depreciation: [{ number: "960", label: "960 Other" }] })
+        .success,
+    ).toBe(false);
   });
 
   it("reads stored values and lower-cases the sister-company list", () => {

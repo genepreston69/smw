@@ -29,6 +29,7 @@ import {
 import { StatementTable } from "./StatementTable";
 import { ClassSelect } from "./ClassSelect";
 import { throwIfError } from "@/lib/supabase/throwIfError";
+import { loadAppSettings } from "@/lib/appSettingsServer";
 
 // Expandable income statement grouped by the Category assigned to each
 // account on the Chart of Accounts page. Same ledger slice as the Financials
@@ -91,10 +92,12 @@ export default async function IncomeStatementPage({
   let loaded: LoadedStatement | null = null;
   let loadError: string | null = null;
   try {
+    const { ebitdaAddBacks } = await loadAppSettings(supabase);
     loaded = await loadStatement(
       supabase,
       state,
       companies.map((c) => c.realm_id),
+      ebitdaAddBacks,
     );
   } catch (e) {
     loadError = e instanceof Error ? e.message : String(e);
@@ -317,12 +320,16 @@ export default async function IncomeStatementPage({
         allocations between categories and no intercompany eliminations, so
         amounts are the same natural-signed ledger activity as the Financials
         pivot and QuickBooks, and Net income matches both for the same
-        filters. EBITDA, below Net income, adds back every expense account
-        that is interest, income tax, depreciation or amortization: by its
-        QuickBooks detail type (shown on the Chart of Accounts), or by its
-        name when the detail type is a generic one. Expand an add-back to see
-        its accounts. Payroll, property and sales taxes are operating costs
-        and are not added back. The Class dropdown shows one QuickBooks class at a time;
+        filters. EBITDA, below Net income, adds back the expense accounts that
+        are interest, income tax, depreciation or amortization. Which accounts
+        those are is set under{" "}
+        <Link href="/settings" className="underline">
+          Settings → Business rules
+        </Link>
+        : accounts listed there by number, and (unless switched off) any
+        account whose QuickBooks detail type or name says so. Expand an
+        add-back to see its accounts. Payroll, property and sales taxes are
+        operating costs and are never picked automatically. The Class dropdown shows one QuickBooks class at a time;
         lines with no class are under &ldquo;No class assigned&rdquo;, and All
         classes is simply every class added together, so the class statements
         always sum to it. The % column after each amount is the common-size view: the
